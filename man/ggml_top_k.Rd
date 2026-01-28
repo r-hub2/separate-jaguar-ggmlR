@@ -25,11 +25,11 @@ Note: the resulting indices are in no particular order within top-k.
 \dontrun{
 ctx <- ggml_init(16 * 1024 * 1024)
 # Logits from model output
-logits <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 1000)
-# ... fill with model outputs ...
-# Get top 50 logits for sampling
-top50 <- ggml_top_k(ctx, logits, 50)
-graph <- ggml_build_forward_expand(ctx, top50)
+logits <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 100)
+ggml_set_f32(logits, rnorm(100))
+# Get top 5 logits for sampling
+top5 <- ggml_top_k(ctx, logits, 5)
+graph <- ggml_build_forward_expand(ctx, top5)
 ggml_graph_compute(ctx, graph)
 ggml_free(ctx)
 }

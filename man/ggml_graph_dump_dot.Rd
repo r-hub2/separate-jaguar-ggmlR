@@ -23,8 +23,7 @@ ctx <- ggml_init(16 * 1024 * 1024)
 a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 10)
 b <- ggml_relu(ctx, a)
 graph <- ggml_build_forward_expand(ctx, b)
-ggml_graph_dump_dot(graph, NULL, "my_graph.dot")
-# Convert to PNG: dot -Tpng my_graph.dot -o my_graph.png
+ggml_graph_dump_dot(graph, NULL, tempfile(fileext = ".dot"))
 ggml_free(ctx)
 }
 }

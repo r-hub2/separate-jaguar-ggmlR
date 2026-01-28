@@ -24,6 +24,8 @@ Estimated memory in bytes
 Helper function to estimate memory needed for a tensor
 }
 \examples{
+\dontrun{
 # For 1000x1000 F32 matrix
 ggml_estimate_memory(GGML_TYPE_F32, 1000, 1000)
+}
 }

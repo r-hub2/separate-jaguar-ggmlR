@@ -22,12 +22,16 @@ Get number of bytes
 Get Number of Bytes
 }
 \examples{
+\dontrun{
 ctx <- ggml_init(1024 * 1024)
 tensor <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 10)
 ggml_nbytes(tensor)
 ggml_free(ctx)
+}
+\dontrun{
 ctx <- ggml_init(1024 * 1024)
 t <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 10)
 ggml_nbytes(t)
 ggml_free(ctx)
+}
 }

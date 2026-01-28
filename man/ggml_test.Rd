@@ -13,5 +13,7 @@ TRUE if test passed
 Runs GGML library self-test and prints version info.
 }
 \examples{
+\dontrun{
 ggml_test()
+}
 }

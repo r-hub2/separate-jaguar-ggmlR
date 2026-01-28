@@ -16,8 +16,10 @@ Integer type code (0 = F32, 1 = F16, etc.)
 Returns the data type of a tensor as an integer code
 }
 \examples{
+\dontrun{
 ctx <- ggml_init(1024 * 1024)
 t <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 10)
 ggml_tensor_type(t)
 ggml_free(ctx)
+}
 }

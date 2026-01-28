@@ -24,8 +24,8 @@ ctx <- ggml_init(16 * 1024 * 1024)
 galloc <- ggml_gallocr_new()
 
 # Create graph
-a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 100)
-b <- ggml_mul_mat(ctx, a, a)
+a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 10)
+b <- ggml_relu(ctx, a)
 graph <- ggml_build_forward_expand(ctx, b)
 
 # Allocate and compute

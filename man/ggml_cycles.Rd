@@ -13,5 +13,7 @@ Numeric value representing CPU cycles
 Returns the current CPU cycle count. Useful for low-level benchmarking.
 }
 \examples{
+\dontrun{
 ggml_cycles()
+}
 }

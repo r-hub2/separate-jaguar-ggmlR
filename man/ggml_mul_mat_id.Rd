@@ -25,12 +25,17 @@ Selects expert weights based on indices and performs batched matmul.
 \examples{
 \dontrun{
 ctx <- ggml_init(64 * 1024 * 1024)
-# 8 experts, each with 768x3072 weights
-experts <- ggml_new_tensor_3d(ctx, GGML_TYPE_F32, 768, 3072, 8)
-input <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 768, 32)
-# Select 2 experts per token
-ids <- ggml_new_tensor_2d(ctx, GGML_TYPE_I32, 2, 32)
+# 4 experts, each with 8x16 weights (small for example)
+experts <- ggml_new_tensor_3d(ctx, GGML_TYPE_F32, 8, 16, 4)
+ggml_set_f32(experts, rnorm(8 * 16 * 4))
+input <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 8, 2)
+ggml_set_f32(input, rnorm(16))
+# Select expert 0 for token 0, expert 2 for token 1
+ids <- ggml_new_tensor_1d(ctx, GGML_TYPE_I32, 2)
+ggml_set_i32(ids, c(0L, 2L))
 output <- ggml_mul_mat_id(ctx, experts, input, ids)
+graph <- ggml_build_forward_expand(ctx, output)
+ggml_graph_compute(ctx, graph)
 ggml_free(ctx)
 }
 }

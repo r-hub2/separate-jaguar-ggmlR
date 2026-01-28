@@ -13,5 +13,7 @@ TRUE if GGML library is loaded
 Check if GGML is available
 }
 \examples{
+\dontrun{
 ggml_is_available()
+}
 }

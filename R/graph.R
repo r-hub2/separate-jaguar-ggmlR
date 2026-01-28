@@ -166,8 +166,7 @@ ggml_graph_compute_with_ctx <- function(ctx, graph, n_threads = 0L) {
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 10)
 #' b <- ggml_relu(ctx, a)
 #' graph <- ggml_build_forward_expand(ctx, b)
-#' ggml_graph_dump_dot(graph, NULL, "my_graph.dot")
-#' # Convert to PNG: dot -Tpng my_graph.dot -o my_graph.png
+#' ggml_graph_dump_dot(graph, NULL, tempfile(fileext = ".dot"))
 #' ggml_free(ctx)
 #' }
 ggml_graph_dump_dot <- function(graph, leafs = NULL, filename) {
@@ -243,8 +242,8 @@ ggml_gallocr_reserve <- function(galloc, graph) {
 #' galloc <- ggml_gallocr_new()
 #'
 #' # Create graph
-#' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 100)
-#' b <- ggml_mul_mat(ctx, a, a)
+#' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 10)
+#' b <- ggml_relu(ctx, a)
 #' graph <- ggml_build_forward_expand(ctx, b)
 #'
 #' # Allocate and compute

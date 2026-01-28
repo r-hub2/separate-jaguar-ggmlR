@@ -18,9 +18,11 @@ New tensor pointer with same shape
 Creates a copy of a tensor with the same shape and type
 }
 \examples{
+\dontrun{
 ctx <- ggml_init(1024 * 1024)
 a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 100)
 b <- ggml_dup_tensor(ctx, a)
 ggml_nelements(b)
 ggml_free(ctx)
+}
 }

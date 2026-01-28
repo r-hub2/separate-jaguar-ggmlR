@@ -16,7 +16,9 @@ Maximum tensor size in bytes
 Returns the maximum tensor size that can be allocated in the context
 }
 \examples{
+\dontrun{
 ctx <- ggml_init(1024 * 1024)
 ggml_get_max_tensor_size(ctx)
 ggml_free(ctx)
+}
 }

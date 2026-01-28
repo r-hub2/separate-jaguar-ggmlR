@@ -28,19 +28,16 @@ the corresponding embedding vectors.
 \examples{
 \dontrun{
 ctx <- ggml_init(16 * 1024 * 1024)
-
 # Create embedding matrix: 10 tokens, 4-dim embeddings
 embeddings <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 4, 10)
 ggml_set_f32(embeddings, rnorm(40))
-
 # Token indices to look up
 indices <- ggml_new_tensor_1d(ctx, GGML_TYPE_I32, 3)
-ggml_set_i32(indices, c(0, 5, 2))
-
+ggml_set_i32(indices, c(0L, 5L, 2L))
 # Get embeddings for tokens 0, 5, 2
 result <- ggml_get_rows(ctx, embeddings, indices)
-# result shape: [4, 3]
-
+graph <- ggml_build_forward_expand(ctx, result)
+ggml_graph_compute(ctx, graph)
 ggml_free(ctx)
 }
 }

@@ -27,8 +27,12 @@ CRITICAL for KV-cache operations in transformers.
 ctx <- ggml_init(16 * 1024 * 1024)
 a <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 4, 3)
 b <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 4, 2)
+ggml_set_f32(a, rnorm(12))
+ggml_set_f32(b, rnorm(8))
 # Concatenate along dimension 1: result is 4x5
 c <- ggml_concat(ctx, a, b, 1)
+graph <- ggml_build_forward_expand(ctx, c)
+ggml_graph_compute(ctx, graph)
 ggml_free(ctx)
 }
 }

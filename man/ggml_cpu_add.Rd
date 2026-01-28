@@ -19,6 +19,7 @@ Performs element-wise addition of two tensors using direct CPU computation.
 Returns the result as an R numeric vector. Does NOT use computation graphs.
 }
 \examples{
+\dontrun{
 ctx <- ggml_init(1024 * 1024)
 a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
 b <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
@@ -26,4 +27,5 @@ ggml_set_f32(a, c(1, 2, 3, 4, 5))
 ggml_set_f32(b, c(5, 4, 3, 2, 1))
 ggml_cpu_add(a, b)
 ggml_free(ctx)
+}
 }

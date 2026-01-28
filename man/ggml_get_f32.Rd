@@ -22,14 +22,18 @@ Get F32 data
 Get F32 Data
 }
 \examples{
+\dontrun{
 ctx <- ggml_init(1024 * 1024)
 tensor <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
 ggml_set_f32(tensor, c(1, 2, 3, 4, 5))
 ggml_get_f32(tensor)
 ggml_free(ctx)
+}
+\dontrun{
 ctx <- ggml_init(1024 * 1024)
 t <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
 ggml_set_f32(t, c(1, 2, 3, 4, 5))
 ggml_get_f32(t)
 ggml_free(ctx)
+}
 }

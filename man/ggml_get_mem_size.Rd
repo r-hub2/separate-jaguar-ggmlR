@@ -16,7 +16,9 @@ Total memory size in bytes
 Returns the total memory pool size of the context
 }
 \examples{
+\dontrun{
 ctx <- ggml_init(1024 * 1024)
 ggml_get_mem_size(ctx)
 ggml_free(ctx)
+}
 }

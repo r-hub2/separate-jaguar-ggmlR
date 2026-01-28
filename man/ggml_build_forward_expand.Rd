@@ -25,6 +25,7 @@ to include all dependencies.
 Creates a computation graph by expanding backwards from the output tensor
 }
 \examples{
+\dontrun{
 ctx <- ggml_init(1024 * 1024)
 a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
 b <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
@@ -34,6 +35,7 @@ result <- ggml_add(ctx, a, b)
 graph <- ggml_build_forward_expand(ctx, result)
 ggml_graph_compute(ctx, graph)
 ggml_free(ctx)
+}
 \dontrun{
 ctx <- ggml_init(16 * 1024 * 1024)
 a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 10)

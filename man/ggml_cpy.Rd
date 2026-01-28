@@ -26,10 +26,13 @@ CRITICAL for type casting operations (e.g., F32 to F16).
 ctx <- ggml_init(16 * 1024 * 1024)
 # Create F32 tensor
 a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 100)
+ggml_set_f32(a, rnorm(100))
 # Create F16 tensor for output
 b <- ggml_new_tensor_1d(ctx, GGML_TYPE_F16, 100)
 # Copy with F32 -> F16 conversion
 result <- ggml_cpy(ctx, a, b)
+graph <- ggml_build_forward_expand(ctx, result)
+ggml_graph_compute(ctx, graph)
 ggml_free(ctx)
 }
 }

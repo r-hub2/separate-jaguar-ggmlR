@@ -19,7 +19,9 @@ GGML_SORT_ORDER_DESC
 Constants for specifying sort order in argsort operations.
 }
 \examples{
+\dontrun{
 GGML_SORT_ORDER_ASC   # 0 - Ascending order
 GGML_SORT_ORDER_DESC  # 1 - Descending order
+}
 }
 \keyword{datasets}

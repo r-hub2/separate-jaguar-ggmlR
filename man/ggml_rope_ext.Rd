@@ -70,11 +70,10 @@ Common freq_base values:
 \examples{
 \dontrun{
 ctx <- ggml_init(16 * 1024 * 1024)
-
 q <- ggml_new_tensor_4d(ctx, GGML_TYPE_F32, 64, 8, 32, 1)
+ggml_set_f32(q, rnorm(64 * 8 * 32))
 pos <- ggml_new_tensor_1d(ctx, GGML_TYPE_I32, 32)
 ggml_set_i32(pos, 0:31)
-
 # Standard RoPE with default freq_base
 q_rope <- ggml_rope_ext(ctx, q, pos, NULL,
                         n_dims = 64, mode = 0L,
@@ -82,7 +81,8 @@ q_rope <- ggml_rope_ext(ctx, q, pos, NULL,
                         freq_base = 10000, freq_scale = 1.0,
                         ext_factor = 0.0, attn_factor = 1.0,
                         beta_fast = 32, beta_slow = 1)
-
+graph <- ggml_build_forward_expand(ctx, q_rope)
+ggml_graph_compute(ctx, graph)
 ggml_free(ctx)
 }
 }

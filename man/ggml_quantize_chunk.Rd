@@ -23,9 +23,9 @@ Quantizes a chunk of floating-point data to a lower precision format.
 }
 \examples{
 \dontrun{
-# Quantize 1024 floats to Q4_0
-data <- rnorm(1024)
-quantized <- ggml_quantize_chunk(GGML_TYPE_Q4_0, data, 1, 1024)
+# Quantize 256 floats to Q8_0 (block size 32)
+data <- rnorm(256)
+quantized <- ggml_quantize_chunk(GGML_TYPE_Q8_0, data, 1, 256)
 ggml_quantize_free()  # Clean up
 }
 }

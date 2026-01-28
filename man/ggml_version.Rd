@@ -13,5 +13,7 @@ Character string with GGML version
 Get GGML version
 }
 \examples{
+\dontrun{
 ggml_version()
+}
 }

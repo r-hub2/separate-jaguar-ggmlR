@@ -54,26 +54,22 @@ Key features:
 \examples{
 \dontrun{
 ctx <- ggml_init(64 * 1024 * 1024)
-
 head_dim <- 64
 n_head <- 8
 n_head_kv <- 2  # GQA with 4:1 ratio
 seq_len <- 32
-
 q <- ggml_new_tensor_4d(ctx, GGML_TYPE_F32, head_dim, n_head, seq_len, 1)
 k <- ggml_new_tensor_4d(ctx, GGML_TYPE_F32, head_dim, n_head_kv, seq_len, 1)
 v <- ggml_new_tensor_4d(ctx, GGML_TYPE_F32, head_dim, n_head_kv, seq_len, 1)
-
 ggml_set_f32(q, rnorm(head_dim * n_head * seq_len))
 ggml_set_f32(k, rnorm(head_dim * n_head_kv * seq_len))
 ggml_set_f32(v, rnorm(head_dim * n_head_kv * seq_len))
-
 # Scale = 1/sqrt(head_dim)
 scale <- 1.0 / sqrt(head_dim)
-
 # Compute attention
 out <- ggml_flash_attn_ext(ctx, q, k, v, NULL, scale, 0.0, 0.0)
-
+graph <- ggml_build_forward_expand(ctx, out)
+ggml_graph_compute(ctx, graph)
 ggml_free(ctx)
 }
 }

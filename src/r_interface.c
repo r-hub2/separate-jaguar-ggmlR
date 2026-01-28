@@ -4,25 +4,53 @@
 #include "ggml.h"
 #include "ggml-cpu.h"
 
+// Vulkan functions (defined in r_interface_vulkan.c)
+extern SEXP R_ggml_vulkan_is_available(void);
+extern SEXP R_ggml_vulkan_device_count(void);
+extern SEXP R_ggml_vulkan_device_description(SEXP device_idx);
+extern SEXP R_ggml_vulkan_device_memory(SEXP device_idx);
+extern SEXP R_ggml_vulkan_init(SEXP device_idx);
+extern SEXP R_ggml_vulkan_free(SEXP backend_ptr);
+extern SEXP R_ggml_vulkan_is_backend(SEXP backend_ptr);
+extern SEXP R_ggml_vulkan_backend_name(SEXP backend_ptr);
+extern SEXP R_ggml_vulkan_list_devices(void);
+
+// Backend scheduler functions (defined in r_interface_scheduler.c)
+extern SEXP R_ggml_backend_sched_new(SEXP backends_list, SEXP parallel, SEXP graph_size);
+extern SEXP R_ggml_backend_sched_free(SEXP sched_ptr);
+extern SEXP R_ggml_backend_sched_reserve(SEXP sched_ptr, SEXP graph_ptr);
+extern SEXP R_ggml_backend_sched_get_n_backends(SEXP sched_ptr);
+extern SEXP R_ggml_backend_sched_get_backend(SEXP sched_ptr, SEXP index);
+extern SEXP R_ggml_backend_sched_get_n_splits(SEXP sched_ptr);
+extern SEXP R_ggml_backend_sched_get_n_copies(SEXP sched_ptr);
+extern SEXP R_ggml_backend_sched_set_tensor_backend(SEXP sched_ptr, SEXP tensor_ptr, SEXP backend_ptr);
+extern SEXP R_ggml_backend_sched_get_tensor_backend(SEXP sched_ptr, SEXP tensor_ptr);
+extern SEXP R_ggml_backend_sched_alloc_graph(SEXP sched_ptr, SEXP graph_ptr);
+extern SEXP R_ggml_backend_sched_graph_compute(SEXP sched_ptr, SEXP graph_ptr);
+extern SEXP R_ggml_backend_sched_graph_compute_async(SEXP sched_ptr, SEXP graph_ptr);
+extern SEXP R_ggml_backend_sched_synchronize(SEXP sched_ptr);
+extern SEXP R_ggml_backend_sched_reset(SEXP sched_ptr);
+
 // ============================================================================
 // Context Management
 // ============================================================================
 
-SEXP R_ggml_init(SEXP mem_size) {
-    int size = asInteger(mem_size);
-    
+SEXP R_ggml_init(SEXP mem_size, SEXP no_alloc) {
+    size_t size = (size_t) asReal(mem_size);
+    int no_alloc_flag = asLogical(no_alloc);
+
     struct ggml_init_params params = {
         .mem_size = size,
         .mem_buffer = NULL,
-        .no_alloc = false,
+        .no_alloc = no_alloc_flag,
     };
-    
+
     struct ggml_context * ctx = ggml_init(params);
-    
+
     if (ctx == NULL) {
         error("Failed to initialize GGML context");
     }
-    
+
     SEXP ptr = PROTECT(R_MakeExternalPtr(ctx, R_NilValue, R_NilValue));
     UNPROTECT(1);
     return ptr;
@@ -791,7 +819,7 @@ SEXP R_ggml_get_n_threads(void) {
 
 static const R_CallMethodDef CallEntries[] = {
     // Context management
-    {"R_ggml_init",    (DL_FUNC) &R_ggml_init,    1},
+    {"R_ggml_init",    (DL_FUNC) &R_ggml_init,    2},
     {"R_ggml_free",    (DL_FUNC) &R_ggml_free,    1},
     {"R_ggml_reset",   (DL_FUNC) &R_ggml_reset,   1},
     {"R_ggml_set_no_alloc",      (DL_FUNC) &R_ggml_set_no_alloc,      2},
@@ -1052,6 +1080,33 @@ static const R_CallMethodDef CallEntries[] = {
     {"R_ggml_quantize_free",             (DL_FUNC) &R_ggml_quantize_free,             0},
     {"R_ggml_quantize_requires_imatrix", (DL_FUNC) &R_ggml_quantize_requires_imatrix, 1},
     {"R_ggml_quantize_chunk",            (DL_FUNC) &R_ggml_quantize_chunk,            4},
+
+    // Vulkan backend functions
+    {"R_ggml_vulkan_is_available",      (DL_FUNC) &R_ggml_vulkan_is_available,      0},
+    {"R_ggml_vulkan_device_count",      (DL_FUNC) &R_ggml_vulkan_device_count,      0},
+    {"R_ggml_vulkan_device_description",(DL_FUNC) &R_ggml_vulkan_device_description,1},
+    {"R_ggml_vulkan_device_memory",     (DL_FUNC) &R_ggml_vulkan_device_memory,     1},
+    {"R_ggml_vulkan_init",              (DL_FUNC) &R_ggml_vulkan_init,              1},
+    {"R_ggml_vulkan_free",              (DL_FUNC) &R_ggml_vulkan_free,              1},
+    {"R_ggml_vulkan_is_backend",        (DL_FUNC) &R_ggml_vulkan_is_backend,        1},
+    {"R_ggml_vulkan_backend_name",      (DL_FUNC) &R_ggml_vulkan_backend_name,      1},
+    {"R_ggml_vulkan_list_devices",      (DL_FUNC) &R_ggml_vulkan_list_devices,      0},
+
+    // Backend scheduler functions
+    {"R_ggml_backend_sched_new",                (DL_FUNC) &R_ggml_backend_sched_new,                3},
+    {"R_ggml_backend_sched_free",               (DL_FUNC) &R_ggml_backend_sched_free,               1},
+    {"R_ggml_backend_sched_reserve",            (DL_FUNC) &R_ggml_backend_sched_reserve,            2},
+    {"R_ggml_backend_sched_get_n_backends",     (DL_FUNC) &R_ggml_backend_sched_get_n_backends,     1},
+    {"R_ggml_backend_sched_get_backend",        (DL_FUNC) &R_ggml_backend_sched_get_backend,        2},
+    {"R_ggml_backend_sched_get_n_splits",       (DL_FUNC) &R_ggml_backend_sched_get_n_splits,       1},
+    {"R_ggml_backend_sched_get_n_copies",       (DL_FUNC) &R_ggml_backend_sched_get_n_copies,       1},
+    {"R_ggml_backend_sched_set_tensor_backend", (DL_FUNC) &R_ggml_backend_sched_set_tensor_backend, 3},
+    {"R_ggml_backend_sched_get_tensor_backend", (DL_FUNC) &R_ggml_backend_sched_get_tensor_backend, 2},
+    {"R_ggml_backend_sched_alloc_graph",        (DL_FUNC) &R_ggml_backend_sched_alloc_graph,        2},
+    {"R_ggml_backend_sched_graph_compute",      (DL_FUNC) &R_ggml_backend_sched_graph_compute,      2},
+    {"R_ggml_backend_sched_graph_compute_async",(DL_FUNC) &R_ggml_backend_sched_graph_compute_async,2},
+    {"R_ggml_backend_sched_synchronize",        (DL_FUNC) &R_ggml_backend_sched_synchronize,        1},
+    {"R_ggml_backend_sched_reset",              (DL_FUNC) &R_ggml_backend_sched_reset,              1},
 
     {NULL, NULL, 0}
 };

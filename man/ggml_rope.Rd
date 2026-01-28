@@ -37,18 +37,16 @@ Key benefits of RoPE:
 \examples{
 \dontrun{
 ctx <- ggml_init(16 * 1024 * 1024)
-
 # Query tensor: head_dim=8, n_head=4, seq_len=16, batch=1
 q <- ggml_new_tensor_4d(ctx, GGML_TYPE_F32, 8, 4, 16, 1)
 ggml_set_f32(q, rnorm(8 * 4 * 16))
-
 # Position indices
 pos <- ggml_new_tensor_1d(ctx, GGML_TYPE_I32, 16)
 ggml_set_i32(pos, 0:15)
-
 # Apply RoPE
 q_rope <- ggml_rope(ctx, q, pos, 8, GGML_ROPE_TYPE_NORM)
-
+graph <- ggml_build_forward_expand(ctx, q_rope)
+ggml_graph_compute(ctx, graph)
 ggml_free(ctx)
 }
 }

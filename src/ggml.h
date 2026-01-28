@@ -196,12 +196,14 @@
 #    define GGML_DEPRECATED(func, hint) func
 #endif
 
-#ifndef __GNUC__
+#ifndef GGML_ATTRIBUTE_FORMAT
+#  ifndef __GNUC__
 #    define GGML_ATTRIBUTE_FORMAT(...)
-#elif defined(__MINGW32__) && !defined(__clang__)
+#  elif defined(__MINGW32__) && !defined(__clang__)
 #    define GGML_ATTRIBUTE_FORMAT(...) __attribute__((format(gnu_printf, __VA_ARGS__)))
-#else
+#  else
 #    define GGML_ATTRIBUTE_FORMAT(...) __attribute__((format(printf, __VA_ARGS__)))
+#  endif
 #endif
 
 #if defined(_WIN32) && !defined(_WIN32_WINNT)

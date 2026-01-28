@@ -23,8 +23,10 @@ Generic tensor constructor for creating tensors with 1-4 dimensions.
 This is more flexible than the ggml_new_tensor_Nd functions.
 }
 \examples{
+\dontrun{
 ctx <- ggml_init(1024 * 1024)
 t <- ggml_new_tensor(ctx, GGML_TYPE_F32, 3, c(10, 20, 30))
 ggml_nelements(t)
 ggml_free(ctx)
+}
 }

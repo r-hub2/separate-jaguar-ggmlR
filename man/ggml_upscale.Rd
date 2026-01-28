@@ -42,9 +42,12 @@ Supports different interpolation modes.
 \examples{
 \dontrun{
 ctx <- ggml_init(16 * 1024 * 1024)
-img <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 32, 32)
-upscaled <- ggml_upscale(ctx, img, 2, GGML_SCALE_MODE_BILINEAR)
-# Result is 64x64
+img <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 8, 8)
+ggml_set_f32(img, rnorm(64))
+upscaled <- ggml_upscale(ctx, img, 2, GGML_SCALE_MODE_NEAREST)
+graph <- ggml_build_forward_expand(ctx, upscaled)
+ggml_graph_compute(ctx, graph)
+# Result is 16x16
 ggml_free(ctx)
 }
 }

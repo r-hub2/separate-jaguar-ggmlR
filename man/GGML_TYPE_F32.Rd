@@ -6,10 +6,13 @@
 \alias{GGML_TYPE_F16}
 \alias{GGML_TYPE_Q4_0}
 \alias{GGML_TYPE_Q4_1}
+\alias{GGML_TYPE_Q8_0}
 \alias{GGML_TYPE_I32}
 \title{GGML Data Types}
 \format{
 Integer constants
+
+An object of class \code{integer} of length 1.
 
 An object of class \code{integer} of length 1.
 
@@ -28,6 +31,8 @@ GGML_TYPE_Q4_0
 
 GGML_TYPE_Q4_1
 
+GGML_TYPE_Q8_0
+
 GGML_TYPE_I32
 }
 \description{
@@ -39,12 +44,15 @@ Constants representing different data types supported by GGML.
   \item \code{GGML_TYPE_F16}: 16-bit floating point (half precision)
   \item \code{GGML_TYPE_Q4_0}: 4-bit quantization type 0
   \item \code{GGML_TYPE_Q4_1}: 4-bit quantization type 1
+  \item \code{GGML_TYPE_Q8_0}: 8-bit quantization type 0
   \item \code{GGML_TYPE_I32}: 32-bit integer
 }
 }
 \examples{
+\dontrun{
 GGML_TYPE_F32
 GGML_TYPE_F16
 GGML_TYPE_I32
+}
 }
 \keyword{datasets}

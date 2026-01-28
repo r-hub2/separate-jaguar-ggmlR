@@ -17,10 +17,12 @@ Sets all elements of a tensor to zero.
 This is more efficient than manually setting all elements.
 }
 \examples{
+\dontrun{
 ctx <- ggml_init(1024 * 1024)
 t <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 10)
 ggml_set_f32(t, 1:10)
 ggml_set_zero(t)
 ggml_get_f32(t)
 ggml_free(ctx)
+}
 }

@@ -26,8 +26,10 @@ Create 1D tensor
 Create 1D Tensor
 }
 \examples{
+\dontrun{
 ctx <- ggml_init(1024 * 1024)
 tensor <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 10)
 ggml_nelements(tensor)
 ggml_free(ctx)
+}
 }

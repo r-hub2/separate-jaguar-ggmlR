@@ -32,15 +32,13 @@ needs to be shifted to account for previously processed tokens.
 \examples{
 \dontrun{
 ctx <- ggml_init(16 * 1024 * 1024)
-
 # Create attention scores matrix
 scores <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 4, 4)
 ggml_set_f32(scores, rep(1, 16))
-
 # Apply causal mask
 masked <- ggml_diag_mask_inf(ctx, scores, 0)
-# After computation, upper triangle will be -Inf
-
+graph <- ggml_build_forward_expand(ctx, masked)
+ggml_graph_compute(ctx, graph)
 ggml_free(ctx)
 }
 }

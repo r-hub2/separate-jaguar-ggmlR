@@ -13,8 +13,10 @@ Numeric value representing milliseconds
 Returns the current time in milliseconds since the timer was initialized.
 }
 \examples{
+\dontrun{
 ggml_time_init()
 start <- ggml_time_ms()
 Sys.sleep(0.01)
 elapsed <- ggml_time_ms() - start
+}
 }

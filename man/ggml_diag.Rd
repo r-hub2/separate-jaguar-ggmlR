@@ -24,6 +24,8 @@ ctx <- ggml_init(16 * 1024 * 1024)
 a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 3)
 ggml_set_f32(a, c(1, 2, 3))
 d <- ggml_diag(ctx, a)  # 3x3 diagonal matrix
+graph <- ggml_build_forward_expand(ctx, d)
+ggml_graph_compute(ctx, graph)
 ggml_free(ctx)
 }
 }

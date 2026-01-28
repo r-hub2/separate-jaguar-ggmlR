@@ -20,13 +20,11 @@ Useful when you need to create large temporary tensors.
 }
 \examples{
 \dontrun{
-# Create large matrix in temporary context
-result <- ggml_with_temp_ctx(100 * 1024 * 1024, {
-  a <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 3000, 3000)
-  b <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 3000, 3000)
-  ggml_set_f32(a, rnorm(9000000))
-  ggml_set_f32(b, rnorm(9000000))
-  ggml_cpu_add(a, b)
+# Create tensors in temporary context
+result <- ggml_with_temp_ctx(1024 * 1024, {
+  a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 10)
+  ggml_set_f32(a, 1:10)
+  ggml_get_f32(a)
 })
 }
 }

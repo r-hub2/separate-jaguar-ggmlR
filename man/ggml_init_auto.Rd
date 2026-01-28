@@ -4,7 +4,7 @@
 \alias{ggml_init_auto}
 \title{Create Context with Auto-sizing}
 \usage{
-ggml_init_auto(..., extra_mb = 10, type = GGML_TYPE_F32)
+ggml_init_auto(..., extra_mb = 10, type = GGML_TYPE_F32, no_alloc = FALSE)
 }
 \arguments{
 \item{...}{Named arguments with tensor dimensions}
@@ -12,6 +12,8 @@ ggml_init_auto(..., extra_mb = 10, type = GGML_TYPE_F32)
 \item{extra_mb}{Extra megabytes to add (default: 10)}
 
 \item{type}{Tensor type (default: GGML_TYPE_F32)}
+
+\item{no_alloc}{If TRUE, don't allocate memory for tensors (default: FALSE)}
 }
 \value{
 GGML context
@@ -23,5 +25,6 @@ Creates a context with automatically calculated size based on planned tensors
 \dontrun{
 # For two 1000x1000 matrices
 ctx <- ggml_init_auto(mat1 = c(1000, 1000), mat2 = c(1000, 1000))
+ggml_free(ctx)
 }
 }

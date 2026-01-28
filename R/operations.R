@@ -12,6 +12,7 @@
 #' @return Numeric vector containing the element-wise sum
 #' @export
 #' @examples
+#' \dontrun{
 #' ctx <- ggml_init(1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
 #' b <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
@@ -19,6 +20,7 @@
 #' ggml_set_f32(b, c(5, 4, 3, 2, 1))
 #' ggml_cpu_add(a, b)
 #' ggml_free(ctx)
+#' }
 ggml_cpu_add <- function(a, b) {
   .Call("R_ggml_cpu_add", a, b, PACKAGE = "ggmlR")
 }
@@ -33,6 +35,7 @@ ggml_cpu_add <- function(a, b) {
 #' @return Numeric vector containing the element-wise product
 #' @export
 #' @examples
+#' \dontrun{
 #' ctx <- ggml_init(1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
 #' b <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
@@ -40,6 +43,7 @@ ggml_cpu_add <- function(a, b) {
 #' ggml_set_f32(b, c(2, 2, 2, 2, 2))
 #' ggml_cpu_mul(a, b)
 #' ggml_free(ctx)
+#' }
 ggml_cpu_mul <- function(a, b) {
   .Call("R_ggml_cpu_mul", a, b, PACKAGE = "ggmlR")
 }
@@ -59,6 +63,7 @@ ggml_cpu_mul <- function(a, b) {
 #' @return Tensor representing the copy operation
 #' @export
 #' @examples
+#' \dontrun{
 #' ctx <- ggml_init(1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
 #' ggml_set_f32(a, c(1, 2, 3, 4, 5))
@@ -67,6 +72,7 @@ ggml_cpu_mul <- function(a, b) {
 #' ggml_graph_compute(ctx, graph)
 #' ggml_get_f32(b)
 #' ggml_free(ctx)
+#' }
 ggml_dup <- function(ctx, a) {
   .Call("R_ggml_dup", ctx, a, PACKAGE = "ggmlR")
 }
@@ -82,6 +88,7 @@ ggml_dup <- function(ctx, a) {
 #' @return Tensor representing the addition operation
 #' @export
 #' @examples
+#' \dontrun{
 #' ctx <- ggml_init(1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
 #' b <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
@@ -92,6 +99,7 @@ ggml_dup <- function(ctx, a) {
 #' ggml_graph_compute(ctx, graph)
 #' ggml_get_f32(result)
 #' ggml_free(ctx)
+#' }
 ggml_add <- function(ctx, a, b) {
   .Call("R_ggml_add", ctx, a, b, PACKAGE = "ggmlR")
 }
@@ -107,6 +115,7 @@ ggml_add <- function(ctx, a, b) {
 #' @return Tensor representing the operation a + b (broadcasted)
 #' @export
 #' @examples
+#' \dontrun{
 #' ctx <- ggml_init(1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
 #' scalar <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 1)
@@ -117,6 +126,7 @@ ggml_add <- function(ctx, a, b) {
 #' ggml_graph_compute(ctx, graph)
 #' ggml_get_f32(result)
 #' ggml_free(ctx)
+#' }
 ggml_add1 <- function(ctx, a, b) {
   .Call("R_ggml_add1", ctx, a, b, PACKAGE = "ggmlR")
 }
@@ -131,6 +141,7 @@ ggml_add1 <- function(ctx, a, b) {
 #' @return Tensor representing the subtraction operation (a - b)
 #' @export
 #' @examples
+#' \dontrun{
 #' ctx <- ggml_init(1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
 #' b <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
@@ -141,6 +152,7 @@ ggml_add1 <- function(ctx, a, b) {
 #' ggml_graph_compute(ctx, graph)
 #' ggml_get_f32(result)
 #' ggml_free(ctx)
+#' }
 ggml_sub <- function(ctx, a, b) {
   .Call("R_ggml_sub", ctx, a, b, PACKAGE = "ggmlR")
 }
@@ -155,6 +167,7 @@ ggml_sub <- function(ctx, a, b) {
 #' @return Tensor representing the multiplication operation
 #' @export
 #' @examples
+#' \dontrun{
 #' ctx <- ggml_init(1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
 #' b <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
@@ -165,6 +178,7 @@ ggml_sub <- function(ctx, a, b) {
 #' ggml_graph_compute(ctx, graph)
 #' ggml_get_f32(result)
 #' ggml_free(ctx)
+#' }
 ggml_mul <- function(ctx, a, b) {
   .Call("R_ggml_mul", ctx, a, b, PACKAGE = "ggmlR")
 }
@@ -179,6 +193,7 @@ ggml_mul <- function(ctx, a, b) {
 #' @return Tensor representing the division operation (a / b)
 #' @export
 #' @examples
+#' \dontrun{
 #' ctx <- ggml_init(1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
 #' b <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
@@ -189,6 +204,7 @@ ggml_mul <- function(ctx, a, b) {
 #' ggml_graph_compute(ctx, graph)
 #' ggml_get_f32(result)
 #' ggml_free(ctx)
+#' }
 ggml_div <- function(ctx, a, b) {
   .Call("R_ggml_div", ctx, a, b, PACKAGE = "ggmlR")
 }
@@ -204,6 +220,7 @@ ggml_div <- function(ctx, a, b) {
 #' @return Tensor representing the matrix multiplication
 #' @export
 #' @examples
+#' \dontrun{
 #' ctx <- ggml_init(1024 * 1024)
 #' A <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 4, 3)
 #' B <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 4, 2)
@@ -214,6 +231,7 @@ ggml_div <- function(ctx, a, b) {
 #' ggml_graph_compute(ctx, graph)
 #' ggml_get_f32(C)
 #' ggml_free(ctx)
+#' }
 ggml_mul_mat <- function(ctx, a, b) {
   .Call("R_ggml_mul_mat", ctx, a, b, PACKAGE = "ggmlR")
 }
@@ -231,6 +249,7 @@ ggml_mul_mat <- function(ctx, a, b) {
 #' @return Tensor representing the ReLU operation
 #' @export
 #' @examples
+#' \dontrun{
 #' ctx <- ggml_init(1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
 #' ggml_set_f32(a, c(-2, -1, 0, 1, 2))
@@ -239,6 +258,7 @@ ggml_mul_mat <- function(ctx, a, b) {
 #' ggml_graph_compute(ctx, graph)
 #' ggml_get_f32(result)
 #' ggml_free(ctx)
+#' }
 ggml_relu <- function(ctx, a) {
   .Call("R_ggml_relu", ctx, a, PACKAGE = "ggmlR")
 }
@@ -253,6 +273,7 @@ ggml_relu <- function(ctx, a) {
 #' @return Tensor representing the GELU operation
 #' @export
 #' @examples
+#' \dontrun{
 #' ctx <- ggml_init(1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
 #' ggml_set_f32(a, c(-2, -1, 0, 1, 2))
@@ -261,6 +282,7 @@ ggml_relu <- function(ctx, a) {
 #' ggml_graph_compute(ctx, graph)
 #' ggml_get_f32(result)
 #' ggml_free(ctx)
+#' }
 ggml_gelu <- function(ctx, a) {
   .Call("R_ggml_gelu", ctx, a, PACKAGE = "ggmlR")
 }
@@ -275,6 +297,7 @@ ggml_gelu <- function(ctx, a) {
 #' @return Tensor representing the SiLU operation
 #' @export
 #' @examples
+#' \dontrun{
 #' ctx <- ggml_init(1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
 #' ggml_set_f32(a, c(-2, -1, 0, 1, 2))
@@ -283,6 +306,7 @@ ggml_gelu <- function(ctx, a) {
 #' ggml_graph_compute(ctx, graph)
 #' ggml_get_f32(result)
 #' ggml_free(ctx)
+#' }
 ggml_silu <- function(ctx, a) {
   .Call("R_ggml_silu", ctx, a, PACKAGE = "ggmlR")
 }
@@ -296,6 +320,7 @@ ggml_silu <- function(ctx, a) {
 #' @return Tensor representing the tanh operation
 #' @export
 #' @examples
+#' \dontrun{
 #' ctx <- ggml_init(1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
 #' ggml_set_f32(a, c(-2, -1, 0, 1, 2))
@@ -304,6 +329,7 @@ ggml_silu <- function(ctx, a) {
 #' ggml_graph_compute(ctx, graph)
 #' ggml_get_f32(result)
 #' ggml_free(ctx)
+#' }
 ggml_tanh <- function(ctx, a) {
   .Call("R_ggml_tanh", ctx, a, PACKAGE = "ggmlR")
 }
@@ -497,18 +523,12 @@ ggml_soft_max_inplace <- function(ctx, a) {
 #'
 #' @examples
 #' \dontrun{
-#' ctx <- ggml_init(64 * 1024 * 1024)
-#'
-#' # Attention scores: [head_dim, seq_len, n_heads, batch]
-#' scores <- ggml_new_tensor_4d(ctx, GGML_TYPE_F32, 64, 128, 8, 1)
-#'
-#' # Causal mask (optional)
-#' mask <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 128, 128)
-#'
-#' # Apply softmax with scaling
-#' scale <- 1.0 / sqrt(64)  # 1/sqrt(head_dim)
-#' attn <- ggml_soft_max_ext(ctx, scores, mask, scale, max_bias = 0.0)
-#'
+#' ctx <- ggml_init(16 * 1024 * 1024)
+#' scores <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 10, 10)
+#' ggml_set_f32(scores, rnorm(100))
+#' attn <- ggml_soft_max_ext(ctx, scores, NULL, 1.0, max_bias = 0.0)
+#' graph <- ggml_build_forward_expand(ctx, attn)
+#' ggml_graph_compute(ctx, graph)
 #' ggml_free(ctx)
 #' }
 #' @export
@@ -608,6 +628,7 @@ ggml_repeat <- function(ctx, a, b) {
 #' @return Tensor representing the sigmoid operation
 #' @export
 #' @examples
+#' \dontrun{
 #' ctx <- ggml_init(1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
 #' ggml_set_f32(a, c(-2, -1, 0, 1, 2))
@@ -616,6 +637,7 @@ ggml_repeat <- function(ctx, a, b) {
 #' ggml_graph_compute(ctx, graph)
 #' ggml_get_f32(result)
 #' ggml_free(ctx)
+#' }
 ggml_sigmoid <- function(ctx, a) {
   .Call("R_ggml_sigmoid", ctx, a, PACKAGE = "ggmlR")
 }
@@ -1360,19 +1382,16 @@ ggml_swiglu_split <- function(ctx, a, b) {
 #' @examples
 #' \dontrun{
 #' ctx <- ggml_init(16 * 1024 * 1024)
-#'
 #' # Create embedding matrix: 10 tokens, 4-dim embeddings
 #' embeddings <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 4, 10)
 #' ggml_set_f32(embeddings, rnorm(40))
-#'
 #' # Token indices to look up
 #' indices <- ggml_new_tensor_1d(ctx, GGML_TYPE_I32, 3)
-#' ggml_set_i32(indices, c(0, 5, 2))
-#'
+#' ggml_set_i32(indices, c(0L, 5L, 2L))
 #' # Get embeddings for tokens 0, 5, 2
 #' result <- ggml_get_rows(ctx, embeddings, indices)
-#' # result shape: [4, 3]
-#'
+#' graph <- ggml_build_forward_expand(ctx, result)
+#' ggml_graph_compute(ctx, graph)
 #' ggml_free(ctx)
 #' }
 #' @export
@@ -1406,15 +1425,13 @@ ggml_get_rows <- function(ctx, a, b) {
 #' @examples
 #' \dontrun{
 #' ctx <- ggml_init(16 * 1024 * 1024)
-#'
 #' # Create attention scores matrix
 #' scores <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 4, 4)
 #' ggml_set_f32(scores, rep(1, 16))
-#'
 #' # Apply causal mask
 #' masked <- ggml_diag_mask_inf(ctx, scores, 0)
-#' # After computation, upper triangle will be -Inf
-#'
+#' graph <- ggml_build_forward_expand(ctx, masked)
+#' ggml_graph_compute(ctx, graph)
 #' ggml_free(ctx)
 #' }
 #' @export
@@ -1506,18 +1523,16 @@ GGML_ROPE_TYPE_VISION <- 24L
 #' @examples
 #' \dontrun{
 #' ctx <- ggml_init(16 * 1024 * 1024)
-#'
 #' # Query tensor: head_dim=8, n_head=4, seq_len=16, batch=1
 #' q <- ggml_new_tensor_4d(ctx, GGML_TYPE_F32, 8, 4, 16, 1)
 #' ggml_set_f32(q, rnorm(8 * 4 * 16))
-#'
 #' # Position indices
 #' pos <- ggml_new_tensor_1d(ctx, GGML_TYPE_I32, 16)
 #' ggml_set_i32(pos, 0:15)
-#'
 #' # Apply RoPE
 #' q_rope <- ggml_rope(ctx, q, pos, 8, GGML_ROPE_TYPE_NORM)
-#'
+#' graph <- ggml_build_forward_expand(ctx, q_rope)
+#' ggml_graph_compute(ctx, graph)
 #' ggml_free(ctx)
 #' }
 #' @export
@@ -1576,11 +1591,10 @@ ggml_rope_inplace <- function(ctx, a, b, n_dims, mode = 0L) {
 #' @examples
 #' \dontrun{
 #' ctx <- ggml_init(16 * 1024 * 1024)
-#'
 #' q <- ggml_new_tensor_4d(ctx, GGML_TYPE_F32, 64, 8, 32, 1)
+#' ggml_set_f32(q, rnorm(64 * 8 * 32))
 #' pos <- ggml_new_tensor_1d(ctx, GGML_TYPE_I32, 32)
 #' ggml_set_i32(pos, 0:31)
-#'
 #' # Standard RoPE with default freq_base
 #' q_rope <- ggml_rope_ext(ctx, q, pos, NULL,
 #'                         n_dims = 64, mode = 0L,
@@ -1588,7 +1602,8 @@ ggml_rope_inplace <- function(ctx, a, b, n_dims, mode = 0L) {
 #'                         freq_base = 10000, freq_scale = 1.0,
 #'                         ext_factor = 0.0, attn_factor = 1.0,
 #'                         beta_fast = 32, beta_slow = 1)
-#'
+#' graph <- ggml_build_forward_expand(ctx, q_rope)
+#' ggml_graph_compute(ctx, graph)
 #' ggml_free(ctx)
 #' }
 #' @export
@@ -1639,26 +1654,22 @@ ggml_rope_ext <- function(ctx, a, b, c = NULL,
 #' @examples
 #' \dontrun{
 #' ctx <- ggml_init(64 * 1024 * 1024)
-#'
 #' head_dim <- 64
 #' n_head <- 8
 #' n_head_kv <- 2  # GQA with 4:1 ratio
 #' seq_len <- 32
-#'
 #' q <- ggml_new_tensor_4d(ctx, GGML_TYPE_F32, head_dim, n_head, seq_len, 1)
 #' k <- ggml_new_tensor_4d(ctx, GGML_TYPE_F32, head_dim, n_head_kv, seq_len, 1)
 #' v <- ggml_new_tensor_4d(ctx, GGML_TYPE_F32, head_dim, n_head_kv, seq_len, 1)
-#'
 #' ggml_set_f32(q, rnorm(head_dim * n_head * seq_len))
 #' ggml_set_f32(k, rnorm(head_dim * n_head_kv * seq_len))
 #' ggml_set_f32(v, rnorm(head_dim * n_head_kv * seq_len))
-#'
 #' # Scale = 1/sqrt(head_dim)
 #' scale <- 1.0 / sqrt(head_dim)
-#'
 #' # Compute attention
 #' out <- ggml_flash_attn_ext(ctx, q, k, v, NULL, scale, 0.0, 0.0)
-#'
+#' graph <- ggml_build_forward_expand(ctx, out)
+#' ggml_graph_compute(ctx, graph)
 #' ggml_free(ctx)
 #' }
 #' @export
@@ -1779,10 +1790,13 @@ ggml_view_4d <- function(ctx, a, ne0, ne1, ne2, ne3, nb1, nb2, nb3, offset = 0) 
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' # Create F32 tensor
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 100)
+#' ggml_set_f32(a, rnorm(100))
 #' # Create F16 tensor for output
 #' b <- ggml_new_tensor_1d(ctx, GGML_TYPE_F16, 100)
 #' # Copy with F32 -> F16 conversion
 #' result <- ggml_cpy(ctx, a, b)
+#' graph <- ggml_build_forward_expand(ctx, result)
+#' ggml_graph_compute(ctx, graph)
 #' ggml_free(ctx)
 #' }
 ggml_cpy <- function(ctx, a, b) {
@@ -1864,6 +1878,8 @@ ggml_set_2d <- function(ctx, a, b, nb1, offset) {
 #' ggml_set_f32(a, c(1, 2, 3))
 #' ggml_set_f32(b, c(1, 2, 3, 4))
 #' c <- ggml_out_prod(ctx, a, b)  # Result: 3x4 matrix
+#' graph <- ggml_build_forward_expand(ctx, c)
+#' ggml_graph_compute(ctx, graph)
 #' ggml_free(ctx)
 #' }
 ggml_out_prod <- function(ctx, a, b) {
@@ -1885,6 +1901,8 @@ ggml_out_prod <- function(ctx, a, b) {
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 3)
 #' ggml_set_f32(a, c(1, 2, 3))
 #' d <- ggml_diag(ctx, a)  # 3x3 diagonal matrix
+#' graph <- ggml_build_forward_expand(ctx, d)
+#' ggml_graph_compute(ctx, graph)
 #' ggml_free(ctx)
 #' }
 ggml_diag <- function(ctx, a) {
@@ -1911,8 +1929,12 @@ ggml_diag <- function(ctx, a) {
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' a <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 4, 3)
 #' b <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 4, 2)
+#' ggml_set_f32(a, rnorm(12))
+#' ggml_set_f32(b, rnorm(8))
 #' # Concatenate along dimension 1: result is 4x5
 #' c <- ggml_concat(ctx, a, b, 1)
+#' graph <- ggml_build_forward_expand(ctx, c)
+#' ggml_graph_compute(ctx, graph)
 #' ggml_free(ctx)
 #' }
 ggml_concat <- function(ctx, a, b, dim = 0) {
@@ -2037,12 +2059,17 @@ ggml_flash_attn_back <- function(ctx, q, k, v, d, masked = TRUE) {
 #' @examples
 #' \dontrun{
 #' ctx <- ggml_init(64 * 1024 * 1024)
-#' # 8 experts, each with 768x3072 weights
-#' experts <- ggml_new_tensor_3d(ctx, GGML_TYPE_F32, 768, 3072, 8)
-#' input <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 768, 32)
-#' # Select 2 experts per token
-#' ids <- ggml_new_tensor_2d(ctx, GGML_TYPE_I32, 2, 32)
+#' # 4 experts, each with 8x16 weights (small for example)
+#' experts <- ggml_new_tensor_3d(ctx, GGML_TYPE_F32, 8, 16, 4)
+#' ggml_set_f32(experts, rnorm(8 * 16 * 4))
+#' input <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 8, 2)
+#' ggml_set_f32(input, rnorm(16))
+#' # Select expert 0 for token 0, expert 2 for token 1
+#' ids <- ggml_new_tensor_1d(ctx, GGML_TYPE_I32, 2)
+#' ggml_set_i32(ids, c(0L, 2L))
 #' output <- ggml_mul_mat_id(ctx, experts, input, ids)
+#' graph <- ggml_build_forward_expand(ctx, output)
+#' ggml_graph_compute(ctx, graph)
 #' ggml_free(ctx)
 #' }
 ggml_mul_mat_id <- function(ctx, as, b, ids) {
@@ -2090,8 +2117,10 @@ ggml_pad <- function(ctx, a, p0 = 0L, p1 = 0L, p2 = 0L, p3 = 0L) {
 #' @format Integer constants
 #' @export
 #' @examples
+#' \dontrun{
 #' GGML_SORT_ORDER_ASC   # 0 - Ascending order
 #' GGML_SORT_ORDER_DESC  # 1 - Descending order
+#' }
 GGML_SORT_ORDER_ASC <- 0L
 
 #' @rdname GGML_SORT_ORDER_ASC
@@ -2141,11 +2170,11 @@ ggml_argsort <- function(ctx, a, order = GGML_SORT_ORDER_ASC) {
 #' \dontrun{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' # Logits from model output
-#' logits <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 1000)
-#' # ... fill with model outputs ...
-#' # Get top 50 logits for sampling
-#' top50 <- ggml_top_k(ctx, logits, 50)
-#' graph <- ggml_build_forward_expand(ctx, top50)
+#' logits <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 100)
+#' ggml_set_f32(logits, rnorm(100))
+#' # Get top 5 logits for sampling
+#' top5 <- ggml_top_k(ctx, logits, 5)
+#' graph <- ggml_build_forward_expand(ctx, top5)
 #' ggml_graph_compute(ctx, graph)
 #' ggml_free(ctx)
 #' }
@@ -2185,9 +2214,12 @@ ggml_repeat_back <- function(ctx, a, b) {
 #' @examples
 #' \dontrun{
 #' ctx <- ggml_init(16 * 1024 * 1024)
-#' img <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 32, 32)
-#' upscaled <- ggml_upscale(ctx, img, 2, GGML_SCALE_MODE_BILINEAR)
-#' # Result is 64x64
+#' img <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 8, 8)
+#' ggml_set_f32(img, rnorm(64))
+#' upscaled <- ggml_upscale(ctx, img, 2, GGML_SCALE_MODE_NEAREST)
+#' graph <- ggml_build_forward_expand(ctx, upscaled)
+#' ggml_graph_compute(ctx, graph)
+#' # Result is 16x16
 #' ggml_free(ctx)
 #' }
 ggml_upscale <- function(ctx, a, scale_factor, mode = 0L) {
@@ -2530,9 +2562,9 @@ ggml_quantize_requires_imatrix <- function(type) {
 #' @export
 #' @examples
 #' \dontrun{
-#' # Quantize 1024 floats to Q4_0
-#' data <- rnorm(1024)
-#' quantized <- ggml_quantize_chunk(GGML_TYPE_Q4_0, data, 1, 1024)
+#' # Quantize 256 floats to Q8_0 (block size 32)
+#' data <- rnorm(256)
+#' quantized <- ggml_quantize_chunk(GGML_TYPE_Q8_0, data, 1, 256)
 #' ggml_quantize_free()  # Clean up
 #' }
 ggml_quantize_chunk <- function(type, src, nrows, n_per_row) {

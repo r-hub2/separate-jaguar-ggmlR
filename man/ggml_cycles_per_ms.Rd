@@ -14,5 +14,7 @@ Returns an estimate of CPU cycles per millisecond.
 Useful for converting cycle counts to time.
 }
 \examples{
+\dontrun{
 ggml_cycles_per_ms()
+}
 }

@@ -28,6 +28,8 @@ b <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 4)
 ggml_set_f32(a, c(1, 2, 3))
 ggml_set_f32(b, c(1, 2, 3, 4))
 c <- ggml_out_prod(ctx, a, b)  # Result: 3x4 matrix
+graph <- ggml_build_forward_expand(ctx, c)
+ggml_graph_compute(ctx, graph)
 ggml_free(ctx)
 }
 }

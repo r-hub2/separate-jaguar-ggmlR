@@ -38,18 +38,12 @@ All these operations are fused for efficiency.
 }
 \examples{
 \dontrun{
-ctx <- ggml_init(64 * 1024 * 1024)
-
-# Attention scores: [head_dim, seq_len, n_heads, batch]
-scores <- ggml_new_tensor_4d(ctx, GGML_TYPE_F32, 64, 128, 8, 1)
-
-# Causal mask (optional)
-mask <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 128, 128)
-
-# Apply softmax with scaling
-scale <- 1.0 / sqrt(64)  # 1/sqrt(head_dim)
-attn <- ggml_soft_max_ext(ctx, scores, mask, scale, max_bias = 0.0)
-
+ctx <- ggml_init(16 * 1024 * 1024)
+scores <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 10, 10)
+ggml_set_f32(scores, rnorm(100))
+attn <- ggml_soft_max_ext(ctx, scores, NULL, 1.0, max_bias = 0.0)
+graph <- ggml_build_forward_expand(ctx, attn)
+ggml_graph_compute(ctx, graph)
 ggml_free(ctx)
 }
 }

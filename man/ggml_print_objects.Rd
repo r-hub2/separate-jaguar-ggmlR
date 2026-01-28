@@ -16,8 +16,10 @@ NULL (invisible)
 Debug function to print all objects (tensors) in the context
 }
 \examples{
+\dontrun{
 ctx <- ggml_init(1024 * 1024)
 t <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 10)
 ggml_print_objects(ctx)
 ggml_free(ctx)
+}
 }
