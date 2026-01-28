@@ -21,6 +21,6 @@ Suggests: testthat (>= 3.0.0)
 RoxygenNote: 7.3.3
 Config/testthat/edition: 3
 NeedsCompilation: yes
-Packaged: 2026-01-28 10:23:38 UTC; yuri
+Packaged: 2026-01-28 10:32:58 UTC; yuri
 Author: Yuri Baramykov [aut, cre]
 Maintainer: Yuri Baramykov <lbsbmsu@mail.ru>
