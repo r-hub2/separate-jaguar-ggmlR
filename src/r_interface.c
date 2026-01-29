@@ -782,6 +782,7 @@ SEXP R_ggml_set_zero(SEXP tensor_ptr) {
 // ============================================================================
 
 #ifdef _OPENMP
+#undef match  // R defines 'match' macro that conflicts with OpenMP pragma
 #include <omp.h>
 #endif
 

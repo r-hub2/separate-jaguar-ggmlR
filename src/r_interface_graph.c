@@ -7,6 +7,7 @@
 #include "ggml-alloc.h"
 
 #ifdef _OPENMP
+#undef match  // R defines 'match' macro that conflicts with OpenMP pragma
 #include <omp.h>
 #endif
 
