@@ -1,7 +1,7 @@
 Package: ggmlR
 Type: Package
 Title: 'GGML' Tensor Operations for Machine Learning
-Version: 0.4.1
+Version: 0.5.0
 Authors@R: person("Yuri", "Baramykov",
     email = "lbsbmsu@mail.ru",
     role = c("aut", "cre"))
@@ -9,9 +9,11 @@ Description: Provides 'R' bindings to the 'GGML' tensor library for efficient
     machine learning computation. Implements core tensor operations including
     element-wise arithmetic, reshaping, and matrix multiplication. Supports
     neural network layers (attention, convolutions, normalization), activation
-    functions, and quantization. Features multi-backend support with CPU and
-    optional 'Vulkan' GPU acceleration. See <https://github.com/ggml-org/ggml>
-    for more information about the underlying library.
+    functions, and quantization. Features optimization/training API with AdamW
+    and SGD optimizers, MSE and cross-entropy losses. Multi-backend support
+    with CPU and optional 'Vulkan' GPU acceleration.
+    See <https://github.com/ggml-org/ggml> for more information about the
+    underlying library.
 License: MIT + file LICENSE
 URL: https://github.com/Zabis13/ggmlR
 BugReports: https://github.com/Zabis13/ggmlR/issues
@@ -21,6 +23,6 @@ Suggests: testthat (>= 3.0.0)
 RoxygenNote: 7.3.3
 Config/testthat/edition: 3
 NeedsCompilation: yes
-Packaged: 2026-01-29 17:51:46 UTC; yuri
+Packaged: 2026-01-30 14:26:09 UTC; yuri
 Author: Yuri Baramykov [aut, cre]
 Maintainer: Yuri Baramykov <lbsbmsu@mail.ru>

@@ -6,7 +6,7 @@
 \alias{ggmlR-package}
 \title{ggmlR: 'GGML' Tensor Operations for Machine Learning}
 \description{
-Provides 'R' bindings to the 'GGML' tensor library for efficient machine learning computation. Implements core tensor operations including element-wise arithmetic, reshaping, and matrix multiplication. Supports neural network layers (attention, convolutions, normalization), activation functions, and quantization. Features multi-backend support with CPU and optional 'Vulkan' GPU acceleration. See \url{https://github.com/ggml-org/ggml} for more information about the underlying library.
+Provides 'R' bindings to the 'GGML' tensor library for efficient machine learning computation. Implements core tensor operations including element-wise arithmetic, reshaping, and matrix multiplication. Supports neural network layers (attention, convolutions, normalization), activation functions, and quantization. Features optimization/training API with AdamW and SGD optimizers, MSE and cross-entropy losses. Multi-backend support with CPU and optional 'Vulkan' GPU acceleration. See \url{https://github.com/ggml-org/ggml} for more information about the underlying library.
 }
 \seealso{
 Useful links:
