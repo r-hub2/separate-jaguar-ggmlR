@@ -3805,3 +3805,260 @@ SEXP R_ggml_count_equal(SEXP ctx_ptr, SEXP a_ptr, SEXP b_ptr) {
     }
     return R_MakeExternalPtr(result, R_NilValue, R_NilValue);
 }
+
+// ============================================================================
+// Advanced RoPE Functions
+// ============================================================================
+
+// RoPE custom (deprecated, use rope_ext)
+SEXP R_ggml_rope_custom(SEXP ctx_ptr, SEXP a_ptr, SEXP b_ptr,
+                        SEXP n_dims, SEXP mode, SEXP n_ctx_orig,
+                        SEXP freq_base, SEXP freq_scale, SEXP ext_factor,
+                        SEXP attn_factor, SEXP beta_fast, SEXP beta_slow) {
+    struct ggml_context * ctx = (struct ggml_context *) R_ExternalPtrAddr(ctx_ptr);
+    struct ggml_tensor * a = (struct ggml_tensor *) R_ExternalPtrAddr(a_ptr);
+    struct ggml_tensor * b = (struct ggml_tensor *) R_ExternalPtrAddr(b_ptr);
+    if (ctx == NULL || a == NULL || b == NULL) {
+        error("Invalid pointer");
+    }
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+    struct ggml_tensor * result = ggml_rope_custom(ctx, a, b,
+        asInteger(n_dims), asInteger(mode), asInteger(n_ctx_orig),
+        (float)asReal(freq_base), (float)asReal(freq_scale), (float)asReal(ext_factor),
+        (float)asReal(attn_factor), (float)asReal(beta_fast), (float)asReal(beta_slow));
+#pragma GCC diagnostic pop
+    if (result == NULL) {
+        error("Failed to create rope_custom operation");
+    }
+    return R_MakeExternalPtr(result, R_NilValue, R_NilValue);
+}
+
+SEXP R_ggml_rope_custom_inplace(SEXP ctx_ptr, SEXP a_ptr, SEXP b_ptr,
+                                SEXP n_dims, SEXP mode, SEXP n_ctx_orig,
+                                SEXP freq_base, SEXP freq_scale, SEXP ext_factor,
+                                SEXP attn_factor, SEXP beta_fast, SEXP beta_slow) {
+    struct ggml_context * ctx = (struct ggml_context *) R_ExternalPtrAddr(ctx_ptr);
+    struct ggml_tensor * a = (struct ggml_tensor *) R_ExternalPtrAddr(a_ptr);
+    struct ggml_tensor * b = (struct ggml_tensor *) R_ExternalPtrAddr(b_ptr);
+    if (ctx == NULL || a == NULL || b == NULL) {
+        error("Invalid pointer");
+    }
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+    struct ggml_tensor * result = ggml_rope_custom_inplace(ctx, a, b,
+        asInteger(n_dims), asInteger(mode), asInteger(n_ctx_orig),
+        (float)asReal(freq_base), (float)asReal(freq_scale), (float)asReal(ext_factor),
+        (float)asReal(attn_factor), (float)asReal(beta_fast), (float)asReal(beta_slow));
+#pragma GCC diagnostic pop
+    if (result == NULL) {
+        error("Failed to create rope_custom_inplace operation");
+    }
+    return R_MakeExternalPtr(result, R_NilValue, R_NilValue);
+}
+
+// RoPE multi backward
+SEXP R_ggml_rope_multi_back(SEXP ctx_ptr, SEXP a_ptr, SEXP b_ptr, SEXP c_ptr,
+                            SEXP n_dims, SEXP sections, SEXP mode, SEXP n_ctx_orig,
+                            SEXP freq_base, SEXP freq_scale, SEXP ext_factor,
+                            SEXP attn_factor, SEXP beta_fast, SEXP beta_slow) {
+    struct ggml_context * ctx = (struct ggml_context *) R_ExternalPtrAddr(ctx_ptr);
+    struct ggml_tensor * a = (struct ggml_tensor *) R_ExternalPtrAddr(a_ptr);
+    struct ggml_tensor * b = (struct ggml_tensor *) R_ExternalPtrAddr(b_ptr);
+    struct ggml_tensor * c = c_ptr == R_NilValue ? NULL : (struct ggml_tensor *) R_ExternalPtrAddr(c_ptr);
+    if (ctx == NULL || a == NULL || b == NULL) {
+        error("Invalid pointer");
+    }
+    int sect[4] = {0, 0, 0, 0};
+    if (sections != R_NilValue && length(sections) == 4) {
+        int * s = INTEGER(sections);
+        sect[0] = s[0]; sect[1] = s[1]; sect[2] = s[2]; sect[3] = s[3];
+    }
+    struct ggml_tensor * result = ggml_rope_multi_back(ctx, a, b, c,
+        asInteger(n_dims), sect, asInteger(mode), asInteger(n_ctx_orig),
+        (float)asReal(freq_base), (float)asReal(freq_scale), (float)asReal(ext_factor),
+        (float)asReal(attn_factor), (float)asReal(beta_fast), (float)asReal(beta_slow));
+    if (result == NULL) {
+        error("Failed to create rope_multi_back operation");
+    }
+    return R_MakeExternalPtr(result, R_NilValue, R_NilValue);
+}
+
+// ============================================================================
+// Graph Construction & Introspection Functions
+// ============================================================================
+
+// Build backward graph for training
+SEXP R_ggml_build_backward_expand(SEXP ctx_ptr, SEXP graph_ptr) {
+    struct ggml_context * ctx = (struct ggml_context *) R_ExternalPtrAddr(ctx_ptr);
+    struct ggml_cgraph * graph = (struct ggml_cgraph *) R_ExternalPtrAddr(graph_ptr);
+    if (ctx == NULL || graph == NULL) {
+        error("Invalid pointer");
+    }
+    ggml_build_backward_expand(ctx, graph, NULL);
+    return R_NilValue;
+}
+
+// Add node to graph
+SEXP R_ggml_graph_add_node(SEXP graph_ptr, SEXP tensor_ptr) {
+    struct ggml_cgraph * graph = (struct ggml_cgraph *) R_ExternalPtrAddr(graph_ptr);
+    struct ggml_tensor * tensor = (struct ggml_tensor *) R_ExternalPtrAddr(tensor_ptr);
+    if (graph == NULL || tensor == NULL) {
+        error("Invalid pointer");
+    }
+    ggml_graph_add_node(graph, tensor);
+    return R_NilValue;
+}
+
+// Clear graph
+SEXP R_ggml_graph_clear(SEXP graph_ptr) {
+    struct ggml_cgraph * graph = (struct ggml_cgraph *) R_ExternalPtrAddr(graph_ptr);
+    if (graph == NULL) {
+        error("Invalid graph pointer");
+    }
+    ggml_graph_clear(graph);
+    return R_NilValue;
+}
+
+// Copy graph
+SEXP R_ggml_graph_cpy(SEXP src_ptr, SEXP dst_ptr) {
+    struct ggml_cgraph * src = (struct ggml_cgraph *) R_ExternalPtrAddr(src_ptr);
+    struct ggml_cgraph * dst = (struct ggml_cgraph *) R_ExternalPtrAddr(dst_ptr);
+    if (src == NULL || dst == NULL) {
+        error("Invalid graph pointer");
+    }
+    ggml_graph_cpy(src, dst);
+    return R_NilValue;
+}
+
+// Duplicate graph
+SEXP R_ggml_graph_dup(SEXP ctx_ptr, SEXP graph_ptr, SEXP force_grads) {
+    struct ggml_context * ctx = (struct ggml_context *) R_ExternalPtrAddr(ctx_ptr);
+    struct ggml_cgraph * graph = (struct ggml_cgraph *) R_ExternalPtrAddr(graph_ptr);
+    if (ctx == NULL || graph == NULL) {
+        error("Invalid pointer");
+    }
+    struct ggml_cgraph * result = ggml_graph_dup(ctx, graph, asLogical(force_grads));
+    if (result == NULL) {
+        error("Failed to duplicate graph");
+    }
+    return R_MakeExternalPtr(result, R_NilValue, R_NilValue);
+}
+
+// Get gradient tensor from graph
+SEXP R_ggml_graph_get_grad(SEXP graph_ptr, SEXP node_ptr) {
+    struct ggml_cgraph * graph = (struct ggml_cgraph *) R_ExternalPtrAddr(graph_ptr);
+    struct ggml_tensor * node = (struct ggml_tensor *) R_ExternalPtrAddr(node_ptr);
+    if (graph == NULL || node == NULL) {
+        error("Invalid pointer");
+    }
+    struct ggml_tensor * result = ggml_graph_get_grad(graph, node);
+    if (result == NULL) {
+        return R_NilValue;
+    }
+    return R_MakeExternalPtr(result, R_NilValue, R_NilValue);
+}
+
+// Get gradient accumulator from graph
+SEXP R_ggml_graph_get_grad_acc(SEXP graph_ptr, SEXP node_ptr) {
+    struct ggml_cgraph * graph = (struct ggml_cgraph *) R_ExternalPtrAddr(graph_ptr);
+    struct ggml_tensor * node = (struct ggml_tensor *) R_ExternalPtrAddr(node_ptr);
+    if (graph == NULL || node == NULL) {
+        error("Invalid pointer");
+    }
+    struct ggml_tensor * result = ggml_graph_get_grad_acc(graph, node);
+    if (result == NULL) {
+        return R_NilValue;
+    }
+    return R_MakeExternalPtr(result, R_NilValue, R_NilValue);
+}
+
+// ============================================================================
+// Advanced Attention/Loss Functions
+// ============================================================================
+
+// Cross entropy loss
+SEXP R_ggml_cross_entropy_loss(SEXP ctx_ptr, SEXP a_ptr, SEXP b_ptr) {
+    struct ggml_context * ctx = (struct ggml_context *) R_ExternalPtrAddr(ctx_ptr);
+    struct ggml_tensor * a = (struct ggml_tensor *) R_ExternalPtrAddr(a_ptr);
+    struct ggml_tensor * b = (struct ggml_tensor *) R_ExternalPtrAddr(b_ptr);
+    if (ctx == NULL || a == NULL || b == NULL) {
+        error("Invalid pointer");
+    }
+    struct ggml_tensor * result = ggml_cross_entropy_loss(ctx, a, b);
+    if (result == NULL) {
+        error("Failed to create cross_entropy_loss operation");
+    }
+    return R_MakeExternalPtr(result, R_NilValue, R_NilValue);
+}
+
+// Cross entropy loss backward
+SEXP R_ggml_cross_entropy_loss_back(SEXP ctx_ptr, SEXP a_ptr, SEXP b_ptr, SEXP c_ptr) {
+    struct ggml_context * ctx = (struct ggml_context *) R_ExternalPtrAddr(ctx_ptr);
+    struct ggml_tensor * a = (struct ggml_tensor *) R_ExternalPtrAddr(a_ptr);
+    struct ggml_tensor * b = (struct ggml_tensor *) R_ExternalPtrAddr(b_ptr);
+    struct ggml_tensor * c = (struct ggml_tensor *) R_ExternalPtrAddr(c_ptr);
+    if (ctx == NULL || a == NULL || b == NULL || c == NULL) {
+        error("Invalid pointer");
+    }
+    struct ggml_tensor * result = ggml_cross_entropy_loss_back(ctx, a, b, c);
+    if (result == NULL) {
+        error("Failed to create cross_entropy_loss_back operation");
+    }
+    return R_MakeExternalPtr(result, R_NilValue, R_NilValue);
+}
+
+// Cumulative sum
+SEXP R_ggml_cumsum(SEXP ctx_ptr, SEXP a_ptr) {
+    struct ggml_context * ctx = (struct ggml_context *) R_ExternalPtrAddr(ctx_ptr);
+    struct ggml_tensor * a = (struct ggml_tensor *) R_ExternalPtrAddr(a_ptr);
+    if (ctx == NULL || a == NULL) {
+        error("Invalid pointer");
+    }
+    struct ggml_tensor * result = ggml_cumsum(ctx, a);
+    if (result == NULL) {
+        error("Failed to create cumsum operation");
+    }
+    return R_MakeExternalPtr(result, R_NilValue, R_NilValue);
+}
+
+// Flash attention set precision
+SEXP R_ggml_flash_attn_ext_set_prec(SEXP tensor_ptr, SEXP prec) {
+    struct ggml_tensor * tensor = (struct ggml_tensor *) R_ExternalPtrAddr(tensor_ptr);
+    if (tensor == NULL) {
+        error("Invalid tensor pointer");
+    }
+    ggml_flash_attn_ext_set_prec(tensor, (enum ggml_prec) asInteger(prec));
+    return R_NilValue;
+}
+
+// Flash attention get precision
+SEXP R_ggml_flash_attn_ext_get_prec(SEXP tensor_ptr) {
+    struct ggml_tensor * tensor = (struct ggml_tensor *) R_ExternalPtrAddr(tensor_ptr);
+    if (tensor == NULL) {
+        error("Invalid tensor pointer");
+    }
+    return ScalarInteger((int) ggml_flash_attn_ext_get_prec(tensor));
+}
+
+// Flash attention add sinks
+SEXP R_ggml_flash_attn_ext_add_sinks(SEXP tensor_ptr, SEXP sinks_ptr) {
+    struct ggml_tensor * tensor = (struct ggml_tensor *) R_ExternalPtrAddr(tensor_ptr);
+    struct ggml_tensor * sinks = (struct ggml_tensor *) R_ExternalPtrAddr(sinks_ptr);
+    if (tensor == NULL || sinks == NULL) {
+        error("Invalid tensor pointer");
+    }
+    ggml_flash_attn_ext_add_sinks(tensor, sinks);
+    return R_NilValue;
+}
+
+// Soft max add sinks
+SEXP R_ggml_soft_max_add_sinks(SEXP tensor_ptr, SEXP sinks_ptr) {
+    struct ggml_tensor * tensor = (struct ggml_tensor *) R_ExternalPtrAddr(tensor_ptr);
+    struct ggml_tensor * sinks = (struct ggml_tensor *) R_ExternalPtrAddr(sinks_ptr);
+    if (tensor == NULL || sinks == NULL) {
+        error("Invalid tensor pointer");
+    }
+    ggml_soft_max_add_sinks(tensor, sinks);
+    return R_NilValue;
+}

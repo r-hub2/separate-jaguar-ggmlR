@@ -177,6 +177,29 @@ extern SEXP R_ggml_are_same_stride(SEXP, SEXP);
 extern SEXP R_ggml_can_repeat(SEXP, SEXP);
 extern SEXP R_ggml_count_equal(SEXP, SEXP, SEXP);
 
+// Advanced RoPE functions (defined in r_interface_graph.c)
+extern SEXP R_ggml_rope_custom(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
+extern SEXP R_ggml_rope_custom_inplace(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
+extern SEXP R_ggml_rope_multi_back(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
+
+// Graph Construction & Introspection functions (defined in r_interface_graph.c)
+extern SEXP R_ggml_build_backward_expand(SEXP, SEXP);
+extern SEXP R_ggml_graph_add_node(SEXP, SEXP);
+extern SEXP R_ggml_graph_clear(SEXP);
+extern SEXP R_ggml_graph_cpy(SEXP, SEXP);
+extern SEXP R_ggml_graph_dup(SEXP, SEXP, SEXP);
+extern SEXP R_ggml_graph_get_grad(SEXP, SEXP);
+extern SEXP R_ggml_graph_get_grad_acc(SEXP, SEXP);
+
+// Advanced Attention/Loss functions (defined in r_interface_graph.c)
+extern SEXP R_ggml_cross_entropy_loss(SEXP, SEXP, SEXP);
+extern SEXP R_ggml_cross_entropy_loss_back(SEXP, SEXP, SEXP, SEXP);
+extern SEXP R_ggml_cumsum(SEXP, SEXP);
+extern SEXP R_ggml_flash_attn_ext_set_prec(SEXP, SEXP);
+extern SEXP R_ggml_flash_attn_ext_get_prec(SEXP);
+extern SEXP R_ggml_flash_attn_ext_add_sinks(SEXP, SEXP);
+extern SEXP R_ggml_soft_max_add_sinks(SEXP, SEXP);
+
 // ============================================================================
 // Context Management
 // ============================================================================
@@ -1485,6 +1508,29 @@ static const R_CallMethodDef CallEntries[] = {
     {"R_ggml_are_same_stride",                  (DL_FUNC) &R_ggml_are_same_stride,                   2},
     {"R_ggml_can_repeat",                       (DL_FUNC) &R_ggml_can_repeat,                        2},
     {"R_ggml_count_equal",                      (DL_FUNC) &R_ggml_count_equal,                       3},
+
+    // Advanced RoPE
+    {"R_ggml_rope_custom",                      (DL_FUNC) &R_ggml_rope_custom,                      12},
+    {"R_ggml_rope_custom_inplace",              (DL_FUNC) &R_ggml_rope_custom_inplace,              12},
+    {"R_ggml_rope_multi_back",                  (DL_FUNC) &R_ggml_rope_multi_back,                  14},
+
+    // Graph Construction & Introspection
+    {"R_ggml_build_backward_expand",            (DL_FUNC) &R_ggml_build_backward_expand,             2},
+    {"R_ggml_graph_add_node",                   (DL_FUNC) &R_ggml_graph_add_node,                    2},
+    {"R_ggml_graph_clear",                      (DL_FUNC) &R_ggml_graph_clear,                       1},
+    {"R_ggml_graph_cpy",                        (DL_FUNC) &R_ggml_graph_cpy,                         2},
+    {"R_ggml_graph_dup",                        (DL_FUNC) &R_ggml_graph_dup,                         3},
+    {"R_ggml_graph_get_grad",                   (DL_FUNC) &R_ggml_graph_get_grad,                    2},
+    {"R_ggml_graph_get_grad_acc",               (DL_FUNC) &R_ggml_graph_get_grad_acc,                2},
+
+    // Advanced Attention/Loss
+    {"R_ggml_cross_entropy_loss",               (DL_FUNC) &R_ggml_cross_entropy_loss,                3},
+    {"R_ggml_cross_entropy_loss_back",          (DL_FUNC) &R_ggml_cross_entropy_loss_back,           4},
+    {"R_ggml_cumsum",                           (DL_FUNC) &R_ggml_cumsum,                            2},
+    {"R_ggml_flash_attn_ext_set_prec",          (DL_FUNC) &R_ggml_flash_attn_ext_set_prec,           2},
+    {"R_ggml_flash_attn_ext_get_prec",          (DL_FUNC) &R_ggml_flash_attn_ext_get_prec,           1},
+    {"R_ggml_flash_attn_ext_add_sinks",         (DL_FUNC) &R_ggml_flash_attn_ext_add_sinks,          2},
+    {"R_ggml_soft_max_add_sinks",               (DL_FUNC) &R_ggml_soft_max_add_sinks,                2},
 
     {NULL, NULL, 0}
 };
