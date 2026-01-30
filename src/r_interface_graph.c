@@ -3530,7 +3530,7 @@ SEXP R_ggml_type_name(SEXP type_sexp) {
 // Get type size as float (for quantized types)
 SEXP R_ggml_type_sizef(SEXP type_sexp) {
     enum ggml_type type = (enum ggml_type) asInteger(type_sexp);
-    double sizef = ggml_type_sizef(type);
+    double sizef = (double)ggml_row_size(type, 1);
     return ScalarReal(sizef);
 }
 
