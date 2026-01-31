@@ -5,6 +5,7 @@
 #include "ggml-backend.h"
 #include "ggml-cpu.h"
 #include "ggml-alloc.h"
+#include "ggml-impl.h"
 
 #ifdef _OPENMP
 #undef match  // R defines 'match' macro that conflicts with OpenMP pragma
@@ -3806,57 +3807,6 @@ SEXP R_ggml_count_equal(SEXP ctx_ptr, SEXP a_ptr, SEXP b_ptr) {
     return R_MakeExternalPtr(result, R_NilValue, R_NilValue);
 }
 
-// ============================================================================
-// Advanced RoPE Functions
-// ============================================================================
-
-// RoPE custom (deprecated, use rope_ext)
-SEXP R_ggml_rope_custom(SEXP ctx_ptr, SEXP a_ptr, SEXP b_ptr,
-                        SEXP n_dims, SEXP mode, SEXP n_ctx_orig,
-                        SEXP freq_base, SEXP freq_scale, SEXP ext_factor,
-                        SEXP attn_factor, SEXP beta_fast, SEXP beta_slow) {
-    struct ggml_context * ctx = (struct ggml_context *) R_ExternalPtrAddr(ctx_ptr);
-    struct ggml_tensor * a = (struct ggml_tensor *) R_ExternalPtrAddr(a_ptr);
-    struct ggml_tensor * b = (struct ggml_tensor *) R_ExternalPtrAddr(b_ptr);
-    if (ctx == NULL || a == NULL || b == NULL) {
-        error("Invalid pointer");
-    }
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-    struct ggml_tensor * result = ggml_rope_custom(ctx, a, b,
-        asInteger(n_dims), asInteger(mode), asInteger(n_ctx_orig),
-        (float)asReal(freq_base), (float)asReal(freq_scale), (float)asReal(ext_factor),
-        (float)asReal(attn_factor), (float)asReal(beta_fast), (float)asReal(beta_slow));
-#pragma GCC diagnostic pop
-    if (result == NULL) {
-        error("Failed to create rope_custom operation");
-    }
-    return R_MakeExternalPtr(result, R_NilValue, R_NilValue);
-}
-
-SEXP R_ggml_rope_custom_inplace(SEXP ctx_ptr, SEXP a_ptr, SEXP b_ptr,
-                                SEXP n_dims, SEXP mode, SEXP n_ctx_orig,
-                                SEXP freq_base, SEXP freq_scale, SEXP ext_factor,
-                                SEXP attn_factor, SEXP beta_fast, SEXP beta_slow) {
-    struct ggml_context * ctx = (struct ggml_context *) R_ExternalPtrAddr(ctx_ptr);
-    struct ggml_tensor * a = (struct ggml_tensor *) R_ExternalPtrAddr(a_ptr);
-    struct ggml_tensor * b = (struct ggml_tensor *) R_ExternalPtrAddr(b_ptr);
-    if (ctx == NULL || a == NULL || b == NULL) {
-        error("Invalid pointer");
-    }
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-    struct ggml_tensor * result = ggml_rope_custom_inplace(ctx, a, b,
-        asInteger(n_dims), asInteger(mode), asInteger(n_ctx_orig),
-        (float)asReal(freq_base), (float)asReal(freq_scale), (float)asReal(ext_factor),
-        (float)asReal(attn_factor), (float)asReal(beta_fast), (float)asReal(beta_slow));
-#pragma GCC diagnostic pop
-    if (result == NULL) {
-        error("Failed to create rope_custom_inplace operation");
-    }
-    return R_MakeExternalPtr(result, R_NilValue, R_NilValue);
-}
-
 // RoPE multi backward
 SEXP R_ggml_rope_multi_back(SEXP ctx_ptr, SEXP a_ptr, SEXP b_ptr, SEXP c_ptr,
                             SEXP n_dims, SEXP sections, SEXP mode, SEXP n_ctx_orig,
@@ -4060,5 +4010,258 @@ SEXP R_ggml_soft_max_add_sinks(SEXP tensor_ptr, SEXP sinks_ptr) {
         error("Invalid tensor pointer");
     }
     ggml_soft_max_add_sinks(tensor, sinks);
+    return R_NilValue;
+}
+
+// ============================================================================
+// Graph Introspection Functions
+// ============================================================================
+
+// Create a view of a subgraph (nodes from i0 to i1)
+// Note: ggml_graph_view returns struct by value, we allocate and copy
+SEXP R_ggml_graph_view(SEXP graph_ptr, SEXP i0, SEXP i1) {
+    struct ggml_cgraph * graph = (struct ggml_cgraph *) R_ExternalPtrAddr(graph_ptr);
+    if (graph == NULL) {
+        error("Invalid graph pointer");
+    }
+
+    int start = asInteger(i0);
+    int end = asInteger(i1);
+
+    // ggml_graph_view returns struct by value
+    struct ggml_cgraph view = ggml_graph_view(graph, start, end);
+
+    // Allocate memory for the view copy
+    struct ggml_cgraph * view_copy = (struct ggml_cgraph *) malloc(sizeof(struct ggml_cgraph));
+    if (view_copy == NULL) {
+        error("Failed to allocate memory for graph view");
+    }
+    *view_copy = view;
+
+    SEXP ptr = PROTECT(R_MakeExternalPtr(view_copy, R_NilValue, R_NilValue));
+    // Note: caller is responsible for freeing this memory
+    UNPROTECT(1);
+    return ptr;
+}
+
+// Check if operation can be done in-place
+SEXP R_ggml_op_can_inplace(SEXP op_sexp) {
+    enum ggml_op op = (enum ggml_op) asInteger(op_sexp);
+    return ScalarLogical(ggml_op_can_inplace(op));
+}
+
+// Check if two tensors have the same layout (type, shape, strides)
+// Note: ggml_are_same_layout is static inline in ggml-impl.h, we reimplement it
+SEXP R_ggml_are_same_layout(SEXP a_ptr, SEXP b_ptr) {
+    struct ggml_tensor * a = (struct ggml_tensor *) R_ExternalPtrAddr(a_ptr);
+    struct ggml_tensor * b = (struct ggml_tensor *) R_ExternalPtrAddr(b_ptr);
+    if (a == NULL || b == NULL) {
+        error("Invalid tensor pointer");
+    }
+
+    // Check type
+    if (a->type != b->type) {
+        return ScalarLogical(FALSE);
+    }
+
+    // Check dimensions and strides
+    for (int i = 0; i < GGML_MAX_DIMS; i++) {
+        if (a->ne[i] != b->ne[i]) {
+            return ScalarLogical(FALSE);
+        }
+        if (a->nb[i] != b->nb[i]) {
+            return ScalarLogical(FALSE);
+        }
+    }
+
+    return ScalarLogical(TRUE);
+}
+
+// ============================================================================
+// Logging & Debugging Functions
+// ============================================================================
+
+// Static flag to track if R logging is enabled
+static int r_log_enabled = 0;
+
+// R-compatible log callback that redirects to R's message system
+static void r_ggml_log_callback(enum ggml_log_level level, const char * text, void * user_data) {
+    (void)user_data;
+    if (text == NULL) return;
+
+    switch (level) {
+        case GGML_LOG_LEVEL_DEBUG:
+        case GGML_LOG_LEVEL_INFO:
+        case GGML_LOG_LEVEL_CONT:
+            Rprintf("%s", text);
+            break;
+        case GGML_LOG_LEVEL_WARN:
+            REprintf("Warning: %s", text);
+            break;
+        case GGML_LOG_LEVEL_ERROR:
+            REprintf("Error: %s", text);
+            break;
+        default:
+            Rprintf("%s", text);
+            break;
+    }
+}
+
+// Enable R-compatible logging
+SEXP R_ggml_log_set_r(void) {
+    ggml_log_set(r_ggml_log_callback, NULL);
+    r_log_enabled = 1;
+    return R_NilValue;
+}
+
+// Disable logging (set to NULL - stderr)
+SEXP R_ggml_log_set_default(void) {
+    ggml_log_set(NULL, NULL);
+    r_log_enabled = 0;
+    return R_NilValue;
+}
+
+// Check if R logging is enabled
+SEXP R_ggml_log_is_r_enabled(void) {
+    return ScalarLogical(r_log_enabled);
+}
+
+// Static flag for R abort handler
+static int r_abort_enabled = 0;
+
+// R-compatible abort callback
+static void r_ggml_abort_callback(const char * error_message) {
+    if (error_message != NULL) {
+        Rf_error("GGML abort: %s", error_message);
+    } else {
+        Rf_error("GGML abort: unknown error");
+    }
+}
+
+// Enable R-compatible abort handling
+SEXP R_ggml_set_abort_callback_r(void) {
+    ggml_set_abort_callback(r_ggml_abort_callback);
+    r_abort_enabled = 1;
+    return R_NilValue;
+}
+
+// Disable custom abort (restore default)
+SEXP R_ggml_set_abort_callback_default(void) {
+    ggml_set_abort_callback(NULL);
+    r_abort_enabled = 0;
+    return R_NilValue;
+}
+
+// Check if R abort handler is enabled
+SEXP R_ggml_abort_is_r_enabled(void) {
+    return ScalarLogical(r_abort_enabled);
+}
+
+// ============================================================================
+// Tensor Op Params Functions
+// ============================================================================
+
+// Get op_params as raw bytes
+SEXP R_ggml_get_op_params(SEXP tensor_ptr) {
+    struct ggml_tensor * tensor = (struct ggml_tensor *) R_ExternalPtrAddr(tensor_ptr);
+    if (tensor == NULL) {
+        error("Invalid tensor pointer");
+    }
+
+    size_t size = GGML_MAX_OP_PARAMS;
+    SEXP result = PROTECT(allocVector(RAWSXP, size));
+    memcpy(RAW(result), tensor->op_params, size);
+    UNPROTECT(1);
+    return result;
+}
+
+// Set op_params from raw bytes
+SEXP R_ggml_set_op_params(SEXP tensor_ptr, SEXP params) {
+    struct ggml_tensor * tensor = (struct ggml_tensor *) R_ExternalPtrAddr(tensor_ptr);
+    if (tensor == NULL) {
+        error("Invalid tensor pointer");
+    }
+
+    if (TYPEOF(params) != RAWSXP) {
+        error("params must be a raw vector");
+    }
+
+    size_t len = LENGTH(params);
+    if (len > GGML_MAX_OP_PARAMS) {
+        error("params too large (max %d bytes)", GGML_MAX_OP_PARAMS);
+    }
+
+    memset(tensor->op_params, 0, GGML_MAX_OP_PARAMS);
+    memcpy(tensor->op_params, RAW(params), len);
+    return R_NilValue;
+}
+
+// Get single int32 from op_params at index
+SEXP R_ggml_get_op_params_i32(SEXP tensor_ptr, SEXP index) {
+    struct ggml_tensor * tensor = (struct ggml_tensor *) R_ExternalPtrAddr(tensor_ptr);
+    if (tensor == NULL) {
+        error("Invalid tensor pointer");
+    }
+
+    int idx = asInteger(index);
+    int max_idx = GGML_MAX_OP_PARAMS / sizeof(int32_t);
+    if (idx < 0 || idx >= max_idx) {
+        error("Index out of range (0-%d)", max_idx - 1);
+    }
+
+    int32_t * params = (int32_t *)tensor->op_params;
+    return ScalarInteger(params[idx]);
+}
+
+// Set single int32 in op_params at index
+SEXP R_ggml_set_op_params_i32(SEXP tensor_ptr, SEXP index, SEXP value) {
+    struct ggml_tensor * tensor = (struct ggml_tensor *) R_ExternalPtrAddr(tensor_ptr);
+    if (tensor == NULL) {
+        error("Invalid tensor pointer");
+    }
+
+    int idx = asInteger(index);
+    int max_idx = GGML_MAX_OP_PARAMS / sizeof(int32_t);
+    if (idx < 0 || idx >= max_idx) {
+        error("Index out of range (0-%d)", max_idx - 1);
+    }
+
+    int32_t * params = (int32_t *)tensor->op_params;
+    params[idx] = asInteger(value);
+    return R_NilValue;
+}
+
+// Get single float from op_params at index
+SEXP R_ggml_get_op_params_f32(SEXP tensor_ptr, SEXP index) {
+    struct ggml_tensor * tensor = (struct ggml_tensor *) R_ExternalPtrAddr(tensor_ptr);
+    if (tensor == NULL) {
+        error("Invalid tensor pointer");
+    }
+
+    int idx = asInteger(index);
+    int max_idx = GGML_MAX_OP_PARAMS / sizeof(float);
+    if (idx < 0 || idx >= max_idx) {
+        error("Index out of range (0-%d)", max_idx - 1);
+    }
+
+    float * params = (float *)tensor->op_params;
+    return ScalarReal((double)params[idx]);
+}
+
+// Set single float in op_params at index
+SEXP R_ggml_set_op_params_f32(SEXP tensor_ptr, SEXP index, SEXP value) {
+    struct ggml_tensor * tensor = (struct ggml_tensor *) R_ExternalPtrAddr(tensor_ptr);
+    if (tensor == NULL) {
+        error("Invalid tensor pointer");
+    }
+
+    int idx = asInteger(index);
+    int max_idx = GGML_MAX_OP_PARAMS / sizeof(float);
+    if (idx < 0 || idx >= max_idx) {
+        error("Index out of range (0-%d)", max_idx - 1);
+    }
+
+    float * params = (float *)tensor->op_params;
+    params[idx] = (float)asReal(value);
     return R_NilValue;
 }
