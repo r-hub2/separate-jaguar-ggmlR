@@ -1,7 +1,7 @@
 Package: ggmlR
 Type: Package
 Title: 'GGML' Tensor Operations for Machine Learning
-Version: 0.5.0
+Version: 0.5.1
 Authors@R: person("Yuri", "Baramykov",
     email = "lbsbmsu@mail.ru",
     role = c("aut", "cre"))
@@ -23,6 +23,6 @@ Suggests: testthat (>= 3.0.0)
 RoxygenNote: 7.3.3
 Config/testthat/edition: 3
 NeedsCompilation: yes
-Packaged: 2026-01-31 07:46:43 UTC; yuri
+Packaged: 2026-02-01 14:47:23 UTC; yuri
 Author: Yuri Baramykov [aut, cre]
 Maintainer: Yuri Baramykov <lbsbmsu@mail.ru>
