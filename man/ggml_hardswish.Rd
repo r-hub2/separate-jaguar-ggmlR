@@ -20,7 +20,7 @@ HardSwish(x) = x * ReLU6(x + 3) / 6 = x * min(max(0, x + 3), 6) / 6.
 Used in MobileNetV3 and other efficient architectures.
 }
 \examples{
-\dontrun{
+\donttest{
 ctx <- ggml_init(16 * 1024 * 1024)
 a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
 ggml_set_f32(a, c(-4, -1, 0, 1, 4))

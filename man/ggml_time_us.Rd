@@ -14,7 +14,7 @@ Returns the current time in microseconds since the timer was initialized.
 More precise than ggml_time_ms() for micro-benchmarking.
 }
 \examples{
-\dontrun{
+\donttest{
 ggml_time_init()
 start <- ggml_time_us()
 Sys.sleep(0.001)

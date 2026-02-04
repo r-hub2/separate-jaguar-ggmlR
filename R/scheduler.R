@@ -13,7 +13,7 @@
 #' @return Scheduler pointer
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' if (ggml_vulkan_available() && ggml_vulkan_device_count() >= 2) {
 #'   # Create two GPU backends (CPU is added automatically)
 #'   gpu1 <- ggml_vulkan_init(0)
@@ -53,9 +53,11 @@ ggml_backend_sched_new <- function(backends, parallel = TRUE, graph_size = 2048)
 #' @return NULL (invisible)
 #' @export
 #' @examples
-#' \dontrun{
-#' sched <- ggml_backend_sched_new(list(gpu_backend))
+#' \donttest{
+#' cpu <- ggml_backend_cpu_init()
+#' sched <- ggml_backend_sched_new(list(cpu))
 #' ggml_backend_sched_free(sched)
+#' ggml_backend_free(cpu)
 #' }
 ggml_backend_sched_free <- function(sched) {
   invisible(.Call("R_ggml_backend_sched_free", sched, PACKAGE = "ggmlR"))
@@ -71,16 +73,18 @@ ggml_backend_sched_free <- function(sched) {
 #' @return Logical indicating success
 #' @export
 #' @examples
-#' \dontrun{
-#' sched <- ggml_backend_sched_new(list(gpu_backend))
+#' \donttest{
+#' cpu <- ggml_backend_cpu_init()
+#' sched <- ggml_backend_sched_new(list(cpu))
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 1000)
 #' b <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 1000)
 #' c <- ggml_add(ctx, a, b)
 #' graph <- ggml_build_forward_expand(ctx, c)
-#'
-#' # Reserve memory based on this graph
 #' ggml_backend_sched_reserve(sched, graph)
+#' ggml_backend_sched_free(sched)
+#' ggml_backend_free(cpu)
+#' ggml_free(ctx)
 #' }
 ggml_backend_sched_reserve <- function(sched, graph) {
   .Call("R_ggml_backend_sched_reserve", sched, graph, PACKAGE = "ggmlR")
@@ -183,7 +187,7 @@ ggml_backend_sched_alloc_graph <- function(sched, graph) {
 #' @return Status code (0 = success)
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' # Multi-GPU example
 #' if (ggml_vulkan_available() && ggml_vulkan_device_count() >= 2) {
 #'   gpu1 <- ggml_vulkan_init(0)

@@ -52,7 +52,7 @@ Key features:
 - Optional logit soft-capping for numerical stability
 }
 \examples{
-\dontrun{
+\donttest{
 ctx <- ggml_init(64 * 1024 * 1024)
 head_dim <- 64
 n_head <- 8

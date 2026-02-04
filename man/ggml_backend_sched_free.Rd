@@ -16,8 +16,10 @@ NULL (invisible)
 Releases resources associated with the backend scheduler.
 }
 \examples{
-\dontrun{
-sched <- ggml_backend_sched_new(list(gpu_backend))
+\donttest{
+cpu <- ggml_backend_cpu_init()
+sched <- ggml_backend_sched_new(list(cpu))
 ggml_backend_sched_free(sched)
+ggml_backend_free(cpu)
 }
 }

@@ -14,7 +14,7 @@
 #' @export
 #' @family logging
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ggml_log_set_r()
 #' # Now GGML messages will appear in R console
 #' }
@@ -55,7 +55,7 @@ ggml_log_is_r_enabled <- function() {
 #' @export
 #' @family logging
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ggml_set_abort_callback_r()
 #' # Now GGML aborts will become R errors
 #' result <- tryCatch({

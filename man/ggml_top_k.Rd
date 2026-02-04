@@ -22,7 +22,7 @@ Useful for sampling strategies in language models (top-k sampling).
 Note: the resulting indices are in no particular order within top-k.
 }
 \examples{
-\dontrun{
+\donttest{
 ctx <- ggml_init(16 * 1024 * 1024)
 # Logits from model output
 logits <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 100)

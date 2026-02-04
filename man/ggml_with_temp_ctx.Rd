@@ -19,7 +19,7 @@ Creates a temporary context, executes code, and frees it automatically.
 Useful when you need to create large temporary tensors.
 }
 \examples{
-\dontrun{
+\donttest{
 # Create tensors in temporary context
 result <- ggml_with_temp_ctx(1024 * 1024, {
   a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 10)

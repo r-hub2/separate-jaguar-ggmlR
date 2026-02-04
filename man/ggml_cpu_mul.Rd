@@ -19,7 +19,7 @@ Performs element-wise multiplication of two tensors using direct CPU computation
 Returns the result as an R numeric vector. Does NOT use computation graphs.
 }
 \examples{
-\dontrun{
+\donttest{
 ctx <- ggml_init(1024 * 1024)
 a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
 b <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)

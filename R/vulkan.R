@@ -20,7 +20,7 @@ ggml_vulkan_available <- function() {
 #' @return Integer count of Vulkan devices (0 if Vulkan not available)
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' if (ggml_vulkan_available()) {
 #'   ggml_vulkan_device_count()
 #' }
@@ -36,7 +36,7 @@ ggml_vulkan_device_count <- function() {
 #' @return List of device information (index, name, memory)
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' if (ggml_vulkan_available() && ggml_vulkan_device_count() > 0) {
 #'   devices <- ggml_vulkan_list_devices()
 #'   print(devices)
@@ -54,7 +54,7 @@ ggml_vulkan_list_devices <- function() {
 #' @return Character string with device description
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' if (ggml_vulkan_available() && ggml_vulkan_device_count() > 0) {
 #'   ggml_vulkan_device_description(0)
 #' }
@@ -71,7 +71,7 @@ ggml_vulkan_device_description <- function(device = 0L) {
 #' @return Named list with 'free' and 'total' memory in bytes
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' if (ggml_vulkan_available() && ggml_vulkan_device_count() > 0) {
 #'   mem <- ggml_vulkan_device_memory(0)
 #'   cat("Free:", mem$free / 1e9, "GB\n")
@@ -91,7 +91,7 @@ ggml_vulkan_device_memory <- function(device = 0L) {
 #' @return Vulkan backend pointer
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' if (ggml_vulkan_available() && ggml_vulkan_device_count() > 0) {
 #'   backend <- ggml_vulkan_init(0)
 #'   print(ggml_vulkan_backend_name(backend))
@@ -110,7 +110,7 @@ ggml_vulkan_init <- function(device = 0L) {
 #' @return NULL (invisible)
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' if (ggml_vulkan_available() && ggml_vulkan_device_count() > 0) {
 #'   backend <- ggml_vulkan_init(0)
 #'   ggml_vulkan_free(backend)
@@ -128,7 +128,7 @@ ggml_vulkan_free <- function(backend) {
 #' @return Logical indicating if backend is Vulkan
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' if (ggml_vulkan_available() && ggml_vulkan_device_count() > 0) {
 #'   vk_backend <- ggml_vulkan_init(0)
 #'   cpu_backend <- ggml_backend_cpu_init()
@@ -152,7 +152,7 @@ ggml_vulkan_is_backend <- function(backend) {
 #' @return Character string with backend name
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' if (ggml_vulkan_available() && ggml_vulkan_device_count() > 0) {
 #'   backend <- ggml_vulkan_init(0)
 #'   print(ggml_vulkan_backend_name(backend))

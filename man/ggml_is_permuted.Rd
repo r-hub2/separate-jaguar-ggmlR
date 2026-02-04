@@ -16,7 +16,7 @@ Logical
 Returns TRUE if tensor dimensions have been permuted
 }
 \examples{
-\dontrun{
+\donttest{
 ctx <- ggml_init(1024 * 1024)
 t <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 10, 20)
 ggml_is_permuted(t)

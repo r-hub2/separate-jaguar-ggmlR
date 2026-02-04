@@ -18,7 +18,7 @@ Scalar tensor with the mean
 Creates a graph node that computes the mean of all elements.
 }
 \examples{
-\dontrun{
+\donttest{
 ctx <- ggml_init(16 * 1024 * 1024)
 a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
 ggml_set_f32(a, c(2, 4, 6, 8, 10))

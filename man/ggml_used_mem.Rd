@@ -16,7 +16,7 @@ Used memory in bytes
 Returns the amount of memory currently used in the context
 }
 \examples{
-\dontrun{
+\donttest{
 ctx <- ggml_init(1024 * 1024)
 a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 100)
 ggml_used_mem(ctx)

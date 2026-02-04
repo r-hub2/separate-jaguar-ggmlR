@@ -5,7 +5,7 @@
 #' @return Size in bytes
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ggml_tensor_overhead()
 #' }
 ggml_tensor_overhead <- function() {
@@ -20,7 +20,7 @@ ggml_tensor_overhead <- function() {
 #' @return Total memory size in bytes
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(1024 * 1024)
 #' ggml_get_mem_size(ctx)
 #' ggml_free(ctx)
@@ -37,7 +37,7 @@ ggml_get_mem_size <- function(ctx) {
 #' @return Used memory in bytes
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 100)
 #' ggml_used_mem(ctx)
@@ -57,7 +57,7 @@ ggml_used_mem <- function(ctx) {
 #' @return NULL (invisible)
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(1024 * 1024)
 #' ggml_set_no_alloc(ctx, TRUE)
 #' ggml_get_no_alloc(ctx)
@@ -76,7 +76,7 @@ ggml_set_no_alloc <- function(ctx, no_alloc) {
 #' @return Logical indicating if no_alloc is enabled
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(1024 * 1024)
 #' ggml_get_no_alloc(ctx)
 #' ggml_free(ctx)
@@ -93,7 +93,7 @@ ggml_get_no_alloc <- function(ctx) {
 #' @return Maximum tensor size in bytes
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(1024 * 1024)
 #' ggml_get_max_tensor_size(ctx)
 #' ggml_free(ctx)
@@ -110,7 +110,7 @@ ggml_get_max_tensor_size <- function(ctx) {
 #' @return NULL (invisible)
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(1024 * 1024)
 #' t <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 10)
 #' ggml_print_objects(ctx)
@@ -132,7 +132,7 @@ ggml_print_objects <- function(ctx) {
 #' @return Estimated memory in bytes
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' # For 1000x1000 F32 matrix
 #' ggml_estimate_memory(GGML_TYPE_F32, 1000, 1000)
 #' }
@@ -161,7 +161,7 @@ ggml_estimate_memory <- function(type = GGML_TYPE_F32, ne0, ne1 = 1, ne2 = 1, ne
 #' @return List with total, used, free memory (invisible)
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(1024 * 1024)
 #' ggml_print_mem_status(ctx)
 #' ggml_free(ctx)

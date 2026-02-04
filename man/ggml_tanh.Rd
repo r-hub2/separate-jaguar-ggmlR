@@ -18,7 +18,7 @@ Tensor representing the tanh operation
 Creates a graph node for hyperbolic tangent activation.
 }
 \examples{
-\dontrun{
+\donttest{
 ctx <- ggml_init(1024 * 1024)
 a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
 ggml_set_f32(a, c(-2, -1, 0, 1, 2))

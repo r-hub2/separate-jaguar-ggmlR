@@ -6,6 +6,24 @@
 * Added `gguf.cpp` for GGUF file format support
 * Headers exported via `inst/include/` for `LinkingTo`
 
+## CRAN Submission Fixes
+
+* Expanded acronyms in DESCRIPTION: 'AdamW' (Adam with Weight decay),
+  'SGD' (Stochastic Gradient Descent), 'MSE' (Mean Squared Error),
+  GPU (Graphics Processing Unit)
+* Added all contributors and copyright holders to Authors@R:
+  - Georgi Gerganov (GGML library author)
+  - Jeffrey Quesnelle and Bowen Peng (ops.cpp contributors)
+  - Mozilla Foundation (llamafile/sgemm.cpp)
+* Replaced `\dontrun{}` with `\donttest{}` in all examples
+* Added `\value` documentation to all exported functions and constants
+
+## Documentation
+
+* Added vignette: Vulkan GPU Backend (`vignette("vulkan-backend")`)
+* Added vignette: Multi-GPU Inference (`vignette("multi-gpu")`)
+* Added vignette: Working with Quantized Models (`vignette("quantization")`)
+
 ## Internal
 
 * `r_ggml_io.o` moved to GGML_OBJECTS for proper symbol export

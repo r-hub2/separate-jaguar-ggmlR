@@ -68,7 +68,7 @@ Common freq_base values:
 - Phi-3: 10000
 }
 \examples{
-\dontrun{
+\donttest{
 ctx <- ggml_init(16 * 1024 * 1024)
 q <- ggml_new_tensor_4d(ctx, GGML_TYPE_F32, 64, 8, 32, 1)
 ggml_set_f32(q, rnorm(64 * 8 * 32))

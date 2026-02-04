@@ -20,7 +20,7 @@ that must be computed using ggml_build_forward_expand() and ggml_graph_compute()
 Unlike ggml_dup_tensor which just allocates, this creates a copy operation in the graph.
 }
 \examples{
-\dontrun{
+\donttest{
 ctx <- ggml_init(1024 * 1024)
 a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
 ggml_set_f32(a, c(1, 2, 3, 4, 5))

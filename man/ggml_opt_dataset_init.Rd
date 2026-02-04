@@ -14,9 +14,9 @@ ggml_opt_dataset_init(
 )
 }
 \arguments{
-\item{type_data}{GGML type for data tensor (e.g., ggml_type_f32())}
+\item{type_data}{GGML type for data tensor (e.g., GGML_TYPE_F32)}
 
-\item{type_label}{GGML type for label tensor (e.g., ggml_type_f32())}
+\item{type_label}{GGML type for label tensor (e.g., GGML_TYPE_F32)}
 
 \item{ne_datapoint}{Number of elements per datapoint}
 

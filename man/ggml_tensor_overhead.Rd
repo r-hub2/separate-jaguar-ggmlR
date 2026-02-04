@@ -13,7 +13,7 @@ Size in bytes
 Returns the memory overhead (metadata) for each tensor in bytes
 }
 \examples{
-\dontrun{
+\donttest{
 ggml_tensor_overhead()
 }
 }

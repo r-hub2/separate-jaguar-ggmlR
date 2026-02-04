@@ -20,7 +20,7 @@ Tensor representing the subtraction operation (a - b)
 Creates a graph node for element-wise subtraction.
 }
 \examples{
-\dontrun{
+\donttest{
 ctx <- ggml_init(1024 * 1024)
 a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
 b <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)

@@ -6,7 +6,7 @@
 #' @return Number of threads set
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' # Use 4 threads
 #' ggml_set_n_threads(4)
 #'
@@ -24,7 +24,7 @@ ggml_set_n_threads <- function(n_threads) {
 #' @return Number of threads
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ggml_get_n_threads()
 #' }
 ggml_get_n_threads <- function() {

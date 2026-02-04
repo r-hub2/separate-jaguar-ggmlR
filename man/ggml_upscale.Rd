@@ -48,7 +48,7 @@ Scale mode constants:
 }
 }
 \examples{
-\dontrun{
+\donttest{
 ctx <- ggml_init(16 * 1024 * 1024)
 img <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 8, 8)
 ggml_set_f32(img, rnorm(64))

@@ -16,7 +16,7 @@ List with total, used, free memory (invisible)
 Helper to print memory usage information
 }
 \examples{
-\dontrun{
+\donttest{
 ctx <- ggml_init(1024 * 1024)
 ggml_print_mem_status(ctx)
 ggml_free(ctx)

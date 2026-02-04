@@ -50,38 +50,14 @@ This is the recommended way to train models.
 }
 \examples{
 \dontrun{
-# Create backend and scheduler
+# Full training requires building a computation graph
+# See package vignettes for complete examples
 cpu <- ggml_backend_cpu_init()
 sched <- ggml_backend_sched_new(list(cpu))
-
-# Create dataset
-dataset <- ggml_opt_dataset_init(
-  type_data = ggml_type_f32(),
-  type_label = ggml_type_f32(),
-  ne_datapoint = 10,
-  ne_label = 1,
-  ndata = 1000
-)
-
-# Build model graph...
-# ctx_compute <- ggml_context_init(...)
-# inputs <- ggml_tensor_1d(ctx_compute, ggml_type_f32(), 10)
-# outputs <- ...
-
-# Train
-ggml_opt_fit(
-  sched = sched,
-  ctx_compute = ctx_compute,
-  inputs = inputs,
-  outputs = outputs,
-  dataset = dataset,
-  loss_type = ggml_opt_loss_type_mse(),
-  nepoch = 10,
-  nbatch_logical = 32,
-  val_split = 0.1
-)
-
-# Cleanup
+dataset <- ggml_opt_dataset_init(GGML_TYPE_F32, GGML_TYPE_F32, 10, 1, 1000)
+# ... build model graph with ctx_compute, inputs, outputs ...
+ggml_opt_fit(sched, ctx_compute, inputs, outputs, dataset,
+             nepoch = 10, val_split = 0.1)
 ggml_opt_dataset_free(dataset)
 ggml_backend_sched_free(sched)
 ggml_backend_free(cpu)

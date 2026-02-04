@@ -21,7 +21,7 @@ Computes the outer product of two vectors: C = a * b^T
 For vectors a[m] and b[n], produces matrix C[m, n].
 }
 \examples{
-\dontrun{
+\donttest{
 ctx <- ggml_init(16 * 1024 * 1024)
 a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 3)
 b <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 4)

@@ -19,10 +19,19 @@ Starts graph computation without blocking. Use ggml_backend_synchronize()
 to wait for completion.
 }
 \examples{
-\dontrun{
-status <- ggml_backend_graph_compute_async(backend, graph)
+\donttest{
+cpu <- ggml_backend_cpu_init()
+ctx <- ggml_init(16 * 1024 * 1024)
+a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 100)
+b <- ggml_relu(ctx, a)
+graph <- ggml_build_forward_expand(ctx, b)
+ggml_set_f32(a, rnorm(100))
+# Start async computation
+status <- ggml_backend_graph_compute_async(cpu, graph)
 # Do other work while computation runs...
-ggml_backend_synchronize(backend)  # Wait for completion
+ggml_backend_synchronize(cpu)
+ggml_backend_free(cpu)
+ggml_free(ctx)
 }
 }
 \seealso{

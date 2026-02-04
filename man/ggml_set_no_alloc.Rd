@@ -19,7 +19,7 @@ When enabled, tensor creation will not allocate memory for data.
 Useful for creating computation graphs without allocating storage.
 }
 \examples{
-\dontrun{
+\donttest{
 ctx <- ggml_init(1024 * 1024)
 ggml_set_no_alloc(ctx, TRUE)
 ggml_get_no_alloc(ctx)

@@ -19,7 +19,7 @@ Computes a graph by distributing work across multiple backends.
 This is the main function for multi-GPU computation.
 }
 \examples{
-\dontrun{
+\donttest{
 # Multi-GPU example
 if (ggml_vulkan_available() && ggml_vulkan_device_count() >= 2) {
   gpu1 <- ggml_vulkan_init(0)

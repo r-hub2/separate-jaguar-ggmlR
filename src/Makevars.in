@@ -76,6 +76,7 @@ $(SHLIB): $(OBJECTS) staticlib
 
 staticlib: $(GGML_OBJECTS)
 	$(AR) rcs $(STATICLIB) $(GGML_OBJECTS)
+	mkdir -p ../inst/lib
 	cp $(STATICLIB) ../inst/lib/
 
 # R interface files and r_ggml_io.c include R headers (R.h, Rinternals.h)

@@ -22,7 +22,7 @@ The tensors must have the same number of elements.
 CRITICAL for type casting operations (e.g., F32 to F16).
 }
 \examples{
-\dontrun{
+\donttest{
 ctx <- ggml_init(16 * 1024 * 1024)
 # Create F32 tensor
 a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 100)

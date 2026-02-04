@@ -24,7 +24,7 @@ Normalizes along ne0*ne1*n_groups dimensions.
 Used in Stable Diffusion and other image generation models.
 }
 \examples{
-\dontrun{
+\donttest{
 ctx <- ggml_init(16 * 1024 * 1024)
 # 4 channels, 2 groups (2 channels per group)
 a <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 4, 8)

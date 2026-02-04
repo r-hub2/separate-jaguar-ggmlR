@@ -22,9 +22,14 @@ from index i0 to i1 (exclusive). The view shares the underlying nodes
 but does not include leaf tensors or gradients.
 }
 \examples{
-\dontrun{
-# Get first 10 nodes of a graph
-view <- ggml_graph_view(graph, 0, 10)
+\donttest{
+ctx <- ggml_init(16 * 1024 * 1024)
+a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 10)
+b <- ggml_relu(ctx, a)
+graph <- ggml_build_forward_expand(ctx, b)
+n_nodes <- ggml_graph_n_nodes(graph)
+view <- ggml_graph_view(graph, 0, n_nodes)
+ggml_free(ctx)
 }
 }
 \seealso{

@@ -16,7 +16,7 @@ Logical indicating if no_alloc is enabled
 Check if no-allocation mode is enabled
 }
 \examples{
-\dontrun{
+\donttest{
 ctx <- ggml_init(1024 * 1024)
 ggml_get_no_alloc(ctx)
 ggml_free(ctx)

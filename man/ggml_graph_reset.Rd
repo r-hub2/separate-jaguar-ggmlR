@@ -9,6 +9,9 @@ ggml_graph_reset(graph)
 \arguments{
 \item{graph}{Graph object with gradients allocated}
 }
+\value{
+No return value, called for side effects
+}
 \description{
 Resets the computation graph for a new backward pass.
 NOTE: This function requires the graph to have gradients allocated

@@ -27,7 +27,7 @@ Pads tensor dimensions with zeros on the right side.
 Useful for aligning tensor sizes in attention operations.
 }
 \examples{
-\dontrun{
+\donttest{
 ctx <- ggml_init(16 * 1024 * 1024)
 a <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 5, 3)
 ggml_set_f32(a, 1:15)

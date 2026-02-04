@@ -18,7 +18,7 @@ For quantized types, this is the average bytes per element.
 }
 \examples{
 ggml_type_sizef(GGML_TYPE_F32)  # 4.0
-ggml_type_sizef(GGML_TYPE_Q4_0) # 0.5 (4 bits per element)
+ggml_type_sizef(GGML_TYPE_F16)  # 2.0
 }
 \seealso{
 Other type_system: 

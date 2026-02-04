@@ -20,7 +20,7 @@ Reshaped tensor
 Reshapes tensor to 1D with ne0 elements
 }
 \examples{
-\dontrun{
+\donttest{
 ctx <- ggml_init(16 * 1024 * 1024)
 a <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 3, 4)
 ggml_set_f32(a, 1:12)

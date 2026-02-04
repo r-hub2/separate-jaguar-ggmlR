@@ -26,7 +26,7 @@ given a vocabulary embedding matrix and token indices, it retrieves
 the corresponding embedding vectors.
 }
 \examples{
-\dontrun{
+\donttest{
 ctx <- ggml_init(16 * 1024 * 1024)
 # Create embedding matrix: 10 tokens, 4-dim embeddings
 embeddings <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 4, 10)

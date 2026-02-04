@@ -14,7 +14,7 @@ Initializes the GGML timing system. Call this once at the beginning
 of the program before using ggml_time_ms() or ggml_time_us().
 }
 \examples{
-\dontrun{
+\donttest{
 ggml_time_init()
 start <- ggml_time_ms()
 Sys.sleep(0.01)

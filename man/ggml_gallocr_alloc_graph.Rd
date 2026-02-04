@@ -19,7 +19,7 @@ Allocates memory for all tensors in the computation graph.
 This must be called before computing the graph.
 }
 \examples{
-\dontrun{
+\donttest{
 ctx <- ggml_init(16 * 1024 * 1024)
 galloc <- ggml_gallocr_new()
 

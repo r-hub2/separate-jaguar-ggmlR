@@ -27,7 +27,7 @@ Permutes the tensor dimensions according to specified axes.
 CRITICAL for attention mechanisms in transformers.
 }
 \examples{
-\dontrun{
+\donttest{
 ctx <- ggml_init(16 * 1024 * 1024)
 # Create 4D tensor: (2, 3, 4, 5)
 t <- ggml_new_tensor_4d(ctx, GGML_TYPE_F32, 2, 3, 4, 5)

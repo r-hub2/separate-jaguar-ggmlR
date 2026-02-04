@@ -18,6 +18,17 @@ for arg in "$@"; do
   esac
 done
 
+# Auto-detect: if shaders already generated, enable Vulkan automatically
+if [ "$USE_VULKAN" = "no" ]; then
+  if [ -d "src/ggml-vulkan/generated" ] && [ -f "src/ggml-vulkan/generated/ggml-vulkan-shaders.hpp" ]; then
+    SHADER_COUNT=$(ls -1 src/ggml-vulkan/generated/*.cpp 2>/dev/null | wc -l)
+    if [ "$SHADER_COUNT" -gt 0 ]; then
+      echo "Auto-detected $SHADER_COUNT pre-generated Vulkan shaders"
+      USE_VULKAN="yes"
+    fi
+  fi
+fi
+
 # If Vulkan requested, check dependencies and build shaders
 if [ "$USE_VULKAN" = "yes" ]; then
   echo "Checking for Vulkan support..."

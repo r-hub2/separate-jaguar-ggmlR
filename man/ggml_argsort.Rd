@@ -21,7 +21,7 @@ Returns indices that would sort the tensor rows.
 Each row is sorted independently.
 }
 \examples{
-\dontrun{
+\donttest{
 ctx <- ggml_init(16 * 1024 * 1024)
 # Create tensor with values to sort
 a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)

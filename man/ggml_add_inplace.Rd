@@ -22,7 +22,7 @@ Result is stored in tensor a, saving memory allocation.
 Returns a view of the modified tensor.
 }
 \examples{
-\dontrun{
+\donttest{
 ctx <- ggml_init(1024 * 1024)
 a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
 b <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)

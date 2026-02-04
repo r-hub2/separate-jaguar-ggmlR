@@ -18,7 +18,7 @@ GGML context pointer
 Initialize GGML context
 }
 \examples{
-\dontrun{
+\donttest{
 ctx <- ggml_init(1024 * 1024)
 ggml_free(ctx)
 }

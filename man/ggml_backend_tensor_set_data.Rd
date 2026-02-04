@@ -13,6 +13,9 @@ ggml_backend_tensor_set_data(tensor, data, offset = 0)
 
 \item{offset}{Byte offset (default: 0)}
 }
+\value{
+No return value, called for side effects
+}
 \description{
 Sets tensor data using the backend API. This works with tensors
 allocated on any backend, not just CPU.

@@ -16,7 +16,7 @@ Character string with backend name
 Returns the name of the Vulkan backend (includes device info).
 }
 \examples{
-\dontrun{
+\donttest{
 if (ggml_vulkan_available() && ggml_vulkan_device_count() > 0) {
   backend <- ggml_vulkan_init(0)
   print(ggml_vulkan_backend_name(backend))

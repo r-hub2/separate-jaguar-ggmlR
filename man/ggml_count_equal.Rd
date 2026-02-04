@@ -21,7 +21,7 @@ Creates a graph node that counts equal elements between two tensors.
 Useful for accuracy computation.
 }
 \examples{
-\dontrun{
+\donttest{
 ctx <- ggml_init(16 * 1024 * 1024)
 pred <- ggml_new_tensor_1d(ctx, GGML_TYPE_I32, 100)
 labels <- ggml_new_tensor_1d(ctx, GGML_TYPE_I32, 100)

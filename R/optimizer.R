@@ -89,8 +89,8 @@ ggml_opt_optimizer_type_sgd <- function() {
 #'
 #' Creates a dataset for training with specified data and label types.
 #'
-#' @param type_data GGML type for data tensor (e.g., ggml_type_f32())
-#' @param type_label GGML type for label tensor (e.g., ggml_type_f32())
+#' @param type_data GGML type for data tensor (e.g., GGML_TYPE_F32)
+#' @param type_label GGML type for label tensor (e.g., GGML_TYPE_F32)
 #' @param ne_datapoint Number of elements per datapoint
 #' @param ne_label Number of elements per label (0 if no labels)
 #' @param ndata Total number of datapoints
@@ -450,38 +450,14 @@ ggml_opt_eval <- function(opt_ctx, result = NULL) {
 #' @family optimization
 #' @examples
 #' \dontrun{
-#' # Create backend and scheduler
+#' # Full training requires building a computation graph
+#' # See package vignettes for complete examples
 #' cpu <- ggml_backend_cpu_init()
 #' sched <- ggml_backend_sched_new(list(cpu))
-#'
-#' # Create dataset
-#' dataset <- ggml_opt_dataset_init(
-#'   type_data = ggml_type_f32(),
-#'   type_label = ggml_type_f32(),
-#'   ne_datapoint = 10,
-#'   ne_label = 1,
-#'   ndata = 1000
-#' )
-#'
-#' # Build model graph...
-#' # ctx_compute <- ggml_context_init(...)
-#' # inputs <- ggml_tensor_1d(ctx_compute, ggml_type_f32(), 10)
-#' # outputs <- ...
-#'
-#' # Train
-#' ggml_opt_fit(
-#'   sched = sched,
-#'   ctx_compute = ctx_compute,
-#'   inputs = inputs,
-#'   outputs = outputs,
-#'   dataset = dataset,
-#'   loss_type = ggml_opt_loss_type_mse(),
-#'   nepoch = 10,
-#'   nbatch_logical = 32,
-#'   val_split = 0.1
-#' )
-#'
-#' # Cleanup
+#' dataset <- ggml_opt_dataset_init(GGML_TYPE_F32, GGML_TYPE_F32, 10, 1, 1000)
+#' # ... build model graph with ctx_compute, inputs, outputs ...
+#' ggml_opt_fit(sched, ctx_compute, inputs, outputs, dataset,
+#'              nepoch = 10, val_split = 0.1)
 #' ggml_opt_dataset_free(dataset)
 #' ggml_backend_sched_free(sched)
 #' ggml_backend_free(cpu)
@@ -564,25 +540,13 @@ ggml_opt_prepare_alloc <- function(opt_ctx, ctx_compute, graph, inputs, outputs)
 #' @family optimization
 #' @examples
 #' \dontrun{
-#' # Create optimizer context and dataset...
+#' # Requires full optimizer setup - see ggml_opt_fit() for simpler API
 #' result_train <- ggml_opt_result_init()
 #' result_eval <- ggml_opt_result_init()
-#'
-#' # With built-in progress bar
 #' ggml_opt_epoch(opt_ctx, dataset, result_train, result_eval,
-#'                idata_split = 900, callback_train = TRUE, callback_eval = TRUE)
-#'
-#' # With custom R callback
-#' my_callback <- function(train, ibatch, ibatch_max, t_start_us, result) {
-#'   loss <- ggml_opt_result_loss(result)
-#'   cat(sprintf("\rBatch %d/%d, loss: %.4f", ibatch, ibatch_max, loss["loss"]))
-#' }
-#' ggml_opt_epoch(opt_ctx, dataset, result_train, result_eval,
-#'                idata_split = 900, callback_train = my_callback)
-#'
-#' # Check results
-#' train_loss <- ggml_opt_result_loss(result_train)
-#' eval_loss <- ggml_opt_result_loss(result_eval)
+#'                idata_split = 900, callback_train = TRUE)
+#' ggml_opt_result_free(result_train)
+#' ggml_opt_result_free(result_eval)
 #' }
 ggml_opt_epoch <- function(opt_ctx, dataset, result_train = NULL, result_eval = NULL,
                            idata_split, callback_train = TRUE, callback_eval = TRUE) {

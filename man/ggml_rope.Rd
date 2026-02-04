@@ -35,7 +35,7 @@ Key benefits of RoPE:
 - No additional parameters needed
 }
 \examples{
-\dontrun{
+\donttest{
 ctx <- ggml_init(16 * 1024 * 1024)
 # Query tensor: head_dim=8, n_head=4, seq_len=16, batch=1
 q <- ggml_new_tensor_4d(ctx, GGML_TYPE_F32, 8, 4, 16, 1)

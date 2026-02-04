@@ -18,7 +18,7 @@ Tensor representing the sin operation
 Creates a graph node for element-wise sine: sin(x)
 }
 \examples{
-\dontrun{
+\donttest{
 ctx <- ggml_init(16 * 1024 * 1024)
 a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 4)
 ggml_set_f32(a, c(0, pi/6, pi/2, pi))

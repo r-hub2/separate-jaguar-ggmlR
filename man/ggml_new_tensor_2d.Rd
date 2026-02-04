@@ -28,7 +28,7 @@ Create 2D tensor
 Create 2D Tensor
 }
 \examples{
-\dontrun{
+\donttest{
 ctx <- ggml_init(1024 * 1024)
 tensor <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 10, 20)
 ggml_nelements(tensor)

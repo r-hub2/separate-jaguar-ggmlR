@@ -37,7 +37,7 @@ This extended softmax is commonly used in transformer attention:
 All these operations are fused for efficiency.
 }
 \examples{
-\dontrun{
+\donttest{
 ctx <- ggml_init(16 * 1024 * 1024)
 scores <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 10, 10)
 ggml_set_f32(scores, rnorm(100))

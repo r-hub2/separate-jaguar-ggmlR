@@ -26,6 +26,9 @@ GGML_ROPE_TYPE_MROPE
 
 GGML_ROPE_TYPE_VISION
 }
+\value{
+An integer constant representing a RoPE type
+}
 \description{
 RoPE (Rotary Position Embedding) Type Constants
 }
@@ -42,7 +45,7 @@ Different models use different RoPE implementations.
 }
 }
 \examples{
-\dontrun{
+\donttest{
 GGML_ROPE_TYPE_NORM    # 0 - Standard RoPE (LLaMA, Mistral)
 GGML_ROPE_TYPE_NEOX    # 2 - GPT-NeoX style
 GGML_ROPE_TYPE_MROPE   # 8 - Multi-RoPE (Qwen2-VL)

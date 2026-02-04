@@ -17,10 +17,19 @@ Creates a buffer that combines multiple backend buffers into one.
 Useful for managing memory across different backends.
 }
 \examples{
-\dontrun{
-buf1 <- ggml_backend_alloc_buffer(backend, 1024)
-buf2 <- ggml_backend_alloc_buffer(backend, 2048)
+\donttest{
+cpu <- ggml_backend_cpu_init()
+ctx1 <- ggml_init(1024, no_alloc = TRUE)
+ctx2 <- ggml_init(2048, no_alloc = TRUE)
+a <- ggml_new_tensor_1d(ctx1, GGML_TYPE_F32, 10)
+b <- ggml_new_tensor_1d(ctx2, GGML_TYPE_F32, 20)
+buf1 <- ggml_backend_alloc_ctx_tensors(ctx1, cpu)
+buf2 <- ggml_backend_alloc_ctx_tensors(ctx2, cpu)
 multi <- ggml_backend_multi_buffer_alloc_buffer(list(buf1, buf2))
+ggml_backend_buffer_free(multi)
+ggml_backend_free(cpu)
+ggml_free(ctx1)
+ggml_free(ctx2)
 }
 }
 \seealso{

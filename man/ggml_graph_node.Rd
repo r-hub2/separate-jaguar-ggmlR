@@ -18,7 +18,7 @@ Tensor pointer
 Gets a specific node (tensor) from the computation graph by index
 }
 \examples{
-\dontrun{
+\donttest{
 ctx <- ggml_init(16 * 1024 * 1024)
 a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 10)
 b <- ggml_add(ctx, a, a)

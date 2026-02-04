@@ -15,6 +15,9 @@ GGML_SORT_ORDER_ASC
 
 GGML_SORT_ORDER_DESC
 }
+\value{
+An integer constant representing a sort order
+}
 \description{
 Sort Order Constants
 }
@@ -28,7 +31,7 @@ Constants for specifying sort order in argsort operations.
 }
 }
 \examples{
-\dontrun{
+\donttest{
 GGML_SORT_ORDER_ASC   # 0 - Ascending order
 GGML_SORT_ORDER_DESC  # 1 - Descending order
 

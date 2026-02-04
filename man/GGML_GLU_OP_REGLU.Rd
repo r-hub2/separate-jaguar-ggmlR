@@ -35,6 +35,9 @@ GGML_GLU_OP_GEGLU_ERF
 
 GGML_GLU_OP_GEGLU_QUICK
 }
+\value{
+An integer constant representing a GLU operation type
+}
 \description{
 Constants for GLU (Gated Linear Unit) operation types.
 Used with ggml_glu() and ggml_glu_split().
@@ -50,7 +53,7 @@ Used with ggml_glu() and ggml_glu_split().
 }
 }
 \examples{
-\dontrun{
+\donttest{
 GGML_GLU_OP_REGLU       # 0 - ReLU gating
 GGML_GLU_OP_GEGLU       # 1 - GELU gating
 GGML_GLU_OP_SWIGLU      # 2 - SiLU/Swish gating

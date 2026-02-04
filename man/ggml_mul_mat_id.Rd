@@ -23,7 +23,7 @@ Indirect matrix multiplication for Mixture of Experts architectures.
 Selects expert weights based on indices and performs batched matmul.
 }
 \examples{
-\dontrun{
+\donttest{
 ctx <- ggml_init(64 * 1024 * 1024)
 # 4 experts, each with 8x16 weights (small for example)
 experts <- ggml_new_tensor_3d(ctx, GGML_TYPE_F32, 8, 16, 4)

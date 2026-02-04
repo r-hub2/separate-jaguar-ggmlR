@@ -20,7 +20,7 @@ step(x) = 0 if x <= 0, 1 if x > 0
 Also known as the Heaviside step function.
 }
 \examples{
-\dontrun{
+\donttest{
 ctx <- ggml_init(16 * 1024 * 1024)
 a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
 ggml_set_f32(a, c(-2, -0.5, 0, 0.5, 2))

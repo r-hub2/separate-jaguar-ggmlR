@@ -16,7 +16,7 @@ Numeric vector of length 4 with dimensions
 Returns the shape of a tensor as a numeric vector of 4 elements (ne0, ne1, ne2, ne3)
 }
 \examples{
-\dontrun{
+\donttest{
 ctx <- ggml_init(1024 * 1024)
 t <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 10, 20)
 ggml_tensor_shape(t)

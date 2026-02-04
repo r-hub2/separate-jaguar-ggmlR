@@ -45,7 +45,7 @@ Pool operation constants:
 }
 }
 \examples{
-\dontrun{
+\donttest{
 ctx <- ggml_init(16 * 1024 * 1024)
 a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 8)
 ggml_set_f32(a, c(1, 3, 2, 4, 5, 2, 8, 1))

@@ -21,7 +21,7 @@ Creates a graph node for adding a scalar (1-element tensor) to all elements
 of a tensor. This is more efficient than creating a full tensor of the same value.
 }
 \examples{
-\dontrun{
+\donttest{
 ctx <- ggml_init(1024 * 1024)
 a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
 scalar <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 1)

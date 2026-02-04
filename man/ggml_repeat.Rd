@@ -20,7 +20,7 @@ Tensor with repeated values
 Creates a graph node that repeats tensor 'a' to match shape of tensor 'b'.
 }
 \examples{
-\dontrun{
+\donttest{
 ctx <- ggml_init(16 * 1024 * 1024)
 a <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 1, 2)
 ggml_set_f32(a, c(1, 2))

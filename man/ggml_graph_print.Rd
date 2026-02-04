@@ -9,6 +9,9 @@ ggml_graph_print(graph)
 \arguments{
 \item{graph}{Graph object}
 }
+\value{
+No return value, called for side effects
+}
 \description{
 Prints debug information about the computation graph
 }

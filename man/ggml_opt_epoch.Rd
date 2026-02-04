@@ -40,25 +40,13 @@ on the back portion. This gives more control than ggml_opt_fit.
 }
 \examples{
 \dontrun{
-# Create optimizer context and dataset...
+# Requires full optimizer setup - see ggml_opt_fit() for simpler API
 result_train <- ggml_opt_result_init()
 result_eval <- ggml_opt_result_init()
-
-# With built-in progress bar
 ggml_opt_epoch(opt_ctx, dataset, result_train, result_eval,
-               idata_split = 900, callback_train = TRUE, callback_eval = TRUE)
-
-# With custom R callback
-my_callback <- function(train, ibatch, ibatch_max, t_start_us, result) {
-  loss <- ggml_opt_result_loss(result)
-  cat(sprintf("\rBatch \%d/\%d, loss: \%.4f", ibatch, ibatch_max, loss["loss"]))
-}
-ggml_opt_epoch(opt_ctx, dataset, result_train, result_eval,
-               idata_split = 900, callback_train = my_callback)
-
-# Check results
-train_loss <- ggml_opt_result_loss(result_train)
-eval_loss <- ggml_opt_result_loss(result_eval)
+               idata_split = 900, callback_train = TRUE)
+ggml_opt_result_free(result_train)
+ggml_opt_result_free(result_eval)
 }
 }
 \seealso{

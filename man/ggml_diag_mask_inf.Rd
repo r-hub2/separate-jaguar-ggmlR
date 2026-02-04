@@ -30,7 +30,7 @@ The n_past parameter allows for KV-cache scenarios where the diagonal
 needs to be shifted to account for previously processed tokens.
 }
 \examples{
-\dontrun{
+\donttest{
 ctx <- ggml_init(16 * 1024 * 1024)
 # Create attention scores matrix
 scores <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 4, 4)

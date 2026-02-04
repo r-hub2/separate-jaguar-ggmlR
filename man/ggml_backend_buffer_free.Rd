@@ -9,6 +9,9 @@ ggml_backend_buffer_free(buffer)
 \arguments{
 \item{buffer}{Backend buffer object}
 }
+\value{
+No return value, called for side effects
+}
 \description{
 Frees a backend buffer and all associated memory.
 }

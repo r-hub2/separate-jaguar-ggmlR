@@ -21,7 +21,7 @@ Creates a graph node for RMS (Root Mean Square) normalization.
 Normalizes by x / sqrt(mean(x^2) + eps). CRITICAL for LLaMA models.
 }
 \examples{
-\dontrun{
+\donttest{
 ctx <- ggml_init(16 * 1024 * 1024)
 a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 4)
 ggml_set_f32(a, c(1, 2, 3, 4))

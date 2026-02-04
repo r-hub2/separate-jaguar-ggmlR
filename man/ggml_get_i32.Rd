@@ -16,7 +16,7 @@ Integer vector
 Gets integer data from an I32 tensor (e.g., from ggml_argmax)
 }
 \examples{
-\dontrun{
+\donttest{
 ctx <- ggml_init(1024 * 1024)
 pos <- ggml_new_tensor_1d(ctx, GGML_TYPE_I32, 10)
 ggml_set_i32(pos, 0:9)

@@ -23,7 +23,7 @@ Creates a 1D view of a tensor starting at a byte offset.
 The view shares memory with the source tensor.
 }
 \examples{
-\dontrun{
+\donttest{
 ctx <- ggml_init(16 * 1024 * 1024)
 a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 100)
 # View elements 10-19 (offset = 10 * 4 bytes = 40)

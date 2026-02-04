@@ -12,7 +12,7 @@
 #' @return Numeric vector containing the element-wise sum
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
 #' b <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
@@ -35,7 +35,7 @@ ggml_cpu_add <- function(a, b) {
 #' @return Numeric vector containing the element-wise product
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
 #' b <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
@@ -63,7 +63,7 @@ ggml_cpu_mul <- function(a, b) {
 #' @return Tensor representing the copy operation
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
 #' ggml_set_f32(a, c(1, 2, 3, 4, 5))
@@ -88,7 +88,7 @@ ggml_dup <- function(ctx, a) {
 #' @return Tensor representing the addition operation
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
 #' b <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
@@ -115,7 +115,7 @@ ggml_add <- function(ctx, a, b) {
 #' @return Tensor representing the operation a + b (broadcasted)
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
 #' scalar <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 1)
@@ -141,7 +141,7 @@ ggml_add1 <- function(ctx, a, b) {
 #' @return Tensor representing the subtraction operation (a - b)
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
 #' b <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
@@ -167,7 +167,7 @@ ggml_sub <- function(ctx, a, b) {
 #' @return Tensor representing the multiplication operation
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
 #' b <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
@@ -193,7 +193,7 @@ ggml_mul <- function(ctx, a, b) {
 #' @return Tensor representing the division operation (a / b)
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
 #' b <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
@@ -220,7 +220,7 @@ ggml_div <- function(ctx, a, b) {
 #' @return Tensor representing the matrix multiplication
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(1024 * 1024)
 #' A <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 4, 3)
 #' B <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 4, 2)
@@ -252,7 +252,7 @@ ggml_mul_mat <- function(ctx, a, b) {
 #' @return View of tensor a with the addition result
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
 #' b <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
@@ -543,7 +543,7 @@ ggml_dup_inplace <- function(ctx, a) {
 #' @return Tensor representing the ReLU operation
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
 #' ggml_set_f32(a, c(-2, -1, 0, 1, 2))
@@ -567,7 +567,7 @@ ggml_relu <- function(ctx, a) {
 #' @return Tensor representing the GELU operation
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
 #' ggml_set_f32(a, c(-2, -1, 0, 1, 2))
@@ -591,7 +591,7 @@ ggml_gelu <- function(ctx, a) {
 #' @return Tensor representing the SiLU operation
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
 #' ggml_set_f32(a, c(-2, -1, 0, 1, 2))
@@ -614,7 +614,7 @@ ggml_silu <- function(ctx, a) {
 #' @return Tensor representing the tanh operation
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
 #' ggml_set_f32(a, c(-2, -1, 0, 1, 2))
@@ -643,7 +643,7 @@ ggml_tanh <- function(ctx, a) {
 #' @return Tensor representing the layer normalization operation
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 4)
 #' ggml_set_f32(a, c(1, 2, 3, 4))
@@ -668,7 +668,7 @@ ggml_norm <- function(ctx, a, eps = 1e-5) {
 #' @return Tensor representing the RMS normalization operation
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 4)
 #' ggml_set_f32(a, c(1, 2, 3, 4))
@@ -693,7 +693,7 @@ ggml_rms_norm <- function(ctx, a, eps = 1e-5) {
 #' @param eps Epsilon value for numerical stability (default: 1e-5)
 #' @return View of input tensor with layer normalization applied
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 4)
 #' ggml_set_f32(a, c(1, 2, 3, 4))
@@ -718,7 +718,7 @@ ggml_norm_inplace <- function(ctx, a, eps = 1e-5) {
 #' @param eps Epsilon value for numerical stability (default: 1e-5)
 #' @return View of input tensor with RMS normalization applied
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 4)
 #' ggml_set_f32(a, c(1, 2, 3, 4))
@@ -744,7 +744,7 @@ ggml_rms_norm_inplace <- function(ctx, a, eps = 1e-5) {
 #' @param eps Epsilon for numerical stability (default 1e-5)
 #' @return Tensor representing the group norm operation
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' # 4 channels, 2 groups (2 channels per group)
 #' a <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 4, 8)
@@ -769,7 +769,7 @@ ggml_group_norm <- function(ctx, a, n_groups, eps = 1e-5) {
 #' @param eps Epsilon for numerical stability (default 1e-5)
 #' @return View of input tensor with group norm applied
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' a <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 4, 8)
 #' ggml_set_f32(a, rnorm(32))
@@ -794,7 +794,7 @@ ggml_group_norm_inplace <- function(ctx, a, n_groups, eps = 1e-5) {
 #' @param eps Epsilon for numerical stability (default 1e-5)
 #' @return Tensor representing the L2 norm operation
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 4)
 #' ggml_set_f32(a, c(3, 0, 0, 4))  # Length = 5
@@ -818,7 +818,7 @@ ggml_l2_norm <- function(ctx, a, eps = 1e-5) {
 #' @param eps Epsilon for numerical stability (default 1e-5)
 #' @return View of input tensor with L2 norm applied
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 4)
 #' ggml_set_f32(a, c(3, 0, 0, 4))
@@ -860,7 +860,7 @@ ggml_rms_norm_back <- function(ctx, a, b, eps = 1e-5) {
 #' @param a Input tensor
 #' @return Tensor representing the softmax operation
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 4)
 #' ggml_set_f32(a, c(1, 2, 3, 4))
@@ -885,7 +885,7 @@ ggml_soft_max <- function(ctx, a) {
 #' @param a Input tensor (will be modified in-place)
 #' @return View of input tensor with softmax applied
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 4)
 #' ggml_set_f32(a, c(1, 2, 3, 4))
@@ -924,7 +924,7 @@ ggml_soft_max_inplace <- function(ctx, a) {
 #' All these operations are fused for efficiency.
 #'
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' scores <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 10, 10)
 #' ggml_set_f32(scores, rnorm(100))
@@ -982,7 +982,7 @@ ggml_soft_max_ext_back_inplace <- function(ctx, a, b, scale = 1.0, max_bias = 0.
 #' @param a Input tensor (2D matrix)
 #' @return Tensor representing the transposed matrix
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' a <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 3, 2)
 #' ggml_set_f32(a, 1:6)
@@ -1005,7 +1005,7 @@ ggml_transpose <- function(ctx, a) {
 #' @param a Input tensor
 #' @return Scalar tensor with the sum
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
 #' ggml_set_f32(a, c(1, 2, 3, 4, 5))
@@ -1028,7 +1028,7 @@ ggml_sum <- function(ctx, a) {
 #' @param a Input tensor
 #' @return Tensor with row sums
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' a <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 3, 2)
 #' ggml_set_f32(a, c(1, 2, 3, 4, 5, 6))
@@ -1051,7 +1051,7 @@ ggml_sum_rows <- function(ctx, a) {
 #' @param a Input tensor
 #' @return Scalar tensor with the mean
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
 #' ggml_set_f32(a, c(2, 4, 6, 8, 10))
@@ -1075,7 +1075,7 @@ ggml_mean <- function(ctx, a) {
 #' @param a Input tensor
 #' @return Tensor with argmax indices
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
 #' ggml_set_f32(a, c(1, 5, 3, 2, 4))
@@ -1099,7 +1099,7 @@ ggml_argmax <- function(ctx, a) {
 #' @param b Target tensor (defines output shape)
 #' @return Tensor with repeated values
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' a <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 1, 2)
 #' ggml_set_f32(a, c(1, 2))
@@ -1128,7 +1128,7 @@ ggml_repeat <- function(ctx, a, b) {
 #' @return Tensor representing the sigmoid operation
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
 #' ggml_set_f32(a, c(-2, -1, 0, 1, 2))
@@ -1151,7 +1151,7 @@ ggml_sigmoid <- function(ctx, a) {
 #' @param a Input tensor
 #' @return Tensor representing the GELU quick operation
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
 #' ggml_set_f32(a, c(-2, -1, 0, 1, 2))
@@ -1176,7 +1176,7 @@ ggml_gelu_quick <- function(ctx, a) {
 #' @return Tensor representing the ELU operation
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
 #' ggml_set_f32(a, c(-2, -1, 0, 1, 2))
@@ -1203,7 +1203,7 @@ ggml_elu <- function(ctx, a) {
 #' @return Tensor representing the Leaky ReLU operation
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
 #' ggml_set_f32(a, c(-2, -1, 0, 1, 2))
@@ -1229,7 +1229,7 @@ ggml_leaky_relu <- function(ctx, a, negative_slope = 0.01, inplace = FALSE) {
 #' @return Tensor representing the Hard Swish operation
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
 #' ggml_set_f32(a, c(-4, -1, 0, 1, 4))
@@ -1254,7 +1254,7 @@ ggml_hardswish <- function(ctx, a) {
 #' @return Tensor representing the Hard Sigmoid operation
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
 #' ggml_set_f32(a, c(-4, -1, 0, 1, 4))
@@ -1279,7 +1279,7 @@ ggml_hardsigmoid <- function(ctx, a) {
 #' @return Tensor representing the Softplus operation
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
 #' ggml_set_f32(a, c(-2, -1, 0, 1, 2))
@@ -1304,7 +1304,7 @@ ggml_softplus <- function(ctx, a) {
 #' @return Tensor representing the exact GELU operation
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
 #' ggml_set_f32(a, c(-2, -1, 0, 1, 2))
@@ -1330,7 +1330,7 @@ ggml_gelu_erf <- function(ctx, a) {
 #' @param src Source tensor
 #' @return View tensor (shares data with src)
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 10)
 #' view <- ggml_view_tensor(ctx, a)
@@ -1351,7 +1351,7 @@ ggml_view_tensor <- function(ctx, src) {
 #' @param ne0 Size of dimension 0
 #' @return Reshaped tensor
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' a <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 3, 4)
 #' ggml_set_f32(a, 1:12)
@@ -1373,7 +1373,7 @@ ggml_reshape_1d <- function(ctx, a, ne0) {
 #' @param ne1 Size of dimension 1
 #' @return Reshaped tensor
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 12)
 #' ggml_set_f32(a, 1:12)
@@ -1396,7 +1396,7 @@ ggml_reshape_2d <- function(ctx, a, ne0, ne1) {
 #' @param ne2 Size of dimension 2
 #' @return Reshaped tensor
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 24)
 #' ggml_set_f32(a, 1:24)
@@ -1421,7 +1421,7 @@ ggml_reshape_3d <- function(ctx, a, ne0, ne1, ne2) {
 #' @param ne3 Size of dimension 3
 #' @return Reshaped tensor
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 120)
 #' ggml_set_f32(a, 1:120)
@@ -1448,7 +1448,7 @@ ggml_reshape_4d <- function(ctx, a, ne0, ne1, ne2, ne3) {
 #' @return Permuted tensor
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' # Create 4D tensor: (2, 3, 4, 5)
 #' t <- ggml_new_tensor_4d(ctx, GGML_TYPE_F32, 2, 3, 4, 5)
@@ -1470,7 +1470,7 @@ ggml_permute <- function(ctx, a, axis0, axis1, axis2, axis3) {
 #' @param a Input tensor
 #' @return Contiguous tensor
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' a <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 3, 4)
 #' ggml_set_f32(a, 1:12)
@@ -1495,7 +1495,7 @@ ggml_cont <- function(ctx, a) {
 #' @param a Input tensor
 #' @return Tensor representing the square operation
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 4)
 #' ggml_set_f32(a, c(1, 2, 3, 4))
@@ -1518,7 +1518,7 @@ ggml_sqr <- function(ctx, a) {
 #' @param a Input tensor
 #' @return Tensor representing the sqrt operation
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 4)
 #' ggml_set_f32(a, c(1, 4, 9, 16))
@@ -1541,7 +1541,7 @@ ggml_sqrt <- function(ctx, a) {
 #' @param a Input tensor
 #' @return Tensor representing the log operation
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 3)
 #' ggml_set_f32(a, c(1, exp(1), exp(2)))
@@ -1564,7 +1564,7 @@ ggml_log <- function(ctx, a) {
 #' @param a Input tensor
 #' @return Tensor representing the exp operation
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 3)
 #' ggml_set_f32(a, c(0, 1, 2))
@@ -1587,7 +1587,7 @@ ggml_exp <- function(ctx, a) {
 #' @param a Input tensor
 #' @return Tensor representing the abs operation
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 4)
 #' ggml_set_f32(a, c(-2, -1, 1, 2))
@@ -1610,7 +1610,7 @@ ggml_abs <- function(ctx, a) {
 #' @param a Input tensor
 #' @return Tensor representing the negation operation
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 4)
 #' ggml_set_f32(a, c(1, -2, 3, -4))
@@ -1635,7 +1635,7 @@ ggml_neg <- function(ctx, a) {
 #' @return Tensor representing the sign operation
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
 #' ggml_set_f32(a, c(-2, -0.5, 0, 0.5, 2))
@@ -1660,7 +1660,7 @@ ggml_sgn <- function(ctx, a) {
 #' @return Tensor representing the step operation
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
 #' ggml_set_f32(a, c(-2, -0.5, 0, 0.5, 2))
@@ -1682,7 +1682,7 @@ ggml_step <- function(ctx, a) {
 #' @param a Input tensor
 #' @return Tensor representing the sin operation
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 4)
 #' ggml_set_f32(a, c(0, pi/6, pi/2, pi))
@@ -1705,7 +1705,7 @@ ggml_sin <- function(ctx, a) {
 #' @param a Input tensor
 #' @return Tensor representing the cos operation
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 4)
 #' ggml_set_f32(a, c(0, pi/3, pi/2, pi))
@@ -1729,7 +1729,7 @@ ggml_cos <- function(ctx, a) {
 #' @param s Scalar value to multiply by
 #' @return Tensor representing the scaled values
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 4)
 #' ggml_set_f32(a, c(1, 2, 3, 4))
@@ -1804,6 +1804,7 @@ ggml_round <- function(ctx, a) {
 #' Used with ggml_glu() and ggml_glu_split().
 #'
 #' @format Integer constants
+#' @return An integer constant representing a GLU operation type
 #' @details
 #' \itemize{
 #'   \item \code{GGML_GLU_OP_REGLU} (0): ReGLU - ReLU gating
@@ -1814,7 +1815,7 @@ ggml_round <- function(ctx, a) {
 #'   \item \code{GGML_GLU_OP_GEGLU_QUICK} (5): GeGLU with fast approximation
 #' }
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' GGML_GLU_OP_REGLU       # 0 - ReLU gating
 #' GGML_GLU_OP_GEGLU       # 1 - GELU gating
 #' GGML_GLU_OP_SWIGLU      # 2 - SiLU/Swish gating
@@ -1861,7 +1862,7 @@ GGML_GLU_OP_GEGLU_QUICK <- 5L
 #' @return Tensor with shape [n/2, ...] where n is the first dimension of input
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' # Create tensor with 10 columns (will be split into 5 + 5)
 #' a <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 10, 4)
@@ -1889,7 +1890,7 @@ ggml_glu <- function(ctx, a, op, swapped = FALSE) {
 #' @return Tensor with half the first dimension of input
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' a <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 8, 3)
 #' ggml_set_f32(a, rnorm(24))
@@ -1916,7 +1917,7 @@ ggml_reglu <- function(ctx, a) {
 #' @return Tensor with half the first dimension of input
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' a <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 8, 3)
 #' ggml_set_f32(a, rnorm(24))
@@ -1943,7 +1944,7 @@ ggml_geglu <- function(ctx, a) {
 #' @return Tensor with half the first dimension of input
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' a <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 8, 3)
 #' ggml_set_f32(a, rnorm(24))
@@ -2050,7 +2051,7 @@ ggml_swiglu_split <- function(ctx, a, b) {
 #' the corresponding embedding vectors.
 #'
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' # Create embedding matrix: 10 tokens, 4-dim embeddings
 #' embeddings <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 4, 10)
@@ -2093,7 +2094,7 @@ ggml_get_rows <- function(ctx, a, b) {
 #' needs to be shifted to account for previously processed tokens.
 #'
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' # Create attention scores matrix
 #' scores <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 4, 4)
@@ -2148,6 +2149,7 @@ ggml_diag_mask_zero <- function(ctx, a, n_past) {
 #' Different models use different RoPE implementations.
 #'
 #' @format Integer constants
+#' @return An integer constant representing a RoPE type
 #' @details
 #' \itemize{
 #'   \item \code{GGML_ROPE_TYPE_NORM} (0): Standard RoPE as in original paper (LLaMA, Mistral)
@@ -2156,7 +2158,7 @@ ggml_diag_mask_zero <- function(ctx, a, n_past) {
 #'   \item \code{GGML_ROPE_TYPE_VISION} (24): Vision model RoPE variant
 #' }
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' GGML_ROPE_TYPE_NORM    # 0 - Standard RoPE (LLaMA, Mistral)
 #' GGML_ROPE_TYPE_NEOX    # 2 - GPT-NeoX style
 #' GGML_ROPE_TYPE_MROPE   # 8 - Multi-RoPE (Qwen2-VL)
@@ -2202,7 +2204,7 @@ GGML_ROPE_TYPE_VISION <- 24L
 #' - No additional parameters needed
 #'
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' # Query tensor: head_dim=8, n_head=4, seq_len=16, batch=1
 #' q <- ggml_new_tensor_4d(ctx, GGML_TYPE_F32, 8, 4, 16, 1)
@@ -2270,7 +2272,7 @@ ggml_rope_inplace <- function(ctx, a, b, n_dims, mode = 0L) {
 #' - Phi-3: 10000
 #'
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' q <- ggml_new_tensor_4d(ctx, GGML_TYPE_F32, 64, 8, 32, 1)
 #' ggml_set_f32(q, rnorm(64 * 8 * 32))
@@ -2401,7 +2403,7 @@ ggml_rope_multi_inplace <- function(ctx, a, b, c = NULL,
 #' - Optional logit soft-capping for numerical stability
 #'
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(64 * 1024 * 1024)
 #' head_dim <- 64
 #' n_head <- 8
@@ -2445,7 +2447,7 @@ ggml_flash_attn_ext <- function(ctx, q, k, v, mask = NULL,
 #' @return View tensor
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 100)
 #' # View elements 10-19 (offset = 10 * 4 bytes = 40)
@@ -2535,7 +2537,7 @@ ggml_view_4d <- function(ctx, a, ne0, ne1, ne2, ne3, nb1, nb2, nb3, offset = 0) 
 #' @return Tensor representing the copy operation (returns b with a's data)
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' # Create F32 tensor
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 100)
@@ -2620,7 +2622,7 @@ ggml_set_2d <- function(ctx, a, b, nb1, offset) {
 #' @return Matrix tensor representing the outer product
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 3)
 #' b <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 4)
@@ -2645,7 +2647,7 @@ ggml_out_prod <- function(ctx, a, b) {
 #' @return Diagonal matrix tensor
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 3)
 #' ggml_set_f32(a, c(1, 2, 3))
@@ -2674,7 +2676,7 @@ ggml_diag <- function(ctx, a) {
 #' @return Concatenated tensor
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' a <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 4, 3)
 #' b <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 4, 2)
@@ -2806,7 +2808,7 @@ ggml_flash_attn_back <- function(ctx, q, k, v, d, masked = TRUE) {
 #' @return Output tensor after expert-selected matrix multiplication
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(64 * 1024 * 1024)
 #' # 4 experts, each with 8x16 weights (small for example)
 #' experts <- ggml_new_tensor_3d(ctx, GGML_TYPE_F32, 8, 16, 4)
@@ -2843,7 +2845,7 @@ ggml_mul_mat_id <- function(ctx, as, b, ids) {
 #' @return Padded tensor with shape [ne0+p0, ne1+p1, ne2+p2, ne3+p3]
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' a <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 5, 3)
 #' ggml_set_f32(a, 1:15)
@@ -2866,13 +2868,14 @@ ggml_pad <- function(ctx, a, p0 = 0L, p1 = 0L, p2 = 0L, p3 = 0L) {
 #' Constants for specifying sort order in argsort operations.
 #'
 #' @format Integer constants
+#' @return An integer constant representing a sort order
 #' @details
 #' \itemize{
 #'   \item \code{GGML_SORT_ORDER_ASC} (0): Ascending order (smallest first)
 #'   \item \code{GGML_SORT_ORDER_DESC} (1): Descending order (largest first)
 #' }
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' GGML_SORT_ORDER_ASC   # 0 - Ascending order
 #' GGML_SORT_ORDER_DESC  # 1 - Descending order
 #'
@@ -2904,7 +2907,7 @@ GGML_SORT_ORDER_DESC <- 1L
 #' @return Tensor of I32 indices that would sort each row
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' # Create tensor with values to sort
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
@@ -2933,7 +2936,7 @@ ggml_argsort <- function(ctx, a, order = GGML_SORT_ORDER_ASC) {
 #' @return Tensor containing I32 indices of top-k elements (not values)
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' # Logits from model output
 #' logits <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 100)
@@ -2987,7 +2990,7 @@ ggml_repeat_back <- function(ctx, a, b) {
 #'
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' img <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 8, 8)
 #' ggml_set_f32(img, rnorm(64))
@@ -3239,7 +3242,7 @@ ggml_conv_transpose_1d <- function(ctx, a, b, s0 = 1L, p0 = 0L, d0 = 1L) {
 #' }
 #'
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 8)
 #' ggml_set_f32(a, c(1, 3, 2, 4, 5, 2, 8, 1))
@@ -3369,7 +3372,7 @@ ggml_quantize_requires_imatrix <- function(type) {
 #' @return Raw vector containing quantized data
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' # Quantize 256 floats to Q8_0 (block size 32)
 #' data <- rnorm(256)
 #' quantized <- ggml_quantize_chunk(GGML_TYPE_Q8_0, data, 1, 256)
@@ -3410,7 +3413,7 @@ ggml_type_name <- function(type) {
 #' @family type_system
 #' @examples
 #' ggml_type_sizef(GGML_TYPE_F32)  # 4.0
-#' ggml_type_sizef(GGML_TYPE_Q4_0) # 0.5 (4 bits per element)
+#' ggml_type_sizef(GGML_TYPE_F16)  # 2.0
 ggml_type_sizef <- function(type) {
   .Call("R_ggml_type_sizef", as.integer(type), PACKAGE = "ggmlR")
 }
@@ -3986,7 +3989,7 @@ ggml_are_same_stride <- function(a, b) {
 #' @export
 #' @family tensor_layout
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 4)
 #' b <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 4, 8)
@@ -4009,7 +4012,7 @@ ggml_can_repeat <- function(a, b) {
 #' @export
 #' @family tensor_layout
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' pred <- ggml_new_tensor_1d(ctx, GGML_TYPE_I32, 100)
 #' labels <- ggml_new_tensor_1d(ctx, GGML_TYPE_I32, 100)

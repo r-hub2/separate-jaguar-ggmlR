@@ -19,7 +19,7 @@ Check if tensor \code{a} can be repeated (broadcast) to match tensor \code{b}.
 Used for broadcasting operations.
 }
 \examples{
-\dontrun{
+\donttest{
 ctx <- ggml_init(1024 * 1024)
 a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 4)
 b <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 4, 8)

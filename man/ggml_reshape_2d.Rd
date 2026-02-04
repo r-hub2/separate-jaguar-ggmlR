@@ -22,7 +22,7 @@ Reshaped tensor
 Reshapes tensor to 2D with shape (ne0, ne1)
 }
 \examples{
-\dontrun{
+\donttest{
 ctx <- ggml_init(16 * 1024 * 1024)
 a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 12)
 ggml_set_f32(a, 1:12)

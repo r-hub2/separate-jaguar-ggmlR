@@ -13,7 +13,7 @@ Number of threads
 Get the current number of threads for GGML operations
 }
 \examples{
-\dontrun{
+\donttest{
 ggml_get_n_threads()
 }
 }

@@ -16,7 +16,7 @@ Named list with 'free' and 'total' memory in bytes
 Returns free and total memory for the specified Vulkan device.
 }
 \examples{
-\dontrun{
+\donttest{
 if (ggml_vulkan_available() && ggml_vulkan_device_count() > 0) {
   mem <- ggml_vulkan_device_memory(0)
   cat("Free:", mem$free / 1e9, "GB\n")

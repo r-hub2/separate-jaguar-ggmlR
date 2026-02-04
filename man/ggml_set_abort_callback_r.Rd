@@ -14,7 +14,7 @@ Converts GGML abort calls into R errors (via Rf_error).
 This allows R to catch GGML failures with tryCatch.
 }
 \examples{
-\dontrun{
+\donttest{
 ggml_set_abort_callback_r()
 # Now GGML aborts will become R errors
 result <- tryCatch({

@@ -22,7 +22,7 @@ View of input tensor with group norm applied
 Creates a graph node for in-place group normalization.
 }
 \examples{
-\dontrun{
+\donttest{
 ctx <- ggml_init(16 * 1024 * 1024)
 a <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 4, 8)
 ggml_set_f32(a, rnorm(32))

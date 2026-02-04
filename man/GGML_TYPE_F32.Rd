@@ -35,6 +35,9 @@ GGML_TYPE_Q8_0
 
 GGML_TYPE_I32
 }
+\value{
+An integer constant representing a GGML data type
+}
 \description{
 Constants representing different data types supported by GGML.
 }
@@ -49,7 +52,7 @@ Constants representing different data types supported by GGML.
 }
 }
 \examples{
-\dontrun{
+\donttest{
 GGML_TYPE_F32
 GGML_TYPE_F16
 GGML_TYPE_I32

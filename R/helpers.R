@@ -9,7 +9,7 @@
 #' @return GGML context
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' # For two 1000x1000 matrices
 #' ctx <- ggml_init_auto(mat1 = c(1000, 1000), mat2 = c(1000, 1000))
 #' ggml_free(ctx)
@@ -51,7 +51,7 @@ ggml_init_auto <- function(..., extra_mb = 10, type = GGML_TYPE_F32, no_alloc = 
 #' @return Result of the expression
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' # Create tensors in temporary context
 #' result <- ggml_with_temp_ctx(1024 * 1024, {
 #'   a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 10)

@@ -19,7 +19,7 @@ Makes a tensor contiguous in memory. Required after permute/transpose
 before some operations.
 }
 \examples{
-\dontrun{
+\donttest{
 ctx <- ggml_init(16 * 1024 * 1024)
 a <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 3, 4)
 ggml_set_f32(a, 1:12)

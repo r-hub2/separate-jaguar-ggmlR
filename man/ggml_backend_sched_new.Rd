@@ -22,7 +22,7 @@ Creates a scheduler that can distribute computation across multiple backends (GP
 A CPU backend is automatically added as a fallback. Backends with lower index have higher priority.
 }
 \examples{
-\dontrun{
+\donttest{
 if (ggml_vulkan_available() && ggml_vulkan_device_count() >= 2) {
   # Create two GPU backends (CPU is added automatically)
   gpu1 <- ggml_vulkan_init(0)

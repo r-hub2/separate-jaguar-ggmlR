@@ -16,7 +16,7 @@ Character string with device description
 Returns a human-readable description of the specified Vulkan device.
 }
 \examples{
-\dontrun{
+\donttest{
 if (ggml_vulkan_available() && ggml_vulkan_device_count() > 0) {
   ggml_vulkan_device_description(0)
 }

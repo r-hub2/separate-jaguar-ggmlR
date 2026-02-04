@@ -13,12 +13,15 @@ ggml_graph_dump_dot(graph, leafs = NULL, filename)
 
 \item{filename}{Output filename (should end with .dot)}
 }
+\value{
+No return value, called for side effects
+}
 \description{
 Exports the computation graph to a DOT file for visualization.
 The DOT file can be converted to an image using Graphviz tools.
 }
 \examples{
-\dontrun{
+\donttest{
 ctx <- ggml_init(16 * 1024 * 1024)
 a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 10)
 b <- ggml_relu(ctx, a)

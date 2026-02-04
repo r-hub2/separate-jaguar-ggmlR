@@ -13,13 +13,16 @@ ggml_graph_compute_with_ctx(ctx, graph, n_threads = 0L)
 
 \item{n_threads}{Number of threads to use (0 for auto-detect, default: 0)}
 }
+\value{
+No return value, called for side effects
+}
 \description{
 Computes the computation graph using the context-based method.
 This is an alternative to ggml_graph_compute() that uses
 ggml_graph_plan() and ggml_graph_compute() internally.
 }
 \examples{
-\dontrun{
+\donttest{
 ctx <- ggml_init(16 * 1024 * 1024)
 a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 10)
 ggml_set_f32(a, 1:10)

@@ -18,7 +18,7 @@ Tensor representing the log operation
 Creates a graph node for element-wise natural logarithm: log(x)
 }
 \examples{
-\dontrun{
+\donttest{
 ctx <- ggml_init(16 * 1024 * 1024)
 a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 3)
 ggml_set_f32(a, c(1, exp(1), exp(2)))

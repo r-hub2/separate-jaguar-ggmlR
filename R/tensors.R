@@ -3,6 +3,7 @@
 #' Constants representing different data types supported by GGML.
 #'
 #' @format Integer constants
+#' @return An integer constant representing a GGML data type
 #' @details
 #' \itemize{
 #'   \item \code{GGML_TYPE_F32}: 32-bit floating point (default)
@@ -14,7 +15,7 @@
 #' }
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' GGML_TYPE_F32
 #' GGML_TYPE_F16
 #' GGML_TYPE_I32
@@ -72,7 +73,7 @@ ggml_new_tensor_2d <- function(ctx, type = GGML_TYPE_F32, ne0, ne1) {
 #' @return Tensor pointer
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(1024 * 1024)
 #' t <- ggml_new_tensor_3d(ctx, GGML_TYPE_F32, 10, 20, 30)
 #' ggml_nelements(t)
@@ -93,7 +94,7 @@ ggml_new_tensor_3d <- function(ctx, type = GGML_TYPE_F32, ne0, ne1, ne2) {
 #' @return Tensor pointer
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(1024 * 1024)
 #' t <- ggml_new_tensor_4d(ctx, GGML_TYPE_F32, 8, 8, 3, 2)
 #' ggml_nelements(t)
@@ -113,7 +114,7 @@ ggml_new_tensor_4d <- function(ctx, type = GGML_TYPE_F32, ne0, ne1, ne2, ne3) {
 #' @return New tensor pointer with same shape
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 100)
 #' b <- ggml_dup_tensor(ctx, a)
@@ -136,7 +137,7 @@ ggml_dup_tensor <- function(ctx, tensor) {
 #' @return Tensor pointer
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(1024 * 1024)
 #' t <- ggml_new_tensor(ctx, GGML_TYPE_F32, 3, c(10, 20, 30))
 #' ggml_nelements(t)
@@ -158,7 +159,7 @@ ggml_new_tensor <- function(ctx, type = GGML_TYPE_F32, n_dims, ne) {
 #' @return NULL (invisible)
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(1024 * 1024)
 #' t <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 10)
 #' ggml_set_f32(t, 1:10)
@@ -176,7 +177,7 @@ ggml_set_zero <- function(tensor) {
 #' @return NULL (invisible)
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(1024 * 1024)
 #' t <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
 #' ggml_set_f32(t, c(1, 2, 3, 4, 5))
@@ -192,7 +193,7 @@ ggml_set_f32 <- function(tensor, data) {
 #' @return Numeric vector
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(1024 * 1024)
 #' t <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
 #' ggml_set_f32(t, c(1, 2, 3, 4, 5))
@@ -213,7 +214,7 @@ ggml_get_f32 <- function(tensor) {
 #' @return NULL (invisible)
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(1024 * 1024)
 #' pos <- ggml_new_tensor_1d(ctx, GGML_TYPE_I32, 10)
 #' ggml_set_i32(pos, 0:9)
@@ -232,7 +233,7 @@ ggml_set_i32 <- function(tensor, data) {
 #' @return Integer vector
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(1024 * 1024)
 #' pos <- ggml_new_tensor_1d(ctx, GGML_TYPE_I32, 10)
 #' ggml_set_i32(pos, 0:9)
@@ -248,7 +249,7 @@ ggml_get_i32 <- function(tensor) {
 #' @return Integer number of elements
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(1024 * 1024)
 #' t <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 10, 20)
 #' ggml_nelements(t)
@@ -263,7 +264,7 @@ ggml_nelements <- function(tensor) {
 #' @return Integer number of bytes
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(1024 * 1024)
 #' t <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 10)
 #' ggml_nbytes(t)
@@ -285,7 +286,7 @@ ggml_nbytes <- function(tensor) {
 #' @return Integer number of dimensions (1-4)
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(1024 * 1024)
 #' t <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 10, 20)
 #' ggml_n_dims(t)
@@ -303,7 +304,7 @@ ggml_n_dims <- function(tensor) {
 #' @return Logical
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(1024 * 1024)
 #' t <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 10)
 #' ggml_is_contiguous(t)
@@ -321,7 +322,7 @@ ggml_is_contiguous <- function(tensor) {
 #' @return Logical
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(1024 * 1024)
 #' t <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 10, 20)
 #' ggml_is_transposed(t)
@@ -339,7 +340,7 @@ ggml_is_transposed <- function(tensor) {
 #' @return Logical
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(1024 * 1024)
 #' t <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 10, 20)
 #' ggml_is_permuted(t)
@@ -357,7 +358,7 @@ ggml_is_permuted <- function(tensor) {
 #' @return Numeric vector of length 4 with dimensions
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(1024 * 1024)
 #' t <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 10, 20)
 #' ggml_tensor_shape(t)
@@ -375,7 +376,7 @@ ggml_tensor_shape <- function(tensor) {
 #' @return Integer type code (0 = F32, 1 = F16, etc.)
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(1024 * 1024)
 #' t <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 10)
 #' ggml_tensor_type(t)
@@ -399,7 +400,7 @@ ggml_tensor_type <- function(tensor) {
 #' @return Tensor pointer (1-element I32 tensor)
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(1024 * 1024)
 #' scalar <- ggml_new_i32(ctx, 42)
 #' ggml_get_i32(scalar)
@@ -419,7 +420,7 @@ ggml_new_i32 <- function(ctx, value) {
 #' @return Tensor pointer (1-element F32 tensor)
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(1024 * 1024)
 #' scalar <- ggml_new_f32(ctx, 3.14)
 #' ggml_get_f32(scalar)

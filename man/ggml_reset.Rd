@@ -18,7 +18,7 @@ The context can be reused without recreating it.
 This is more efficient than free + init for temporary operations.
 }
 \examples{
-\dontrun{
+\donttest{
 ctx <- ggml_init(1024 * 1024)
 a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 100)
 ggml_reset(ctx)

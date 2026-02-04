@@ -7,7 +7,7 @@
 #' @return Graph object (external pointer)
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 10)
 #' b <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 10)
@@ -29,9 +29,10 @@ ggml_build_forward_expand <- function(ctx, tensor) {
 #'
 #' @param ctx GGML context
 #' @param graph Graph object created by ggml_build_forward_expand
+#' @return No return value, called for side effects
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 10)
 #' b <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 10)
@@ -63,6 +64,7 @@ ggml_graph_n_nodes <- function(graph) {
 #' Prints debug information about the computation graph
 #'
 #' @param graph Graph object
+#' @return No return value, called for side effects
 #' @export
 ggml_graph_print <- function(graph) {
   invisible(.Call("R_ggml_graph_print", graph, PACKAGE = "ggmlR"))
@@ -76,6 +78,7 @@ ggml_graph_print <- function(graph) {
 #' this function will cause an error.
 #'
 #' @param graph Graph object with gradients allocated
+#' @return No return value, called for side effects
 #' @export
 ggml_graph_reset <- function(graph) {
   invisible(.Call("R_ggml_graph_reset", graph, PACKAGE = "ggmlR"))
@@ -90,7 +93,7 @@ ggml_graph_reset <- function(graph) {
 #' @return Tensor pointer
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 10)
 #' b <- ggml_add(ctx, a, a)
@@ -134,9 +137,10 @@ ggml_graph_get_tensor <- function(graph, name) {
 #' @param ctx GGML context
 #' @param graph Graph object created by ggml_build_forward_expand
 #' @param n_threads Number of threads to use (0 for auto-detect, default: 0)
+#' @return No return value, called for side effects
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 10)
 #' ggml_set_f32(a, 1:10)
@@ -159,9 +163,10 @@ ggml_graph_compute_with_ctx <- function(ctx, graph, n_threads = 0L) {
 #' @param graph Graph object
 #' @param leafs Optional graph with leaf tensors (NULL for none)
 #' @param filename Output filename (should end with .dot)
+#' @return No return value, called for side effects
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 10)
 #' b <- ggml_relu(ctx, a)
@@ -186,7 +191,7 @@ ggml_graph_dump_dot <- function(graph, leafs = NULL, filename) {
 #' @return Graph allocator object (external pointer)
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' galloc <- ggml_gallocr_new()
 #'
@@ -209,6 +214,7 @@ ggml_gallocr_new <- function() {
 #' Frees a graph allocator and all associated buffers.
 #'
 #' @param galloc Graph allocator object
+#' @return No return value, called for side effects
 #' @export
 ggml_gallocr_free <- function(galloc) {
   invisible(.Call("R_ggml_gallocr_free", galloc, PACKAGE = "ggmlR"))
@@ -237,7 +243,7 @@ ggml_gallocr_reserve <- function(galloc, graph) {
 #' @return TRUE on success, FALSE on failure
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(16 * 1024 * 1024)
 #' galloc <- ggml_gallocr_new()
 #'
@@ -282,6 +288,7 @@ ggml_gallocr_get_buffer_size <- function(galloc, buffer_id = 0L) {
 #' @param tensor Tensor pointer
 #' @param data R vector with data to set
 #' @param offset Byte offset (default: 0)
+#' @return No return value, called for side effects
 #' @export
 ggml_backend_tensor_set_data <- function(tensor, data, offset = 0) {
   invisible(.Call("R_ggml_backend_tensor_set", tensor, data,
@@ -325,6 +332,7 @@ ggml_backend_alloc_ctx_tensors <- function(ctx, backend) {
 #' Frees a backend buffer and all associated memory.
 #'
 #' @param buffer Backend buffer object
+#' @return No return value, called for side effects
 #' @export
 ggml_backend_buffer_free <- function(buffer) {
   invisible(.Call("R_ggml_backend_buffer_free", buffer, PACKAGE = "ggmlR"))
@@ -369,9 +377,14 @@ ggml_backend_buffer_name <- function(buffer) {
 #' @export
 #' @family graph
 #' @examples
-#' \dontrun{
-#' # Get first 10 nodes of a graph
-#' view <- ggml_graph_view(graph, 0, 10)
+#' \donttest{
+#' ctx <- ggml_init(16 * 1024 * 1024)
+#' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 10)
+#' b <- ggml_relu(ctx, a)
+#' graph <- ggml_build_forward_expand(ctx, b)
+#' n_nodes <- ggml_graph_n_nodes(graph)
+#' view <- ggml_graph_view(graph, 0, n_nodes)
+#' ggml_free(ctx)
 #' }
 ggml_graph_view <- function(graph, i0, i1) {
   .Call("R_ggml_graph_view", graph, as.integer(i0), as.integer(i1),
@@ -388,9 +401,9 @@ ggml_graph_view <- function(graph, i0, i1) {
 #' @export
 #' @family graph
 #' @examples
-#' \dontrun{
-#' # Check if add operation can be in-place
-#' can_inplace <- ggml_op_can_inplace(ggml_op_add())
+#' \donttest{
+#' # Check if operation code 1 (ADD) can be in-place
+#' can_inplace <- ggml_op_can_inplace(1L)
 #' }
 ggml_op_can_inplace <- function(op) {
   .Call("R_ggml_op_can_inplace", as.integer(op), PACKAGE = "ggmlR")
@@ -408,7 +421,7 @@ ggml_op_can_inplace <- function(op) {
 #' @export
 #' @family tensor
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(1024 * 1024)
 #' a <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 4, 4)
 #' b <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 4, 4)

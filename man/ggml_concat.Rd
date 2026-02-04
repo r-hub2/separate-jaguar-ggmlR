@@ -23,7 +23,7 @@ Concatenates two tensors along a specified dimension.
 CRITICAL for KV-cache operations in transformers.
 }
 \examples{
-\dontrun{
+\donttest{
 ctx <- ggml_init(16 * 1024 * 1024)
 a <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 4, 3)
 b <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 4, 2)

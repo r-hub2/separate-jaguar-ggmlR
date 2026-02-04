@@ -15,7 +15,7 @@ Redirects GGML log messages to R's message system:
 - WARN/ERROR messages go to stderr (via REprintf)
 }
 \examples{
-\dontrun{
+\donttest{
 ggml_log_set_r()
 # Now GGML messages will appear in R console
 }

@@ -9,6 +9,9 @@ ggml_gallocr_free(galloc)
 \arguments{
 \item{galloc}{Graph allocator object}
 }
+\value{
+No return value, called for side effects
+}
 \description{
 Frees a graph allocator and all associated buffers.
 }

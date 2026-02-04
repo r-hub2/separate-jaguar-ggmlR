@@ -16,7 +16,7 @@ Logical indicating if backend is Vulkan
 Returns TRUE if the given backend is a Vulkan backend.
 }
 \examples{
-\dontrun{
+\donttest{
 if (ggml_vulkan_available() && ggml_vulkan_device_count() > 0) {
   vk_backend <- ggml_vulkan_init(0)
   cpu_backend <- ggml_backend_cpu_init()

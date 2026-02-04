@@ -19,7 +19,7 @@ Creates a 1-element tensor containing a single integer value.
 Useful for indices, counters, and other scalar integer operations.
 }
 \examples{
-\dontrun{
+\donttest{
 ctx <- ggml_init(1024 * 1024)
 scalar <- ggml_new_i32(ctx, 42)
 ggml_get_i32(scalar)

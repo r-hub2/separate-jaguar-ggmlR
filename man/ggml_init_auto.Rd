@@ -22,7 +22,7 @@ GGML context
 Creates a context with automatically calculated size based on planned tensors
 }
 \examples{
-\dontrun{
+\donttest{
 # For two 1000x1000 matrices
 ctx <- ggml_init_auto(mat1 = c(1000, 1000), mat2 = c(1000, 1000))
 ggml_free(ctx)

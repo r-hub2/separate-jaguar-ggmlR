@@ -21,7 +21,7 @@ Creates a graph node for matrix multiplication. CRITICAL for LLM operations.
 For matrices A (m x n) and B (n x p), computes C = A * B (m x p).
 }
 \examples{
-\dontrun{
+\donttest{
 ctx <- ggml_init(1024 * 1024)
 A <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 4, 3)
 B <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 4, 2)

@@ -26,7 +26,7 @@ Tensor pointer
 Create 4D Tensor
 }
 \examples{
-\dontrun{
+\donttest{
 ctx <- ggml_init(1024 * 1024)
 t <- ggml_new_tensor_4d(ctx, GGML_TYPE_F32, 8, 8, 3, 2)
 ggml_nelements(t)

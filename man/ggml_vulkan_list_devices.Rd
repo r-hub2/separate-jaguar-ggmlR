@@ -13,7 +13,7 @@ List of device information (index, name, memory)
 Returns detailed information about all available Vulkan devices.
 }
 \examples{
-\dontrun{
+\donttest{
 if (ggml_vulkan_available() && ggml_vulkan_device_count() > 0) {
   devices <- ggml_vulkan_list_devices()
   print(devices)

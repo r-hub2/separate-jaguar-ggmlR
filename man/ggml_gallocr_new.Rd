@@ -14,7 +14,7 @@ Creates a new graph allocator for efficient memory management.
 The allocator can automatically allocate and reuse memory for graph tensors.
 }
 \examples{
-\dontrun{
+\donttest{
 ctx <- ggml_init(16 * 1024 * 1024)
 galloc <- ggml_gallocr_new()
 

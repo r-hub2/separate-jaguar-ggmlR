@@ -13,7 +13,7 @@ Integer count of Vulkan devices (0 if Vulkan not available)
 Returns the number of available Vulkan-capable GPU devices.
 }
 \examples{
-\dontrun{
+\donttest{
 if (ggml_vulkan_available()) {
   ggml_vulkan_device_count()
 }

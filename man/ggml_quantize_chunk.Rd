@@ -22,7 +22,7 @@ Raw vector containing quantized data
 Quantizes a chunk of floating-point data to a lower precision format.
 }
 \examples{
-\dontrun{
+\donttest{
 # Quantize 256 floats to Q8_0 (block size 32)
 data <- rnorm(256)
 quantized <- ggml_quantize_chunk(GGML_TYPE_Q8_0, data, 1, 256)

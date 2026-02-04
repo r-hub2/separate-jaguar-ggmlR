@@ -19,7 +19,7 @@ Creates a 1-element tensor containing a single float value.
 Useful for scalar operations, learning rates, and other scalar floats.
 }
 \examples{
-\dontrun{
+\donttest{
 ctx <- ggml_init(1024 * 1024)
 scalar <- ggml_new_f32(ctx, 3.14)
 ggml_get_f32(scalar)

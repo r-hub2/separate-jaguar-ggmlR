@@ -16,7 +16,7 @@ Number of threads set
 Set the number of threads for GGML operations
 }
 \examples{
-\dontrun{
+\donttest{
 # Use 4 threads
 ggml_set_n_threads(4)
 

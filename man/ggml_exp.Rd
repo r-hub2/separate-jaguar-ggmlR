@@ -18,7 +18,7 @@ Tensor representing the exp operation
 Creates a graph node for element-wise exponential: exp(x)
 }
 \examples{
-\dontrun{
+\donttest{
 ctx <- ggml_init(16 * 1024 * 1024)
 a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 3)
 ggml_set_f32(a, c(0, 1, 2))

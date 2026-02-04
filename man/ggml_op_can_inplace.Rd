@@ -17,9 +17,9 @@ Returns whether a GGML operation can reuse memory from its source tensors.
 This is useful for memory optimization.
 }
 \examples{
-\dontrun{
-# Check if add operation can be in-place
-can_inplace <- ggml_op_can_inplace(ggml_op_add())
+\donttest{
+# Check if operation code 1 (ADD) can be in-place
+can_inplace <- ggml_op_can_inplace(1L)
 }
 }
 \seealso{

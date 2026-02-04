@@ -8,7 +8,7 @@
 #' @return GGML context pointer
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(1024 * 1024)
 #' ggml_free(ctx)
 #' }
@@ -21,7 +21,7 @@ ggml_init <- function(mem_size = 16 * 1024 * 1024, no_alloc = FALSE) {
 #' @return NULL (invisible)
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(1024 * 1024)
 #' ggml_free(ctx)
 #' }
@@ -36,7 +36,7 @@ ggml_free <- function(ctx) {
 #' @return Tensor pointer
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(1024 * 1024)
 #' tensor <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 10)
 #' ggml_nelements(tensor)
@@ -54,7 +54,7 @@ ggml_new_tensor_1d <- function(ctx, type, ne0) {
 #' @return Tensor pointer
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(1024 * 1024)
 #' tensor <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 10, 20)
 #' ggml_nelements(tensor)
@@ -70,7 +70,7 @@ ggml_new_tensor_2d <- function(ctx, type, ne0, ne1) {
 #' @return NULL (invisible)
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(1024 * 1024)
 #' tensor <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
 #' ggml_set_f32(tensor, c(1, 2, 3, 4, 5))
@@ -86,7 +86,7 @@ ggml_set_f32 <- function(tensor, data) {
 #' @return Numeric vector with tensor values
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(1024 * 1024)
 #' tensor <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
 #' ggml_set_f32(tensor, c(1, 2, 3, 4, 5))
@@ -104,7 +104,7 @@ ggml_get_f32 <- function(tensor) {
 #' @return Tensor representing the addition operation
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
 #' b <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
@@ -127,7 +127,7 @@ ggml_add <- function(ctx, a, b) {
 #' @return Tensor representing the multiplication operation
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
 #' b <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
@@ -153,7 +153,7 @@ ggml_mul <- function(ctx, a, b) {
 #' @return Graph pointer
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
 #' b <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
@@ -177,7 +177,7 @@ ggml_build_forward_expand <- function(ctx, tensor) {
 #' @return NULL (invisible)
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 5)
 #' ggml_set_f32(a, c(1, 2, 3, 4, 5))
@@ -195,7 +195,7 @@ ggml_graph_compute <- function(ctx, graph) {
 #' @return Character string with GGML version
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ggml_version()
 #' }
 ggml_version <- function() {
@@ -209,7 +209,7 @@ ggml_version <- function() {
 #' @return TRUE if test passed
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ggml_test()
 #' }
 ggml_test <- function() {
@@ -221,7 +221,7 @@ ggml_test <- function() {
 #' @return Integer number of elements
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(1024 * 1024)
 #' tensor <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 10, 20)
 #' ggml_nelements(tensor)
@@ -236,7 +236,7 @@ ggml_nelements <- function(tensor) {
 #' @return Integer number of bytes
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(1024 * 1024)
 #' tensor <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 10)
 #' ggml_nbytes(tensor)
@@ -250,7 +250,7 @@ ggml_nbytes <- function(tensor) {
 #' @return TRUE if GGML library is loaded
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ggml_is_available()
 #' }
 ggml_is_available <- function() {
@@ -269,7 +269,7 @@ ggml_is_available <- function() {
 #' @return NULL (invisible)
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ctx <- ggml_init(1024 * 1024)
 #' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 100)
 #' ggml_reset(ctx)
@@ -288,7 +288,7 @@ ggml_reset <- function(ctx) {
 #' @return NULL (invisible)
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ggml_time_init()
 #' start <- ggml_time_ms()
 #' Sys.sleep(0.01)
@@ -305,7 +305,7 @@ ggml_time_init <- function() {
 #' @return Numeric value representing milliseconds
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ggml_time_init()
 #' start <- ggml_time_ms()
 #' Sys.sleep(0.01)
@@ -323,7 +323,7 @@ ggml_time_ms <- function() {
 #' @return Numeric value representing microseconds
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ggml_time_init()
 #' start <- ggml_time_us()
 #' Sys.sleep(0.001)
@@ -340,7 +340,7 @@ ggml_time_us <- function() {
 #' @return Numeric value representing CPU cycles
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ggml_cycles()
 #' }
 ggml_cycles <- function() {
@@ -355,7 +355,7 @@ ggml_cycles <- function() {
 #' @return Numeric value representing cycles per millisecond
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ggml_cycles_per_ms()
 #' }
 ggml_cycles_per_ms <- function() {
