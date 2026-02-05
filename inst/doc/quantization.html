@@ -410,15 +410,16 @@ data:</p>
 <span id="cb4-9"><a href="#cb4-9" tabindex="-1"></a>quantized <span class="ot">&lt;-</span> <span class="fu">ggml_quantize_chunk</span>(</span>
 <span id="cb4-10"><a href="#cb4-10" tabindex="-1"></a>  <span class="at">type =</span> GGML_TYPE_Q4_0,</span>
 <span id="cb4-11"><a href="#cb4-11" tabindex="-1"></a>  <span class="at">src =</span> src,</span>
-<span id="cb4-12"><a href="#cb4-12" tabindex="-1"></a>  <span class="at">n =</span> n</span>
-<span id="cb4-13"><a href="#cb4-13" tabindex="-1"></a>)</span>
-<span id="cb4-14"><a href="#cb4-14" tabindex="-1"></a></span>
-<span id="cb4-15"><a href="#cb4-15" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">&quot;Original size:&quot;</span>, <span class="fu">ggml_nbytes</span>(src), <span class="st">&quot;bytes</span><span class="sc">\n</span></span>
-<span id="cb4-16"><a href="#cb4-16" tabindex="-1"></a><span class="st">&quot;</span>)</span>
-<span id="cb4-17"><a href="#cb4-17" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">&quot;Quantized size:&quot;</span>, <span class="fu">length</span>(quantized), <span class="st">&quot;bytes</span><span class="sc">\n</span><span class="st">&quot;</span>)</span>
-<span id="cb4-18"><a href="#cb4-18" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">&quot;Compression ratio:&quot;</span>, <span class="fu">round</span>(<span class="fu">ggml_nbytes</span>(src) <span class="sc">/</span> <span class="fu">length</span>(quantized), <span class="dv">1</span>), <span class="st">&quot;x</span><span class="sc">\n</span><span class="st">&quot;</span>)</span>
-<span id="cb4-19"><a href="#cb4-19" tabindex="-1"></a></span>
-<span id="cb4-20"><a href="#cb4-20" tabindex="-1"></a><span class="fu">ggml_free</span>(ctx)</span></code></pre></div>
+<span id="cb4-12"><a href="#cb4-12" tabindex="-1"></a>  <span class="at">nrows =</span> <span class="dv">1</span>,</span>
+<span id="cb4-13"><a href="#cb4-13" tabindex="-1"></a>  <span class="at">n_per_row =</span> n</span>
+<span id="cb4-14"><a href="#cb4-14" tabindex="-1"></a>)</span>
+<span id="cb4-15"><a href="#cb4-15" tabindex="-1"></a></span>
+<span id="cb4-16"><a href="#cb4-16" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">&quot;Original size:&quot;</span>, <span class="fu">ggml_nbytes</span>(src), <span class="st">&quot;bytes</span><span class="sc">\n</span></span>
+<span id="cb4-17"><a href="#cb4-17" tabindex="-1"></a><span class="st">&quot;</span>)</span>
+<span id="cb4-18"><a href="#cb4-18" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">&quot;Quantized size:&quot;</span>, <span class="fu">length</span>(quantized), <span class="st">&quot;bytes</span><span class="sc">\n</span><span class="st">&quot;</span>)</span>
+<span id="cb4-19"><a href="#cb4-19" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">&quot;Compression ratio:&quot;</span>, <span class="fu">round</span>(<span class="fu">ggml_nbytes</span>(src) <span class="sc">/</span> <span class="fu">length</span>(quantized), <span class="dv">1</span>), <span class="st">&quot;x</span><span class="sc">\n</span><span class="st">&quot;</span>)</span>
+<span id="cb4-20"><a href="#cb4-20" tabindex="-1"></a></span>
+<span id="cb4-21"><a href="#cb4-21" tabindex="-1"></a><span class="fu">ggml_free</span>(ctx)</span></code></pre></div>
 </div>
 <div id="dequantize-data" class="section level3">
 <h3>Dequantize Data</h3>

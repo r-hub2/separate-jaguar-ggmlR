@@ -42,7 +42,7 @@ OBJECTS = \
   r_ggml_io.o \
   r_interface.o r_interface_graph.o r_interface_vulkan.o r_interface_scheduler.o \
   r_interface_opt.o r_interface_backend.o r_interface_quants.o \
-  ggml.o ggml-alloc.o ggml-quants.o ggml-opt.o \
+  ggml.o ggml-alloc.o ggml-quants.o ggml-opt.o gguf.o \
   ggml-backend.o ggml-backend-reg.o ggml-threading.o \
   ggml-cpu/traits.o \
   ggml-cpu/ggml-cpu-backend.o ggml-cpu/ggml-cpu.o \

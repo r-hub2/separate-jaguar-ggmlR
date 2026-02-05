@@ -56,7 +56,8 @@ knitr::opts_chunk$set(
 # quantized <- ggml_quantize_chunk(
 #   type = GGML_TYPE_Q4_0,
 #   src = src,
-#   n = n
+#   nrows = 1,
+#   n_per_row = n
 # )
 # 
 # cat("Original size:", ggml_nbytes(src), "bytes\n
