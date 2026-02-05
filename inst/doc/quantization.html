@@ -406,20 +406,22 @@ data:</p>
 <span id="cb4-5"><a href="#cb4-5" tabindex="-1"></a>src <span class="ot">&lt;-</span> <span class="fu">ggml_new_tensor_1d</span>(ctx, GGML_TYPE_F32, n)</span>
 <span id="cb4-6"><a href="#cb4-6" tabindex="-1"></a><span class="fu">ggml_set_f32</span>(src, <span class="fu">rnorm</span>(n))</span>
 <span id="cb4-7"><a href="#cb4-7" tabindex="-1"></a></span>
-<span id="cb4-8"><a href="#cb4-8" tabindex="-1"></a><span class="co"># Quantize to Q4_0</span></span>
-<span id="cb4-9"><a href="#cb4-9" tabindex="-1"></a>quantized <span class="ot">&lt;-</span> <span class="fu">ggml_quantize_chunk</span>(</span>
-<span id="cb4-10"><a href="#cb4-10" tabindex="-1"></a>  <span class="at">type =</span> GGML_TYPE_Q4_0,</span>
-<span id="cb4-11"><a href="#cb4-11" tabindex="-1"></a>  <span class="at">src =</span> src,</span>
-<span id="cb4-12"><a href="#cb4-12" tabindex="-1"></a>  <span class="at">nrows =</span> <span class="dv">1</span>,</span>
-<span id="cb4-13"><a href="#cb4-13" tabindex="-1"></a>  <span class="at">n_per_row =</span> n</span>
-<span id="cb4-14"><a href="#cb4-14" tabindex="-1"></a>)</span>
-<span id="cb4-15"><a href="#cb4-15" tabindex="-1"></a></span>
-<span id="cb4-16"><a href="#cb4-16" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">&quot;Original size:&quot;</span>, <span class="fu">ggml_nbytes</span>(src), <span class="st">&quot;bytes</span><span class="sc">\n</span></span>
-<span id="cb4-17"><a href="#cb4-17" tabindex="-1"></a><span class="st">&quot;</span>)</span>
-<span id="cb4-18"><a href="#cb4-18" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">&quot;Quantized size:&quot;</span>, <span class="fu">length</span>(quantized), <span class="st">&quot;bytes</span><span class="sc">\n</span><span class="st">&quot;</span>)</span>
-<span id="cb4-19"><a href="#cb4-19" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">&quot;Compression ratio:&quot;</span>, <span class="fu">round</span>(<span class="fu">ggml_nbytes</span>(src) <span class="sc">/</span> <span class="fu">length</span>(quantized), <span class="dv">1</span>), <span class="st">&quot;x</span><span class="sc">\n</span><span class="st">&quot;</span>)</span>
-<span id="cb4-20"><a href="#cb4-20" tabindex="-1"></a></span>
-<span id="cb4-21"><a href="#cb4-21" tabindex="-1"></a><span class="fu">ggml_free</span>(ctx)</span></code></pre></div>
+<span id="cb4-8"><a href="#cb4-8" tabindex="-1"></a><span class="co"># Extract numeric data from tensor</span></span>
+<span id="cb4-9"><a href="#cb4-9" tabindex="-1"></a>src_data <span class="ot">&lt;-</span> <span class="fu">ggml_get_f32</span>(src)</span>
+<span id="cb4-10"><a href="#cb4-10" tabindex="-1"></a></span>
+<span id="cb4-11"><a href="#cb4-11" tabindex="-1"></a><span class="co"># Quantize to Q4_0</span></span>
+<span id="cb4-12"><a href="#cb4-12" tabindex="-1"></a>quantized <span class="ot">&lt;-</span> <span class="fu">ggml_quantize_chunk</span>(</span>
+<span id="cb4-13"><a href="#cb4-13" tabindex="-1"></a>  <span class="at">type =</span> GGML_TYPE_Q4_0,</span>
+<span id="cb4-14"><a href="#cb4-14" tabindex="-1"></a>  <span class="at">src =</span> src_data,</span>
+<span id="cb4-15"><a href="#cb4-15" tabindex="-1"></a>  <span class="at">nrows =</span> <span class="dv">1</span>,</span>
+<span id="cb4-16"><a href="#cb4-16" tabindex="-1"></a>  <span class="at">n_per_row =</span> n</span>
+<span id="cb4-17"><a href="#cb4-17" tabindex="-1"></a>)</span>
+<span id="cb4-18"><a href="#cb4-18" tabindex="-1"></a></span>
+<span id="cb4-19"><a href="#cb4-19" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">&quot;Original size:&quot;</span>, <span class="fu">length</span>(src_data) <span class="sc">*</span> <span class="dv">4</span>, <span class="st">&quot;bytes</span><span class="sc">\n</span><span class="st">&quot;</span>)  <span class="co"># F32 = 4 bytes</span></span>
+<span id="cb4-20"><a href="#cb4-20" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">&quot;Quantized size:&quot;</span>, <span class="fu">length</span>(quantized), <span class="st">&quot;bytes</span><span class="sc">\n</span><span class="st">&quot;</span>)</span>
+<span id="cb4-21"><a href="#cb4-21" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">&quot;Compression ratio:&quot;</span>, <span class="fu">round</span>(<span class="fu">ggml_nbytes</span>(src) <span class="sc">/</span> <span class="fu">length</span>(quantized), <span class="dv">1</span>), <span class="st">&quot;x</span><span class="sc">\n</span><span class="st">&quot;</span>)</span>
+<span id="cb4-22"><a href="#cb4-22" tabindex="-1"></a></span>
+<span id="cb4-23"><a href="#cb4-23" tabindex="-1"></a><span class="fu">ggml_free</span>(ctx)</span></code></pre></div>
 </div>
 <div id="dequantize-data" class="section level3">
 <h3>Dequantize Data</h3>
@@ -429,9 +431,8 @@ data:</p>
 <span id="cb5-3"><a href="#cb5-3" tabindex="-1"></a>dequantized <span class="ot">&lt;-</span> <span class="fu">dequantize_row_q4_0</span>(q4_data, n)</span>
 <span id="cb5-4"><a href="#cb5-4" tabindex="-1"></a></span>
 <span id="cb5-5"><a href="#cb5-5" tabindex="-1"></a><span class="co"># Compare with original</span></span>
-<span id="cb5-6"><a href="#cb5-6" tabindex="-1"></a>original <span class="ot">&lt;-</span> <span class="fu">ggml_get_f32</span>(src)</span>
-<span id="cb5-7"><a href="#cb5-7" tabindex="-1"></a>error <span class="ot">&lt;-</span> <span class="fu">mean</span>(<span class="fu">abs</span>(original <span class="sc">-</span> dequantized))</span>
-<span id="cb5-8"><a href="#cb5-8" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">&quot;Mean absolute error:&quot;</span>, error, <span class="st">&quot;</span><span class="sc">\n</span><span class="st">&quot;</span>)</span></code></pre></div>
+<span id="cb5-6"><a href="#cb5-6" tabindex="-1"></a>error <span class="ot">&lt;-</span> <span class="fu">mean</span>(<span class="fu">abs</span>(src_data <span class="sc">-</span> dequantized))</span>
+<span id="cb5-7"><a href="#cb5-7" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">&quot;Mean absolute error:&quot;</span>, error, <span class="st">&quot;</span><span class="sc">\n</span><span class="st">&quot;</span>)</span></code></pre></div>
 </div>
 </div>
 <div id="block-sizes-and-alignment" class="section level2">

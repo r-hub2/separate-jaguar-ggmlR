@@ -85,16 +85,18 @@ n <- 256  # Must be multiple of block size (32 for Q4_0)
 src <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, n)
 ggml_set_f32(src, rnorm(n))
 
+# Extract numeric data from tensor
+src_data <- ggml_get_f32(src)
+
 # Quantize to Q4_0
 quantized <- ggml_quantize_chunk(
   type = GGML_TYPE_Q4_0,
-  src = src,
+  src = src_data,
   nrows = 1,
   n_per_row = n
 )
 
-cat("Original size:", ggml_nbytes(src), "bytes\n
-")
+cat("Original size:", length(src_data) * 4, "bytes\n")  # F32 = 4 bytes
 cat("Quantized size:", length(quantized), "bytes\n")
 cat("Compression ratio:", round(ggml_nbytes(src) / length(quantized), 1), "x\n")
 
@@ -110,8 +112,7 @@ q4_data <- quantized  # From previous example
 dequantized <- dequantize_row_q4_0(q4_data, n)
 
 # Compare with original
-original <- ggml_get_f32(src)
-error <- mean(abs(original - dequantized))
+error <- mean(abs(src_data - dequantized))
 cat("Mean absolute error:", error, "\n")
 ```
 
