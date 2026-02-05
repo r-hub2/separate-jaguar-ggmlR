@@ -39,8 +39,8 @@ Performs training on the front portion of the dataset and evaluation
 on the back portion. This gives more control than ggml_opt_fit.
 }
 \examples{
-\dontrun{
 # Requires full optimizer setup - see ggml_opt_fit() for simpler API
+if (FALSE) {
 result_train <- ggml_opt_result_init()
 result_eval <- ggml_opt_result_init()
 ggml_opt_epoch(opt_ctx, dataset, result_train, result_eval,

@@ -449,9 +449,9 @@ ggml_opt_eval <- function(opt_ctx, result = NULL) {
 #' @export
 #' @family optimization
 #' @examples
-#' \dontrun{
 #' # Full training requires building a computation graph
 #' # See package vignettes for complete examples
+#' if (FALSE) {
 #' cpu <- ggml_backend_cpu_init()
 #' sched <- ggml_backend_sched_new(list(cpu))
 #' dataset <- ggml_opt_dataset_init(GGML_TYPE_F32, GGML_TYPE_F32, 10, 1, 1000)
@@ -539,8 +539,8 @@ ggml_opt_prepare_alloc <- function(opt_ctx, ctx_compute, graph, inputs, outputs)
 #' @export
 #' @family optimization
 #' @examples
-#' \dontrun{
 #' # Requires full optimizer setup - see ggml_opt_fit() for simpler API
+#' if (FALSE) {
 #' result_train <- ggml_opt_result_init()
 #' result_eval <- ggml_opt_result_init()
 #' ggml_opt_epoch(opt_ctx, dataset, result_train, result_eval,

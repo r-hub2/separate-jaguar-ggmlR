@@ -49,9 +49,9 @@ High-level function to train a model on a dataset.
 This is the recommended way to train models.
 }
 \examples{
-\dontrun{
 # Full training requires building a computation graph
 # See package vignettes for complete examples
+if (FALSE) {
 cpu <- ggml_backend_cpu_init()
 sched <- ggml_backend_sched_new(list(cpu))
 dataset <- ggml_opt_dataset_init(GGML_TYPE_F32, GGML_TYPE_F32, 10, 1, 1000)
