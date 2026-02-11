@@ -69,9 +69,8 @@ $(SHLIB): $(OBJECTS) staticlib
 .PHONY: staticlib
 
 staticlib: $(GGML_OBJECTS)
-	$(AR) rcs $(STATICLIB) $(GGML_OBJECTS)
 	mkdir -p ../inst/lib
-	cp $(STATICLIB) ../inst/lib/
+	$(AR) rcs ../inst/lib/$(STATICLIB) $(GGML_OBJECTS)
 
 # R interface files and r_ggml_io.c include R headers (R.h, Rinternals.h)
 # which contain __attribute__((format(printf, ...))). Our macro

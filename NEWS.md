@@ -7,6 +7,7 @@
 ## Bug Fixes
 
 * Fixed duplicate symbol linker error on macOS ARM64 (x86 guards for 5 repack functions in `arch/x86/repack.cpp`)
+* Fixed UBSan "applying non-zero offset to null pointer" in `ggml.c:ggml_graph_nbytes()` — upstream ggml uses NULL pointer arithmetic for size calculation; patched to use `uintptr_t` arithmetic (CRAN m1-san)
 
 ## New Features (Stable Diffusion support)
 
