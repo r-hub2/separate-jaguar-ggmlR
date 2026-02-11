@@ -1,51 +1,45 @@
 CXX_STD = CXX17
 
+# Enable C99 format specifiers (%zu, %zd) on MinGW
+# Without this, gcc on Windows warns about unknown format character 'z'
+PKG_CPPFLAGS_WIN = -D__USE_MINGW_ANSI_STDIO=1
+
 # Base include paths and defines
 GGML_CPPFLAGS = -I. -Iggml-cpu -Iggml-cpu/arch/x86 \
   -DGGML_VERSION='"0.9.5"' -DGGML_COMMIT='"ggmlR"' \
-  -DGGML_USE_CPU -D_GNU_SOURCE
+  -DGGML_USE_CPU $(PKG_CPPFLAGS_WIN)
 
-# Vulkan flags (set by configure --with-vulkan)
-VULKAN_CPPFLAGS = @VULKAN_CPPFLAGS@
-VULKAN_LIBS = @VULKAN_LIBS@
-
-# --- OpenMP configuration ---
+# --- OpenMP configuration (Windows) ---
 #
-# CRAN R CMD check enforces strict pairing of SHLIB_OPENMP_*FLAGS macros:
-#   - PKG_CFLAGS must use SHLIB_OPENMP_CFLAGS
-#   - PKG_CXXFLAGS must use SHLIB_OPENMP_CXXFLAGS
-#   - PKG_LIBS must use the macro matching the linker language
-#   - Multiple SHLIB_OPENMP_* macros in PKG_LIBS are not allowed
-#   - Mismatched macros (e.g. CXXFLAGS in CFLAGS) trigger NOTE
+# On Rtools, gcc and g++ are from the same MinGW toolchain, so
+# SHLIB_OPENMP_CFLAGS == SHLIB_OPENMP_CXXFLAGS (both are -fopenmp).
 #
-# For mixed C/C++ packages this creates an unsolvable conflict:
-# linking is by C++, so PKG_LIBS needs CXXFLAGS, but C code also needs
-# CFLAGS for compilation, which then has no matching pair in PKG_LIBS.
+# CRAN R CMD check requires strict pairing:
+#   - Each SHLIB_OPENMP_* in PKG_C(XX)FLAGS must have a match in PKG_LIBS
+#   - PKG_LIBS macro must match the linker language (C++ for this package)
 #
-# Solution: resolve OpenMP flags at configure time from R's Makeconf
-# (see RcppArmadillo for the same approach). The configure script reads
-# SHLIB_OPENMP_CFLAGS and SHLIB_OPENMP_CXXFLAGS and substitutes them
-# here as literal values. R CMD check does not see the SHLIB_OPENMP_*
-# macro names, so the NOTE disappears.
+# Therefore we use only SHLIB_OPENMP_CXXFLAGS everywhere:
+#   - PKG_CXXFLAGS = $(SHLIB_OPENMP_CXXFLAGS) -- C++ compilation + linker match
+#   - PKG_LIBS     = $(SHLIB_OPENMP_CXXFLAGS) -- linker (C++)
+#   - PKG_CFLAGS   is not set (C code still gets OpenMP via the toolchain)
 #
-# On macOS (Apple clang) both values are empty -> OpenMP disabled,
-# code falls back to pthreads (#ifndef GGML_USE_OPENMP in ggml-cpu-backend.c).
+# The -DGGML_USE_OPENMP define is set conditionally below for all code.
 #
-OPENMP_CPPFLAGS = @OPENMP_CPPFLAGS@
-OPENMP_CFLAGS = @OPENMP_CFLAGS@
-OPENMP_CXXFLAGS = @OPENMP_CXXFLAGS@
+ifneq ($(SHLIB_OPENMP_CXXFLAGS),)
+  GGML_CPPFLAGS += -DGGML_USE_OPENMP
+endif
 
 # Force include R compatibility header for CRAN compliance
 # This redirects stdout/stderr/abort to R-safe alternatives
 # r_ggml_io.c is compiled separately without this header (see rule below)
-PKG_CPPFLAGS = $(GGML_CPPFLAGS) $(OPENMP_CPPFLAGS) $(VULKAN_CPPFLAGS) -DGGML_R_PACKAGE -include r_ggml_compat.h
+PKG_CPPFLAGS = $(GGML_CPPFLAGS) -DGGML_R_PACKAGE -include r_ggml_compat.h
 
-# CPU SIMD flags (set by configure: -march=native or empty)
+# CPU SIMD flags (set by configure.win: -march=native or empty)
 SIMD_CFLAGS = @SIMD_CFLAGS@
 
-PKG_CFLAGS = $(OPENMP_CFLAGS) $(SIMD_CFLAGS)
-PKG_CXXFLAGS = $(OPENMP_CXXFLAGS) $(SIMD_CFLAGS)
-PKG_LIBS = $(OPENMP_CXXFLAGS) $(VULKAN_LIBS) -lpthread -lm
+PKG_CFLAGS = $(SIMD_CFLAGS)
+PKG_CXXFLAGS = $(SHLIB_OPENMP_CXXFLAGS) $(SIMD_CFLAGS)
+PKG_LIBS = $(SHLIB_OPENMP_CXXFLAGS)
 
 # GGML library objects (for static library export)
 GGML_OBJECTS = \
@@ -61,11 +55,8 @@ GGML_OBJECTS = \
 
 # R interface objects
 R_INTERFACE_OBJECTS = \
-  r_interface.o r_interface_graph.o r_interface_vulkan.o r_interface_scheduler.o r_interface_opt.o r_interface_backend.o r_interface_quants.o
-
-# Vulkan objects (set by configure --with-vulkan)
-VULKAN_OBJECTS = @VULKAN_OBJECTS@
-GGML_OBJECTS += $(VULKAN_OBJECTS)
+  r_interface.o r_interface_graph.o r_interface_vulkan.o r_interface_scheduler.o \
+  r_interface_opt.o r_interface_backend.o r_interface_quants.o
 
 # All objects for shared library
 OBJECTS = $(R_INTERFACE_OBJECTS) $(GGML_OBJECTS)

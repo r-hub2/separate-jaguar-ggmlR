@@ -6,7 +6,7 @@
 
 ## Bug Fixes
 
-* Fixed duplicate symbol linker error on macOS ARM64 (`arch/x86/repack.o` excluded on non-x86 via configure)
+* Fixed duplicate symbol linker error on macOS ARM64 (x86 guards for 5 repack functions in `arch/x86/repack.cpp`)
 
 ## New Features (Stable Diffusion support)
 
