@@ -20,7 +20,7 @@ Authors@R: c(
         comment = "Author of llamafile/sgemm.cpp")
     )
 Description: Provides 'R' bindings to the 'GGML' tensor library for efficient
-    machine learning computation. Serves as a backend engine for LLM (Large
+    machine learning computation. Serves as a backend engine for 'LLM' (Large
     Language Model) inference via 'llamaR' and Stable Diffusion image generation
     via 'sdR', both with optional 'Vulkan' GPU (Graphics Processing Unit)
     acceleration. Implements core tensor operations including element-wise
@@ -42,7 +42,7 @@ VignetteBuilder: knitr
 RoxygenNote: 7.3.3
 Config/testthat/edition: 3
 NeedsCompilation: yes
-Packaged: 2026-02-11 16:31:26 UTC; yuri
+Packaged: 2026-02-11 18:16:34 UTC; yuri
 Author: Yuri Baramykov [aut, cre],
   Georgi Gerganov [ctb, cph] (Author of the GGML library),
   Jeffrey Quesnelle [ctb, cph] (Contributor to ops.cpp),

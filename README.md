@@ -1,4 +1,6 @@
-# ggmlR - CPU Tensor Operations for R
+# ggmlR - CPU/GPU Tensor Operations for R
+
+[![R-hub check on the R Consortium cluster](https://github.com/r-hub2/separate-jaguar-ggmlR/actions/workflows/rhub-rc.yaml/badge.svg)](https://github.com/r-hub2/separate-jaguar-ggmlR/actions/workflows/rhub-rc.yaml)
 
 R bindings for the GGML tensor library, optimized for CPU and GPU computations. This package provides low-level tensor operations for machine learning, particularly useful for LLM inference and other deep learning tasks on CPU.
 
