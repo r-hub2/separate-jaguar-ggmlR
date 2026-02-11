@@ -1,6 +1,6 @@
 # ggmlR - CPU Tensor Operations for R
 
-R bindings for the GGML tensor library, optimized for CPU computations. This package provides low-level tensor operations for machine learning, particularly useful for LLM inference and other deep learning tasks on CPU.
+R bindings for the GGML tensor library, optimized for CPU and GPU computations. This package provides low-level tensor operations for machine learning, particularly useful for LLM inference and other deep learning tasks on CPU.
 
 ## Features
 
@@ -14,10 +14,10 @@ R bindings for the GGML tensor library, optimized for CPU computations. This pac
 ## Installation
 ```r
 # From source
-install.packages("ggmlR_0.1.0.tar.gz", repos = NULL, type = "source")
+install.packages("ggmlR")
 
-# Or using devtools
-devtools::install_github("yourusername/ggmlR")
+# with vulkan for GPU
+install.packages("ggmlR", configure.args = "--with-vulkan")
 ```
 
 ## Quick Start
@@ -132,14 +132,14 @@ ggml_free(ctx)
 ## Use Cases
 
 ### LLM Inference
-This package is designed for running language model inference on CPU:
+This package is designed for running language model inference on CPU or GPU:
 - Load quantized model weights
 - Build transformer layers
 - Run token-by-token generation
 - Efficient memory usage with quantization
 
 ### Stable Diffusion
-Can be used for diffusion model inference:
+Can be used for diffusion model inference on CPU or GPU:
 - U-Net architecture building blocks
 - Attention mechanisms
 - Residual connections
@@ -154,8 +154,6 @@ Optimized for x86-64 CPUs with:
 - Cache-friendly operations
 
 ## Future Plans
-
-- GPU acceleration via separate Vulkan package (ggmlR.vulkan)
 - Additional operations (softmax, attention, etc.)
 - Model loading utilities
 - Pre-built model examples

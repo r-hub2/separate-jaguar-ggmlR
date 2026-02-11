@@ -1,6 +1,14 @@
 # ggmlR 0.5.2
 
-## New Features (sdR support)
+## New Features (LLM and Stable Diffusion support)
+
+* Backend engine for LLM inference (`llamaR`) and Stable Diffusion image generation (`sdR`) with Vulkan GPU acceleration
+
+## Bug Fixes
+
+* Fixed duplicate symbol linker error on macOS ARM64 (`arch/x86/repack.o` excluded on non-x86 via configure)
+
+## New Features (Stable Diffusion support)
 
 * Added `ggml_timestep_embedding()` — sinusoidal timestep embeddings for diffusion models
 * Added N-D indexed tensor access:

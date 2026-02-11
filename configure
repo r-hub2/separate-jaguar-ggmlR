@@ -121,6 +121,28 @@ if [ "$USE_VULKAN" = "yes" ]; then
   echo "Vulkan backend enabled with $SHADER_COUNT shaders"
 fi
 
+# --- Detect CPU architecture ---
+#
+# The x86-specific repack.cpp defines non-generic versions of functions
+# (ggml_gemv_q2_K_8x8_q8_K, etc.) that are also provided by the generic
+# repack.cpp via arch-fallback.h macros on non-x86 architectures.
+# Including both causes duplicate symbol errors on ARM64 (macOS).
+#
+# cpu-feats.cpp is already guarded by #ifdef __x86_64__ so it's safe to include.
+# quants.c provides the only definitions of non-generic quants functions.
+#
+echo "Detecting CPU architecture..."
+ARCH_X86_REPACK=""
+case "$(uname -m)" in
+  x86_64|i386|i686|amd64)
+    ARCH_X86_REPACK="ggml-cpu/arch/x86/repack.o"
+    echo "  x86 architecture detected, including x86 repack"
+    ;;
+  *)
+    echo "  Non-x86 architecture ($(uname -m)), excluding x86 repack"
+    ;;
+esac
+
 # --- Detect CPU SIMD features ---
 #
 # ggml uses compile-time #if defined(__AVX2__) guards to enable SIMD code paths.
@@ -192,6 +214,7 @@ sed \
   -e "s|@OPENMP_CFLAGS@|$OPENMP_CFLAGS|g" \
   -e "s|@OPENMP_CXXFLAGS@|$OPENMP_CXXFLAGS|g" \
   -e "s|@SIMD_CFLAGS@|$SIMD_CFLAGS|g" \
+  -e "s|@ARCH_X86_REPACK@|$ARCH_X86_REPACK|g" \
   src/Makevars.in > src/Makevars
 
 echo "Configuration complete."
