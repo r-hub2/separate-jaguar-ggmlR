@@ -13,3 +13,7 @@ del /Q src\ggml-cpu\amx\*.o 2>NUL
 REM Remove Vulkan objects
 del /Q src\ggml-vulkan\*.o 2>NUL
 del /Q src\ggml-vulkan\generated\*.o 2>NUL
+
+REM Remove generated files created by configure
+del /Q src\Makevars 2>NUL
+del /Q src\Makevars.win 2>NUL
