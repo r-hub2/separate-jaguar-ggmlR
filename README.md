@@ -176,7 +176,7 @@ If you use this package in your research, please cite:
 ```
 @software{ggmlR,
   author = {Yuri Baramykov},
-  title = {ggmlR: CPU Tensor Operations for R},
+  title = {ggmlR: CPU/GPU Tensor Operations for R},
   year = {2026},
   url = {https://github.com/Zabis13/ggmlR}
 }
@@ -186,3 +186,9 @@ If you use this package in your research, please cite:
 
 - GGML library: https://github.com/ggerganov/ggml
 - llama.cpp: https://github.com/ggerganov/llama.cpp
+
+
+## Acknowledgements
+
+- Thanks to the R community for the inspiration.
+- Code structure and documentation were partially refined with the assistance of generative AI tools.

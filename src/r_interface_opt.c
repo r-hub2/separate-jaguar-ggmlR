@@ -200,7 +200,8 @@ SEXP R_ggml_opt_default_params(SEXP sched_ptr, SEXP loss_type) {
 }
 
 // Initialize optimizer context
-SEXP R_ggml_opt_init(SEXP sched_ptr, SEXP loss_type, SEXP optimizer_type, SEXP opt_period) {
+SEXP R_ggml_opt_init(SEXP sched_ptr, SEXP loss_type, SEXP optimizer_type, SEXP opt_period,
+                     SEXP ctx_compute_ptr, SEXP inputs_ptr, SEXP outputs_ptr) {
     ggml_backend_sched_t sched = (ggml_backend_sched_t)R_ExternalPtrAddr(sched_ptr);
 
     if (sched == NULL) {
@@ -212,6 +213,17 @@ SEXP R_ggml_opt_init(SEXP sched_ptr, SEXP loss_type, SEXP optimizer_type, SEXP o
 
     params.optimizer = (enum ggml_opt_optimizer_type)asInteger(optimizer_type);
     params.opt_period = asInteger(opt_period);
+
+    // Optional: set ctx_compute, inputs, outputs for static graph mode
+    if (ctx_compute_ptr != R_NilValue) {
+        params.ctx_compute = (struct ggml_context *)R_ExternalPtrAddr(ctx_compute_ptr);
+    }
+    if (inputs_ptr != R_NilValue) {
+        params.inputs = (struct ggml_tensor *)R_ExternalPtrAddr(inputs_ptr);
+    }
+    if (outputs_ptr != R_NilValue) {
+        params.outputs = (struct ggml_tensor *)R_ExternalPtrAddr(outputs_ptr);
+    }
 
     ggml_opt_context_t opt_ctx = ggml_opt_init(params);
 
