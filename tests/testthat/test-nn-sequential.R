@@ -1,5 +1,14 @@
 # Tests for Sequential Neural Network API (v0.5.3)
 
+# Helper: free all backends associated with a compiled model
+cleanup_model <- function(model) {
+  ggml_backend_sched_free(model$compilation$sched)
+  ggml_backend_free(model$compilation$backend)
+  if (!is.null(model$compilation$cpu_backend)) {
+    ggml_backend_free(model$compilation$cpu_backend)
+  }
+}
+
 # ============================================================================
 # Model creation
 # ============================================================================
@@ -92,7 +101,7 @@ test_that("nn_infer_shapes computes correct output shapes for CNN", {
     ggml_layer_dense(128, activation = "relu") |>
     ggml_layer_dense(10, activation = "softmax")
 
-  model <- nn_infer_shapes(model)
+  model <- ggmlR:::nn_infer_shapes(model)
 
   # conv_2d: (28-3)/1 + 1 = 26, output (26, 26, 32)
   expect_equal(model$layers[[1]]$output_shape, c(26L, 26L, 32L))
@@ -115,7 +124,7 @@ test_that("nn_infer_shapes works with same padding", {
     ggml_layer_conv_2d(16, c(3, 3), padding = "same",
                        input_shape = c(28, 28, 1))
 
-  model <- nn_infer_shapes(model)
+  model <- ggmlR:::nn_infer_shapes(model)
 
   # same padding: output H,W = input H,W (with stride 1)
   expect_equal(model$layers[[1]]$output_shape, c(28L, 28L, 16L))
@@ -125,7 +134,7 @@ test_that("nn_infer_shapes fails without input_shape", {
   model <- ggml_model_sequential() |>
     ggml_layer_dense(10)
 
-  expect_error(nn_infer_shapes(model), "input_shape")
+  expect_error(ggmlR:::nn_infer_shapes(model), "input_shape")
 })
 
 # ============================================================================
@@ -155,8 +164,7 @@ test_that("ggml_compile works and sets compiled flag", {
   expect_equal(model$layers[[1]]$output_shape, c(26L, 26L, 32L))
 
   # Cleanup
-  ggml_backend_sched_free(model$compilation$sched)
-  ggml_backend_free(model$compilation$backend)
+  cleanup_model(model)
 })
 
 test_that("ggml_compile fails on empty model", {
@@ -176,8 +184,7 @@ test_that("ggml_compile with sgd optimizer", {
   expect_equal(model$compilation$optimizer, "sgd")
   expect_equal(model$compilation$loss, "mse")
 
-  ggml_backend_sched_free(model$compilation$sched)
-  ggml_backend_free(model$compilation$backend)
+  cleanup_model(model)
 })
 
 # ============================================================================
@@ -278,8 +285,7 @@ test_that("ggml_fit trains a small dense model", {
   })
 
   # Cleanup
-  ggml_backend_sched_free(model$compilation$sched)
-  ggml_backend_free(model$compilation$backend)
+  cleanup_model(model)
 })
 
 test_that("ggml_evaluate returns accuracy consistent with training", {
@@ -314,8 +320,7 @@ test_that("ggml_evaluate returns accuracy consistent with training", {
   expect_lt(result$loss, 0.69)
 
   # Cleanup
-  ggml_backend_sched_free(model$compilation$sched)
-  ggml_backend_free(model$compilation$backend)
+  cleanup_model(model)
 })
 
 # ============================================================================
@@ -368,8 +373,7 @@ test_that("ggml_predict returns correct shape and consistent with evaluate", {
   expect_equal(predict_accuracy, eval_result$accuracy, tolerance = 0.05)
 
   # Cleanup
-  ggml_backend_sched_free(model$compilation$sched)
-  ggml_backend_free(model$compilation$backend)
+  cleanup_model(model)
 })
 
 # ============================================================================
@@ -406,8 +410,7 @@ test_that("ggml_save_weights and ggml_load_weights roundtrip", {
   expect_true(file.exists(tmp_path))
 
   # Cleanup original model backend resources
-  ggml_backend_sched_free(model$compilation$sched)
-  ggml_backend_free(model$compilation$backend)
+  cleanup_model(model)
 
   # Create a fresh model with same architecture and load weights
   model2 <- ggml_model_sequential() |>
@@ -428,8 +431,7 @@ test_that("ggml_save_weights and ggml_load_weights roundtrip", {
   expect_equal(result_loaded$loss, result_orig$loss, tolerance = 0.01)
 
   # Cleanup
-  ggml_backend_sched_free(model2$compilation$sched)
-  ggml_backend_free(model2$compilation$backend)
+  cleanup_model(model2)
   unlink(tmp_path)
 })
 
@@ -462,11 +464,175 @@ test_that("ggml_load_weights rejects mismatched architecture", {
   expect_error(ggml_load_weights(model2, tmp_path), "mismatch")
 
   # Cleanup
-  ggml_backend_sched_free(model1$compilation$sched)
-  ggml_backend_free(model1$compilation$backend)
-  ggml_backend_sched_free(model2$compilation$sched)
-  ggml_backend_free(model2$compilation$backend)
+  cleanup_model(model1)
+  cleanup_model(model2)
   unlink(tmp_path)
+})
+
+# ============================================================================
+# Error handling
+# ============================================================================
+
+# ============================================================================
+# conv_1d layer
+# ============================================================================
+
+test_that("ggml_layer_conv_1d adds layer correctly", {
+  model <- ggml_model_sequential() |>
+    ggml_layer_conv_1d(32, 3, activation = "relu",
+                       input_shape = c(100, 1))
+
+  expect_equal(length(model$layers), 1)
+  expect_equal(model$layers[[1]]$type, "conv_1d")
+  expect_equal(model$layers[[1]]$config$filters, 32L)
+  expect_equal(model$layers[[1]]$config$kernel_size, 3L)
+  expect_equal(model$input_shape, c(100L, 1L))
+})
+
+test_that("nn_infer_shapes works for conv_1d", {
+  model <- ggml_model_sequential() |>
+    ggml_layer_conv_1d(16, 5, input_shape = c(100, 1)) |>
+    ggml_layer_flatten() |>
+    ggml_layer_dense(10)
+
+  model <- ggmlR:::nn_infer_shapes(model)
+
+  # conv_1d: (100 - 5) / 1 + 1 = 96, output (96, 16)
+  expect_equal(model$layers[[1]]$output_shape, c(96L, 16L))
+  # flatten: 96 * 16 = 1536
+  expect_equal(model$layers[[2]]$output_shape, 1536L)
+  # dense: 10
+  expect_equal(model$layers[[3]]$output_shape, 10L)
+})
+
+test_that("nn_infer_shapes works for conv_1d with same padding", {
+  model <- ggml_model_sequential() |>
+    ggml_layer_conv_1d(16, 5, padding = "same", input_shape = c(100, 1))
+
+  model <- ggmlR:::nn_infer_shapes(model)
+
+  # same padding: L_out = L (with stride 1)
+  expect_equal(model$layers[[1]]$output_shape, c(100L, 16L))
+})
+
+# ============================================================================
+# batch_norm layer
+# ============================================================================
+
+test_that("ggml_layer_batch_norm adds layer correctly", {
+  model <- ggml_model_sequential() |>
+    ggml_layer_dense(64, activation = "relu") |>
+    ggml_layer_batch_norm()
+
+  model$input_shape <- 10L
+
+  expect_equal(length(model$layers), 2)
+  expect_equal(model$layers[[2]]$type, "batch_norm")
+})
+
+test_that("nn_infer_shapes works for batch_norm", {
+  model <- ggml_model_sequential() |>
+    ggml_layer_dense(64) |>
+    ggml_layer_batch_norm() |>
+    ggml_layer_dense(10)
+
+  model$input_shape <- 10L
+  model <- ggmlR:::nn_infer_shapes(model)
+
+  # batch_norm preserves shape
+  expect_equal(model$layers[[2]]$output_shape, 64L)
+  expect_equal(model$layers[[3]]$output_shape, 10L)
+})
+
+# ============================================================================
+# predict_classes
+# ============================================================================
+
+test_that("ggml_predict_classes returns correct 1-based indices", {
+  set.seed(42)
+  n <- 128
+  x <- matrix(runif(n * 4), nrow = n, ncol = 4)
+  y <- matrix(0, nrow = n, ncol = 2)
+  for (i in seq_len(n)) {
+    cls <- if (sum(x[i, ]) > 2) 1L else 2L
+    y[i, cls] <- 1
+  }
+
+  model <- ggml_model_sequential() |>
+    ggml_layer_dense(16, activation = "relu") |>
+    ggml_layer_dense(2, activation = "softmax")
+  model$input_shape <- 4L
+
+  model <- ggml_compile(model, optimizer = "adam",
+                        loss = "categorical_crossentropy")
+  model <- ggml_fit(model, x, y, epochs = 10,
+                    batch_size = 32, verbose = 0)
+
+  classes <- ggml_predict_classes(model, x, batch_size = 32)
+
+  expect_true(is.integer(classes))
+  expect_equal(length(classes), n)
+  expect_true(all(classes %in% c(1L, 2L)))
+
+  # Cleanup
+  cleanup_model(model)
+})
+
+# ============================================================================
+# summary
+# ============================================================================
+
+test_that("summary.ggml_sequential_model works", {
+  model <- ggml_model_sequential() |>
+    ggml_layer_conv_2d(32, c(3, 3), activation = "relu",
+                       input_shape = c(28, 28, 1)) |>
+    ggml_layer_flatten() |>
+    ggml_layer_dense(10, activation = "softmax")
+
+  output <- capture.output(summary(model))
+
+  expect_true(any(grepl("Summary", output)))
+  expect_true(any(grepl("Input shape", output)))
+  expect_true(any(grepl("Trainable", output)))
+  expect_true(any(grepl("memory", output, ignore.case = TRUE)))
+})
+
+# ============================================================================
+# history
+# ============================================================================
+
+test_that("ggml_fit returns model with history", {
+  set.seed(42)
+  n <- 128
+  x <- matrix(runif(n * 4), nrow = n, ncol = 4)
+  y <- matrix(0, nrow = n, ncol = 2)
+  for (i in seq_len(n)) {
+    cls <- if (sum(x[i, ]) > 2) 1L else 2L
+    y[i, cls] <- 1
+  }
+
+  model <- ggml_model_sequential() |>
+    ggml_layer_dense(8, activation = "relu") |>
+    ggml_layer_dense(2, activation = "softmax")
+  model$input_shape <- 4L
+
+  model <- ggml_compile(model, optimizer = "adam",
+                        loss = "categorical_crossentropy")
+  model <- ggml_fit(model, x, y, epochs = 3,
+                    batch_size = 32, verbose = 0)
+
+  expect_true(!is.null(model$history))
+  expect_s3_class(model$history, "ggml_history")
+  expect_equal(length(model$history$train_loss), 3)
+  expect_equal(length(model$history$train_accuracy), 3)
+  expect_true(all(is.numeric(model$history$train_loss)))
+
+  # Print should work
+  output <- capture.output(print(model$history))
+  expect_true(any(grepl("Training History", output)))
+
+  # Cleanup
+  cleanup_model(model)
 })
 
 # ============================================================================

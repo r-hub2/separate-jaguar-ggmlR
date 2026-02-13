@@ -112,6 +112,7 @@ ggml_compile <- function(model, optimizer = "adam",
   # Weights go on GPU for performance (avoids per-iteration copies)
   if (use_vulkan) {
     model$compilation$backend <- gpu_backend
+    model$compilation$cpu_backend <- cpu_backend
   } else {
     model$compilation$backend <- cpu_backend
   }
@@ -141,15 +142,7 @@ nn_build_graph <- function(model, batch_size) {
   # Count total parameters + input tensor size for memory estimation
   total_elements <- 0
   for (layer in model$layers) {
-    if (layer$type == "conv_2d") {
-      ksize <- layer$config$kernel_size
-      total_elements <- total_elements +
-        ksize[1] * ksize[2] * layer$input_shape[3] * layer$config$filters +
-        layer$config$filters
-    } else if (layer$type == "dense") {
-      fan_in <- if (length(layer$input_shape) == 1) layer$input_shape else prod(layer$input_shape)
-      total_elements <- total_elements + fan_in * layer$config$units + layer$config$units
-    }
+    total_elements <- total_elements + nn_count_layer_params(layer)
   }
   # Add input tensor
   total_elements <- total_elements + ne_datapoint * batch_size
@@ -160,10 +153,16 @@ nn_build_graph <- function(model, batch_size) {
 
   # Create input tensor in ctx_weights (will be allocated with backend)
   if (length(input_shape) == 3) {
+    # Image: R [H, W, C] -> ggml [W, H, C, N]
     inputs <- ggml_new_tensor_4d(ctx_weights, GGML_TYPE_F32,
                                   input_shape[2], input_shape[1],
                                   input_shape[3], batch_size)
+  } else if (length(input_shape) == 2) {
+    # 1D sequence: R [L, C] -> ggml [L, C, N]
+    inputs <- ggml_new_tensor_3d(ctx_weights, GGML_TYPE_F32,
+                                  input_shape[1], input_shape[2], batch_size)
   } else {
+    # Flat vector: R [features] -> ggml [features, N]
     inputs <- ggml_new_tensor_2d(ctx_weights, GGML_TYPE_F32,
                                   ne_datapoint, batch_size)
   }
@@ -175,7 +174,19 @@ nn_build_graph <- function(model, batch_size) {
   for (i in seq_along(layers_built)) {
     layer <- layers_built[[i]]
 
-    if (layer$type == "conv_2d") {
+    if (layer$type == "conv_1d") {
+      k <- layer$config$kernel_size
+      ic <- layer$input_shape[2]
+      oc <- layer$config$filters
+
+      # ggml conv_1d kernel: [K, IC, OC]
+      layer$weights$kernel <- ggml_new_tensor_3d(ctx_weights, GGML_TYPE_F32,
+                                                  k, ic, oc)
+      layer$weights$bias <- ggml_new_tensor_1d(ctx_weights, GGML_TYPE_F32, oc)
+      ggml_set_name(layer$weights$kernel, paste0("conv1d_", i, "_kernel"))
+      ggml_set_name(layer$weights$bias, paste0("conv1d_", i, "_bias"))
+
+    } else if (layer$type == "conv_2d") {
       kh <- layer$config$kernel_size[1]
       kw <- layer$config$kernel_size[2]
       ic <- layer$input_shape[3]
@@ -196,6 +207,17 @@ nn_build_graph <- function(model, batch_size) {
       layer$weights$bias <- ggml_new_tensor_1d(ctx_weights, GGML_TYPE_F32, units)
       ggml_set_name(layer$weights$weight, paste0("dense_", i, "_weight"))
       ggml_set_name(layer$weights$bias, paste0("dense_", i, "_bias"))
+
+    } else if (layer$type == "batch_norm") {
+      # Determine number of features for gamma/beta
+      n_features <- if (length(layer$input_shape) == 1) layer$input_shape
+                    else if (length(layer$input_shape) == 2) layer$input_shape[2]
+                    else layer$input_shape[3]
+
+      layer$weights$gamma <- ggml_new_tensor_1d(ctx_weights, GGML_TYPE_F32, n_features)
+      layer$weights$beta <- ggml_new_tensor_1d(ctx_weights, GGML_TYPE_F32, n_features)
+      ggml_set_name(layer$weights$gamma, paste0("bn_", i, "_gamma"))
+      ggml_set_name(layer$weights$beta, paste0("bn_", i, "_beta"))
     }
 
     layers_built[[i]] <- layer
@@ -211,9 +233,28 @@ nn_build_graph <- function(model, batch_size) {
     old_layer <- model$layers[[i]]
     has_weights_data <- !is.null(old_layer$weights_data)
     has_trained_weights <- !is.null(old_layer$weights) &&
-      (!is.null(old_layer$weights$kernel) || !is.null(old_layer$weights$weight))
+      (!is.null(old_layer$weights$kernel) || !is.null(old_layer$weights$weight) ||
+       !is.null(old_layer$weights$gamma))
 
-    if (layer$type == "conv_2d") {
+    if (layer$type == "conv_1d") {
+      if (has_weights_data && !is.null(old_layer$weights_data$kernel)) {
+        ggml_backend_tensor_set_data(layer$weights$kernel, old_layer$weights_data$kernel)
+        ggml_backend_tensor_set_data(layer$weights$bias, old_layer$weights_data$bias)
+      } else if (has_trained_weights && !is.null(old_layer$weights$kernel)) {
+        kernel_data <- ggml_backend_tensor_get_data(old_layer$weights$kernel)
+        ggml_backend_tensor_set_data(layer$weights$kernel, kernel_data)
+        bias_data <- ggml_backend_tensor_get_data(old_layer$weights$bias)
+        ggml_backend_tensor_set_data(layer$weights$bias, bias_data)
+      } else {
+        k <- layer$config$kernel_size
+        fan_in <- k * layer$input_shape[2]
+        nn_init_he_uniform(layer$weights$kernel, fan_in)
+        nn_init_zeros(layer$weights$bias)
+      }
+      ggml_set_param(layer$weights$kernel)
+      ggml_set_param(layer$weights$bias)
+
+    } else if (layer$type == "conv_2d") {
       if (has_weights_data && !is.null(old_layer$weights_data$kernel)) {
         # Load from R vectors (save/load path)
         ggml_backend_tensor_set_data(layer$weights$kernel, old_layer$weights_data$kernel)
@@ -255,6 +296,24 @@ nn_build_graph <- function(model, batch_size) {
       }
       ggml_set_param(layer$weights$weight)
       ggml_set_param(layer$weights$bias)
+
+    } else if (layer$type == "batch_norm") {
+      if (has_weights_data && !is.null(old_layer$weights_data$gamma)) {
+        ggml_backend_tensor_set_data(layer$weights$gamma, old_layer$weights_data$gamma)
+        ggml_backend_tensor_set_data(layer$weights$beta, old_layer$weights_data$beta)
+      } else if (has_trained_weights && !is.null(old_layer$weights$gamma)) {
+        gamma_data <- ggml_backend_tensor_get_data(old_layer$weights$gamma)
+        ggml_backend_tensor_set_data(layer$weights$gamma, gamma_data)
+        beta_data <- ggml_backend_tensor_get_data(old_layer$weights$beta)
+        ggml_backend_tensor_set_data(layer$weights$beta, beta_data)
+      } else {
+        # gamma=1, beta=0
+        n <- ggml_nelements(layer$weights$gamma)
+        ggml_backend_tensor_set_data(layer$weights$gamma, rep(1.0, n))
+        nn_init_zeros(layer$weights$beta)
+      }
+      ggml_set_param(layer$weights$gamma)
+      ggml_set_param(layer$weights$beta)
     }
   }
 
@@ -335,6 +394,9 @@ ggml_fit <- function(model, x, y, epochs = 1, batch_size = 32,
   if (length(input_shape) == 3) {
     # Image data: R [N, H, W, C] -> ggml [W, H, C, N]
     x_ggml <- as.vector(aperm(x, c(3, 2, 4, 1)))
+  } else if (length(input_shape) == 2) {
+    # 1D sequence: R [N, L, C] -> ggml [L, C, N]
+    x_ggml <- as.vector(aperm(x, c(2, 3, 1)))
   } else if (length(input_shape) == 1) {
     # Vector data: R [N, features] -> ggml [features, N]
     x_ggml <- as.vector(t(x))
@@ -367,8 +429,8 @@ ggml_fit <- function(model, x, y, epochs = 1, batch_size = 32,
     ggml_opt_loss_type_cross_entropy()
   )
 
-  # Train
-  ggml_opt_fit(
+  # Train (returns history list from C)
+  history_raw <- ggml_opt_fit(
     sched = model$compilation$sched,
     ctx_compute = graph_info$ctx_compute,
     inputs = graph_info$inputs,
@@ -386,6 +448,18 @@ ggml_fit <- function(model, x, y, epochs = 1, batch_size = 32,
   model$layers <- graph_info$layers_built
   model$compilation$ctx_weights <- graph_info$ctx_weights
   model$compilation$buffer <- graph_info$buffer
+
+  # Build history object
+  model$history <- structure(
+    list(
+      train_loss     = history_raw$train_loss,
+      train_accuracy = history_raw$train_accuracy,
+      val_loss       = history_raw$val_loss,
+      val_accuracy   = history_raw$val_accuracy,
+      epochs         = seq_len(epochs)
+    ),
+    class = "ggml_history"
+  )
 
   # Cleanup
   ggml_free(graph_info$ctx_compute)
@@ -441,6 +515,8 @@ ggml_evaluate <- function(model, x, y, batch_size = 32) {
   # Convert data
   if (length(input_shape) == 3) {
     x_ggml <- as.vector(aperm(x, c(3, 2, 4, 1)))
+  } else if (length(input_shape) == 2) {
+    x_ggml <- as.vector(aperm(x, c(2, 3, 1)))
   } else {
     x_ggml <- as.vector(t(x))
   }
@@ -540,6 +616,8 @@ ggml_predict <- function(model, x, batch_size = 32L) {
   # Convert all data to ggml format upfront
   if (length(input_shape) == 3) {
     x_ggml <- as.vector(aperm(x, c(3, 2, 4, 1)))
+  } else if (length(input_shape) == 2) {
+    x_ggml <- as.vector(aperm(x, c(2, 3, 1)))
   } else {
     x_ggml <- as.vector(t(x))
   }
@@ -583,6 +661,21 @@ ggml_predict <- function(model, x, batch_size = 32L) {
   all_preds
 }
 
+#' Predict Classes from a Trained Model
+#'
+#' Returns predicted class indices (1-based) by applying argmax
+#' to the output of \code{ggml_predict()}.
+#'
+#' @param model A trained ggml_sequential_model
+#' @param x Input data (matrix or array)
+#' @param batch_size Batch size for inference
+#' @return Integer vector of predicted class indices (1-based)
+#' @export
+ggml_predict_classes <- function(model, x, batch_size = 32L) {
+  probs <- ggml_predict(model, x, batch_size)
+  apply(probs, 1, which.max)
+}
+
 # ============================================================================
 # Save / Load Weights
 # ============================================================================
@@ -608,7 +701,7 @@ ggml_save_weights <- function(model, path) {
     layer <- model$layers[[i]]
     layer_weights <- list()
 
-    if (layer$type == "conv_2d") {
+    if (layer$type %in% c("conv_1d", "conv_2d")) {
       if (!is.null(layer$weights$kernel)) {
         layer_weights$kernel <- ggml_backend_tensor_get_data(layer$weights$kernel)
         layer_weights$bias <- ggml_backend_tensor_get_data(layer$weights$bias)
@@ -617,6 +710,11 @@ ggml_save_weights <- function(model, path) {
       if (!is.null(layer$weights$weight)) {
         layer_weights$weight <- ggml_backend_tensor_get_data(layer$weights$weight)
         layer_weights$bias <- ggml_backend_tensor_get_data(layer$weights$bias)
+      }
+    } else if (layer$type == "batch_norm") {
+      if (!is.null(layer$weights$gamma)) {
+        layer_weights$gamma <- ggml_backend_tensor_get_data(layer$weights$gamma)
+        layer_weights$beta <- ggml_backend_tensor_get_data(layer$weights$beta)
       }
     }
 
@@ -723,20 +821,7 @@ print.ggml_sequential_model <- function(x, ...) {
   for (i in seq_along(model$layers)) {
     layer <- model$layers[[i]]
 
-    # Count params
-    n_params <- 0
-    if (layer$type == "conv_2d") {
-      ksize <- layer$config$kernel_size
-      if (!is.null(layer$input_shape)) {
-        n_params <- ksize[1] * ksize[2] * layer$input_shape[3] * layer$config$filters +
-                    layer$config$filters
-      }
-    } else if (layer$type == "dense") {
-      if (!is.null(layer$input_shape)) {
-        fan_in <- if (length(layer$input_shape) == 1) layer$input_shape else prod(layer$input_shape)
-        n_params <- fan_in * layer$config$units + layer$config$units
-      }
-    }
+    n_params <- nn_count_layer_params(layer)
     total_params <- total_params + n_params
 
     shape_str <- if (!is.null(layer$output_shape)) {
@@ -751,6 +836,171 @@ print.ggml_sequential_model <- function(x, ...) {
   cat(paste(rep("=", 60), collapse = ""), "\n")
   cat(sprintf("Total parameters: %d\n", total_params))
   cat(sprintf("Compiled: %s\n", if (model$compiled) "yes" else "no"))
+
+  invisible(x)
+}
+
+#' Summary method for ggml_sequential_model
+#'
+#' Prints a detailed summary including input shape, layer details,
+#' trainable/non-trainable parameter counts, and memory estimate.
+#'
+#' @param object A ggml_sequential_model object
+#' @param ... Additional arguments (ignored)
+#' @return The model object (invisibly).
+#' @export
+summary.ggml_sequential_model <- function(object, ...) {
+  model <- object
+
+  # Infer shapes if needed
+  if (length(model$layers) > 0 &&
+      is.null(model$layers[[1]]$output_shape) &&
+      !is.null(model$input_shape)) {
+    model <- nn_infer_shapes(model)
+  }
+
+  cat("ggmlR Sequential Model Summary\n")
+  cat(paste(rep("=", 70), collapse = ""), "\n")
+
+  if (!is.null(model$input_shape)) {
+    cat(sprintf("Input shape: (%s)\n", paste(model$input_shape, collapse = ", ")))
+  }
+  cat("\n")
+
+  if (length(model$layers) == 0) {
+    cat("  (no layers)\n")
+    return(invisible(object))
+  }
+
+  trainable <- 0
+  non_trainable <- 0
+
+  cat(sprintf("%-4s %-20s %-20s %-12s %-12s\n",
+              "#", "Layer", "Output Shape", "Trainable", "Non-train."))
+  cat(paste(rep("-", 70), collapse = ""), "\n")
+
+  for (i in seq_along(model$layers)) {
+    layer <- model$layers[[i]]
+    n_params <- nn_count_layer_params(layer)
+    trainable <- trainable + n_params
+
+    shape_str <- if (!is.null(layer$output_shape)) {
+      paste0("(", paste(layer$output_shape, collapse = ", "), ")")
+    } else {
+      "?"
+    }
+
+    cat(sprintf("%-4d %-20s %-20s %-12d %-12d\n",
+                i, layer$type, shape_str, n_params, 0L))
+  }
+
+  cat(paste(rep("=", 70), collapse = ""), "\n")
+  total <- trainable + non_trainable
+  cat(sprintf("Total parameters:         %s\n", format(total, big.mark = ",")))
+  cat(sprintf("  Trainable:              %s\n", format(trainable, big.mark = ",")))
+  cat(sprintf("  Non-trainable:          %s\n", format(non_trainable, big.mark = ",")))
+
+  # Memory estimate (F32 = 4 bytes per param)
+  mem_bytes <- total * 4
+  if (mem_bytes >= 1024 * 1024) {
+    cat(sprintf("Estimated weight memory:  %.1f MB\n", mem_bytes / (1024 * 1024)))
+  } else {
+    cat(sprintf("Estimated weight memory:  %.1f KB\n", mem_bytes / 1024))
+  }
+
+  cat(sprintf("Compiled:                 %s\n", if (model$compiled) "yes" else "no"))
+
+  invisible(object)
+}
+
+#' Count parameters for a single layer
+#' @param layer A layer list
+#' @return Number of parameters
+#' @keywords internal
+nn_count_layer_params <- function(layer) {
+  if (layer$type == "conv_2d") {
+    if (!is.null(layer$input_shape)) {
+      ksize <- layer$config$kernel_size
+      ksize[1] * ksize[2] * layer$input_shape[3] * layer$config$filters +
+        layer$config$filters
+    } else 0
+  } else if (layer$type == "conv_1d") {
+    if (!is.null(layer$input_shape)) {
+      layer$config$kernel_size * layer$input_shape[2] * layer$config$filters +
+        layer$config$filters
+    } else 0
+  } else if (layer$type == "dense") {
+    if (!is.null(layer$input_shape)) {
+      fan_in <- if (length(layer$input_shape) == 1) layer$input_shape else prod(layer$input_shape)
+      fan_in * layer$config$units + layer$config$units
+    } else 0
+  } else if (layer$type == "batch_norm") {
+    if (!is.null(layer$input_shape)) {
+      n <- if (length(layer$input_shape) == 1) layer$input_shape
+           else if (length(layer$input_shape) == 2) layer$input_shape[2]
+           else layer$input_shape[3]
+      n * 2L  # gamma + beta
+    } else 0
+  } else {
+    0
+  }
+}
+
+# ============================================================================
+# History Class
+# ============================================================================
+
+#' Print method for ggml_history
+#'
+#' @param x A ggml_history object
+#' @param ... Additional arguments (ignored)
+#' @return The history object (invisibly).
+#' @export
+print.ggml_history <- function(x, ...) {
+  n <- length(x$epochs)
+  cat("Training History (", n, " epoch", if (n != 1) "s", ")\n", sep = "")
+  cat(sprintf("  Final train loss:     %.4f\n", x$train_loss[n]))
+  cat(sprintf("  Final train accuracy: %.4f\n", x$train_accuracy[n]))
+  if (!is.na(x$val_loss[n])) {
+    cat(sprintf("  Final val loss:       %.4f\n", x$val_loss[n]))
+    cat(sprintf("  Final val accuracy:   %.4f\n", x$val_accuracy[n]))
+  }
+  invisible(x)
+}
+
+#' Plot training history
+#'
+#' Plots loss and accuracy curves over epochs.
+#'
+#' @param x A ggml_history object
+#' @param ... Additional arguments (ignored)
+#' @return The history object (invisibly).
+#' @importFrom graphics plot lines legend par
+#' @export
+plot.ggml_history <- function(x, ...) {
+  has_val <- !is.na(x$val_loss[1])
+  old_par <- par(mfrow = c(1, 2))
+  on.exit(par(old_par))
+
+  # Loss plot
+  ylim_loss <- range(c(x$train_loss, if (has_val) x$val_loss), na.rm = TRUE)
+  plot(x$epochs, x$train_loss, type = "l", col = "blue",
+       xlab = "Epoch", ylab = "Loss", main = "Loss", ylim = ylim_loss)
+  if (has_val) {
+    lines(x$epochs, x$val_loss, col = "red")
+    legend("topright", legend = c("Train", "Val"),
+           col = c("blue", "red"), lty = 1, cex = 0.8)
+  }
+
+  # Accuracy plot
+  ylim_acc <- range(c(x$train_accuracy, if (has_val) x$val_accuracy), na.rm = TRUE)
+  plot(x$epochs, x$train_accuracy, type = "l", col = "blue",
+       xlab = "Epoch", ylab = "Accuracy", main = "Accuracy", ylim = ylim_acc)
+  if (has_val) {
+    lines(x$epochs, x$val_accuracy, col = "red")
+    legend("bottomright", legend = c("Train", "Val"),
+           col = c("blue", "red"), lty = 1, cex = 0.8)
+  }
 
   invisible(x)
 }

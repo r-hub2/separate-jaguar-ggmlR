@@ -1,6 +1,21 @@
 # ggmlR 0.5.3
 
-## New Features (Keras-like Sequential API)
+## New Layers
+
+* `ggml_layer_conv_1d()` — 1D convolution layer with stride, padding ("valid"/"same"), and activation support. Uses `ggml_conv_1d` backend. Kernel shape: [K, IC, OC].
+* `ggml_layer_batch_norm()` — batch normalization via `ggml_norm()` with learnable gamma (scale) and beta (shift). Supports 1D, 2D, and 3D inputs.
+
+## New Features
+
+* `ggml_predict_classes()` — convenience wrapper returning 1-based integer class indices (argmax of `ggml_predict()` output)
+* `summary.ggml_sequential_model()` — detailed model summary: layer-by-layer parameter counts (trainable/non-trainable), input shape, estimated weight memory
+* Training history from `ggml_fit()`:
+  - `ggml_fit()` now returns model with `model$history` (class `ggml_history`)
+  - `print(history)` — final epoch metrics
+  - `plot(history)` — loss and accuracy curves over epochs (train + validation)
+  - C-level epoch loop collects loss/accuracy per epoch via `ggml_opt_epoch()`
+
+## Keras-like Sequential API
 
 * Added Keras-like Sequential model API for building and training neural networks:
   - `ggml_model_sequential()` — create sequential model
