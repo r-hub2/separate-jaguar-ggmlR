@@ -191,6 +191,7 @@ ggml_layer_batch_norm <- function(model, eps = 1e-5) {
 #' @param model A ggml_sequential_model object
 #' @param units Number of output units
 #' @param activation Activation function name: "relu", "sigmoid", "tanh", "softmax", or NULL
+#' @param input_shape Integer or integer vector specifying the input shape (only needed for the first layer)
 #' @return The model object with the dense layer appended (invisibly).
 #' @export
 #' @examples
@@ -201,17 +202,21 @@ ggml_layer_batch_norm <- function(model, eps = 1e-5) {
 #'   ggml_layer_flatten() |>
 #'   ggml_layer_dense(128, activation = "relu")
 #' }
-ggml_layer_dense <- function(model, units, activation = NULL) {
+ggml_layer_dense <- function(model, units, activation = NULL, input_shape = NULL) {
   layer <- list(
     type = "dense",
     config = list(
       units = as.integer(units),
       activation = activation
     ),
-    input_shape = NULL,
+    input_shape = input_shape,
     output_shape = NULL,
     weights = list(weight = NULL, bias = NULL)
   )
+
+  if (!is.null(input_shape) && is.null(model$input_shape)) {
+    model$input_shape <- as.integer(input_shape)
+  }
 
   model$layers <- c(model$layers, list(layer))
   model

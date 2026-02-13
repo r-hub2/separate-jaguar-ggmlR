@@ -15,8 +15,9 @@ ggml_layer_batch_norm(model, eps = 1e-05)
 The model object with the batch_norm layer appended (invisibly).
 }
 \description{
-Applies batch normalization: normalizes the input, then scales by gamma
-and shifts by beta (both learnable).
+Applies normalization: RMS-normalizes the input, then scales by gamma
+and shifts by beta (both learnable). Uses \code{ggml_rms_norm} which
+supports backward pass for training.
 }
 \examples{
 \donttest{
