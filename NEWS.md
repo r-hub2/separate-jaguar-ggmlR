@@ -1,3 +1,12 @@
+# ggmlR 0.5.4
+
+## Vulkan Auto-Detection
+
+* Vulkan GPU support is now auto-detected at build time: if `libvulkan-dev` and `glslc` are installed, Vulkan is enabled automatically without `--with-vulkan` flag
+* Added `--without-vulkan` flag to explicitly disable Vulkan even when dependencies are present
+* `--with-vulkan` still works as before (errors if dependencies are missing)
+* Configure script now prints a helpful message when Vulkan dependencies are not found
+
 # ggmlR 0.5.3
 
 ## Vulkan GPU Backend

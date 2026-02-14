@@ -88,7 +88,7 @@ ggml_compile <- function(model, optimizer = "adam",
   } else if (backend == "vulkan") {
     if (!ggml_vulkan_available() || ggml_vulkan_device_count() == 0) {
       stop("Vulkan backend requested but not available. ",
-           "Reinstall with configure.args = \"--with-vulkan\"")
+           "Install libvulkan-dev and glslc, then reinstall ggmlR")
     }
     use_vulkan <- TRUE
   } else if (backend != "cpu") {
