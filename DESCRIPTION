@@ -21,28 +21,28 @@ Authors@R: c(
     )
 Description: Provides 'R' bindings to the 'GGML' tensor library for machine
     learning with CPU/GPU 'Vulkan' acceleration. 'Vulkan' GPU support is
-    auto-detected at build time when 'libvulkan-dev' and 'glslc' are installed.
-    Implements tensor operations, neural network layers, quantization, and a
-    'Keras'-like sequential model API for building and training networks.
-    Includes 'AdamW' (Adam with Weight decay) and 'SGD' (Stochastic Gradient
-    Descent) optimizers with 'MSE' (Mean Squared Error) and cross-entropy
-    losses. Serves as backend for 'LLM' (Large Language Model) inference via
-    'llamaR' and Stable Diffusion image generation via 'sdR'. See
-    <https://github.com/ggml-org/ggml> for more information about the
-    underlying library.
+    auto-detected at build time on Linux (when 'libvulkan-dev' and 'glslc' are
+    installed) and on Windows (when 'Vulkan SDK' is installed and 'VULKAN_SDK'
+    environment variable is set). Implements tensor operations, neural network
+    layers, quantization, and a 'Keras'-like sequential model API for building
+    and training networks. Includes 'AdamW' (Adam with Weight decay) and 'SGD'
+    (Stochastic Gradient Descent) optimizers with 'MSE' (Mean Squared Error)
+    and cross-entropy losses. Serves as backend for 'LLM' (Large Language
+    Model) inference via 'llamaR' and Stable Diffusion image generation via
+    'sdR'. See <https://github.com/ggml-org/ggml> for more information about
+    the underlying library.
 Depends: R (>= 4.1.0)
 License: MIT + file LICENSE
 URL: https://github.com/Zabis13/ggmlR
 BugReports: https://github.com/Zabis13/ggmlR/issues
 Encoding: UTF-8
 SystemRequirements: C++17, GNU make, libvulkan-dev and glslc (optional,
-        for GPU)
-Suggests: testthat (>= 3.0.0), knitr, rmarkdown
-VignetteBuilder: knitr
+        for GPU on Linux), Vulkan SDK (optional, for GPU on Windows)
+Suggests: testthat (>= 3.0.0)
 RoxygenNote: 7.3.3
 Config/testthat/edition: 3
 NeedsCompilation: yes
-Packaged: 2026-02-14 06:48:28 UTC; yuri
+Packaged: 2026-02-14 14:26:41 UTC; yuri
 Author: Yuri Baramykov [aut, cre],
   Georgi Gerganov [ctb, cph] (Author of the GGML library),
   Jeffrey Quesnelle [ctb, cph] (Contributor to ops.cpp),

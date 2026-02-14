@@ -72,6 +72,22 @@ install.packages("ggmlR")
 
 For CPU-only builds, no additional system packages are required.
 
+### Windows
+
+```bash
+# 1. Install Rtools (provides C++17 compiler)
+#    Download from: https://cran.r-project.org/bin/windows/Rtools/
+
+# 2. (Optional) Install Vulkan SDK for GPU support
+#    Download from: https://vulkan.lunarg.com/sdk/home
+#    The installer sets the VULKAN_SDK environment variable automatically.
+
+# 3. Install from R
+install.packages("ggmlR")
+```
+
+If the `VULKAN_SDK` environment variable is set and `glslc.exe` is found, Vulkan GPU support is enabled automatically. Otherwise, the package builds with CPU only.
+
 ## Quick Start
 
 ### Basic Tensor Operations
