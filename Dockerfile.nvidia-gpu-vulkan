@@ -1,0 +1,26 @@
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,graphics,utility
+ENV NVIDIA_VISIBLE_DEVICES=all
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    r-base r-base-dev \
+    git build-essential cmake pkg-config \
+    wget curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libvulkan1 vulkan-tools mesa-vulkan-drivers libvulkan-dev glslc \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN dpkg -l libvulkan* | grep vulkan && which glslc
+
+RUN R -e "install.packages('remotes', repos = 'https://cloud.r-project.org')" && \
+    R -e "remotes::install_github('Zabis13/ggmlR')"
+
+WORKDIR /work
+COPY inst/examples/benchmark_gpu_cpu.R /work/benchmark_gpu_cpu.R
+
+CMD ["Rscript", "benchmark_gpu_cpu.R"]
+

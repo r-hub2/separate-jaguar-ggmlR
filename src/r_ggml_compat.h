@@ -129,17 +129,6 @@ void r_ggml_exit(int status);
 #define fputs r_ggml_fputs
 
 /*
- * Redirect stdout/stderr to NULL
- * Our wrapper functions (r_ggml_fprintf, etc.) ignore the stream parameter,
- * so replacing these with NULL is safe and removes the global symbols
- * that trigger CRAN NOTE about stdout/stderr usage in compiled code.
- */
-#undef stdout
-#define stdout ((FILE *) 0)
-#undef stderr
-#define stderr ((FILE *) 0)
-
-/*
  * Redirect abort() and _Exit() to R error
  * Note: abort() must be noreturn, so we use a wrapper that calls Rf_error
  * The do-while(0) wrapper + noreturn attribute ensures compiler knows this never returns
