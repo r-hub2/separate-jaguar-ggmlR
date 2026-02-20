@@ -1141,11 +1141,11 @@ test_that("ggml_layer_gru adds gru layer to sequential model", {
 })
 
 test_that("sequential LSTM model fits without error", {
-  set.seed(71)
   n        <- 32L
   seq_len  <- 5L
   input_sz <- 4L
-  x <- array((runif(n * seq_len * input_sz) - 0.5) * 0.1, dim = c(n, seq_len, input_sz))
+  vals <- ((seq_len(n * seq_len * input_sz) - 1L) %% 20L - 10L) / 200.0
+  x <- array(vals, dim = c(n, seq_len, input_sz))
   y <- matrix(0.0, nrow = n, ncol = 2L)
   for (i in seq_len(n)) y[i, (i %% 2L) + 1L] <- 1.0
 
@@ -1159,11 +1159,11 @@ test_that("sequential LSTM model fits without error", {
 })
 
 test_that("sequential GRU model fits without error", {
-  set.seed(72)
   n        <- 32L
   seq_len  <- 5L
   input_sz <- 4L
-  x <- array((runif(n * seq_len * input_sz) - 0.5) * 0.1, dim = c(n, seq_len, input_sz))
+  vals <- ((seq_len(n * seq_len * input_sz) - 1L) %% 20L - 10L) / 200.0
+  x <- array(vals, dim = c(n, seq_len, input_sz))
   y <- matrix(0.0, nrow = n, ncol = 2L)
   for (i in seq_len(n)) y[i, (i %% 2L) + 1L] <- 1.0
 
