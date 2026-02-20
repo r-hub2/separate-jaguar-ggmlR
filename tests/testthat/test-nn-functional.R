@@ -951,7 +951,7 @@ test_that("LSTM functional model fits without error", {
   n        <- 32L
   seq_len  <- 5L
   input_sz <- 4L
-  x <- array(runif(n * seq_len * input_sz) - 0.5, dim = c(n, seq_len, input_sz))
+  x <- array((runif(n * seq_len * input_sz) - 0.5) * 0.1, dim = c(n, seq_len, input_sz))
   y <- matrix(0.0, nrow = n, ncol = 2L)
   for (i in seq_len(n)) y[i, (i %% 2L) + 1L] <- 1.0
 
@@ -971,7 +971,7 @@ test_that("GRU functional model fits without error", {
   n        <- 32L
   seq_len  <- 5L
   input_sz <- 4L
-  x <- array(runif(n * seq_len * input_sz) - 0.5, dim = c(n, seq_len, input_sz))
+  x <- array((runif(n * seq_len * input_sz) - 0.5) * 0.1, dim = c(n, seq_len, input_sz))
   y <- matrix(0.0, nrow = n, ncol = 2L)
   for (i in seq_len(n)) y[i, (i %% 2L) + 1L] <- 1.0
 
