@@ -961,6 +961,15 @@ nn_init_zeros <- function(tensor) {
   ggml_backend_tensor_set_data(tensor, rep(0.0, n))
 }
 
+#' Initialize recurrent weight tensor with small uniform values
+#'
+#' Uses a fixed limit of 0.05 to ensure numerical stability across platforms.
+#' @keywords internal
+nn_init_recurrent_uniform <- function(tensor) {
+  n <- ggml_nelements(tensor)
+  ggml_backend_tensor_set_data(tensor, runif(n, -0.05, 0.05))
+}
+
 # ============================================================================
 # Recurrent layers — LSTM and GRU
 # ============================================================================

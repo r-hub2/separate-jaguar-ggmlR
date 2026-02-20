@@ -1212,8 +1212,8 @@ nn_build_functional_graph <- function(model, batch_size, training = FALSE) {
         ggml_backend_tensor_set_data(w$U_gates, swd$U_gates)
         ggml_backend_tensor_set_data(w$b_gates, swd$b_gates)
       } else {
-        nn_init_glorot_uniform(w$W_gates, input_sz, 4L * units)
-        nn_init_glorot_uniform(w$U_gates, units,    4L * units)
+        nn_init_recurrent_uniform(w$W_gates)
+        nn_init_recurrent_uniform(w$U_gates)
         nn_init_zeros(w$b_gates)
       }
       if (trainable) {
@@ -1236,11 +1236,11 @@ nn_build_functional_graph <- function(model, batch_size, training = FALSE) {
         ggml_backend_tensor_set_data(w$b_zh, swd$b_zh); ggml_backend_tensor_set_data(w$W_n,  swd$W_n)
         ggml_backend_tensor_set_data(w$U_n,  swd$U_n);  ggml_backend_tensor_set_data(w$b_n,  swd$b_n)
       } else {
-        nn_init_glorot_uniform(w$W_zh, input_sz, 2L * units)
-        nn_init_glorot_uniform(w$U_zh, units,    2L * units)
+        nn_init_recurrent_uniform(w$W_zh)
+        nn_init_recurrent_uniform(w$U_zh)
         nn_init_zeros(w$b_zh)
-        nn_init_glorot_uniform(w$W_n, input_sz, units)
-        nn_init_glorot_uniform(w$U_n, units,    units)
+        nn_init_recurrent_uniform(w$W_n)
+        nn_init_recurrent_uniform(w$U_n)
         nn_init_zeros(w$b_n)
       }
       if (trainable) {

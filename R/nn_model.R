@@ -611,8 +611,8 @@ nn_build_graph <- function(model, batch_size) {
         ggml_backend_tensor_set_data(layer$weights$U_gates, old_layer$weights_data$U_gates)
         ggml_backend_tensor_set_data(layer$weights$b_gates, old_layer$weights_data$b_gates)
       } else {
-        nn_init_glorot_uniform(layer$weights$W_gates, input_sz, 4L * units)
-        nn_init_glorot_uniform(layer$weights$U_gates, units,    4L * units)
+        nn_init_recurrent_uniform(layer$weights$W_gates)
+        nn_init_recurrent_uniform(layer$weights$U_gates)
         nn_init_zeros(layer$weights$b_gates)
       }
       if (isTRUE(layer$trainable)) {
@@ -645,11 +645,11 @@ nn_build_graph <- function(model, batch_size) {
         ggml_backend_tensor_set_data(layer$weights$U_n,  old_layer$weights_data$U_n)
         ggml_backend_tensor_set_data(layer$weights$b_n,  old_layer$weights_data$b_n)
       } else {
-        nn_init_glorot_uniform(layer$weights$W_zh, input_sz, 2L * units)
-        nn_init_glorot_uniform(layer$weights$U_zh, units,    2L * units)
+        nn_init_recurrent_uniform(layer$weights$W_zh)
+        nn_init_recurrent_uniform(layer$weights$U_zh)
         nn_init_zeros(layer$weights$b_zh)
-        nn_init_glorot_uniform(layer$weights$W_n, input_sz, units)
-        nn_init_glorot_uniform(layer$weights$U_n, units,    units)
+        nn_init_recurrent_uniform(layer$weights$W_n)
+        nn_init_recurrent_uniform(layer$weights$U_n)
         nn_init_zeros(layer$weights$b_n)
       }
       if (isTRUE(layer$trainable)) {
