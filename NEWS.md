@@ -1,3 +1,35 @@
+# ggmlR 0.6.0
+
+## Dynamic autograd engine (PyTorch-style training)
+
+* `ag_tensor()` / `ag_param()` — environment-backed tensors with reference semantics; in-place optimizer updates visible to all references.
+* `with_grad_tape({ ... })` — enables the global gradient tape for the enclosed forward pass.
+* `backward(loss)` — reverse-mode automatic differentiation; returns a gradient environment keyed by tensor id.
+* Differentiable ops: `ag_matmul`, `ag_add` (with bias broadcast), `ag_sub`, `ag_mul`, `ag_scale`.
+* Activations: `ag_relu`, `ag_sigmoid`, `ag_tanh`, `ag_softmax`.
+* Reduction / math ops: `ag_sum`, `ag_mean`, `ag_log`, `ag_exp`, `ag_pow`, `ag_clamp`.
+* Shape ops: `ag_reshape`, `ag_transpose`.
+* Loss functions: `ag_mse_loss`, `ag_cross_entropy_loss`, `ag_softmax_cross_entropy_loss` (numerically-stable fused).
+* `optimizer_sgd()` — SGD with optional momentum.
+* `optimizer_adam()` — Adam with bias-corrected moment estimates.
+* `ag_linear()` — Glorot-initialised dense layer (closure-based, returns `$forward`, `$params()`).
+* `ag_gradcheck()` — central finite-difference gradient checker (like `torch.autograd.gradcheck`).
+
+## Layer objects (environment-based, train/eval modes)
+
+* `ag_sequential(...)` — ordered layer container; collects all parameters for the optimizer.
+* `ag_dropout(rate)` — inverted dropout; identity in eval mode.
+* `ag_batch_norm(num_features)` — batch normalisation with running statistics and learnable γ/β.
+* `ag_embedding(vocab_size, dim)` — token lookup with scatter-add backward.
+* `ag_train(model)` / `ag_eval(model)` — switch all sub-layers between train and eval mode.
+
+## Training utilities
+
+* `ag_dataloader(x, y, batch_size, shuffle, col_major)` — mini-batch iterator with shuffle and `$epoch()` helper.
+* `lr_scheduler_step(optimizer, step_size, gamma)` — step-decay learning rate.
+* `lr_scheduler_cosine(optimizer, T_max, lr_min, restart)` — cosine-annealing (with optional SGDR warm restarts).
+* `clip_grad_norm(params, grads, max_norm)` — clips all gradients by global L2 norm in-place.
+
 # ggmlR 0.5.9
 
 * `ggml_layer_lstm()` — LSTM recurrent layer (unrolled BPTT).
