@@ -103,6 +103,14 @@ void r_ggml_exit(int status);
  * Note: These redefine standard library functions to use our R-safe wrappers
  */
 
+/* Redirect stderr/stdout to NULL so their symbols don't appear in the .so.
+ * Our wrapper functions (r_ggml_fprintf, r_ggml_fputs, r_ggml_fflush) all
+ * ignore the stream argument and route to REprintf/Rprintf instead. */
+#undef stderr
+#define stderr NULL
+#undef stdout
+#define stdout NULL
+
 /* I/O redirections */
 #undef fprintf
 #define fprintf r_ggml_fprintf
