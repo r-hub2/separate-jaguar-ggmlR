@@ -4,21 +4,32 @@
 \alias{ggml_unfreeze_weights}
 \title{Unfreeze Layer Weights}
 \usage{
-ggml_unfreeze_weights(model, from = 1L, to = length(model$layers))
+ggml_unfreeze_weights(
+  model,
+  from = 1L,
+  to = length(model$layers),
+  layer_names = NULL,
+  ...
+)
 }
 \arguments{
-\item{model}{A ggml_sequential_model}
+\item{model}{A model object (ggml_sequential_model or ggml_functional_model)}
 
 \item{from}{Integer index of the first layer to unfreeze (default: 1)}
 
 \item{to}{Integer index of the last layer to unfreeze (default: last layer)}
+
+\item{layer_names}{Character vector of layer names to unfreeze (overrides from/to)}
+
+\item{...}{Additional arguments passed to methods}
 }
 \value{
 The model with selected layers unfrozen.
 }
 \description{
 Sets \code{trainable = TRUE} on layers. Accepts optional \code{from} / \code{to}
-to unfreeze a range of layers. If both are omitted, all layers are unfrozen.
+to unfreeze a range of layers, or \code{layer_names} to unfreeze by name.
+If none are provided, all layers are unfrozen.
 }
 \examples{
 \donttest{

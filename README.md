@@ -154,6 +154,102 @@ ggml_evaluate(model, x_test, y_test)
 classes <- ggml_predict_classes(model, x_new)
 ```
 
+### Keras-like Functional API
+
+The Functional API lets you wire layers into arbitrary directed acyclic graphs — residual connections, multi-input/multi-output models, shared weights.
+
+#### Residual (skip) connection
+
+```r
+inp <- ggml_input(shape = 64L)
+x   <- inp |> ggml_layer_dense(64L, activation = "relu")
+res <- ggml_layer_add(list(inp, x))   # skip connection
+out <- res |> ggml_layer_dense(10L, activation = "softmax")
+
+m <- ggml_model(inputs = inp, outputs = out)
+m <- ggml_compile(m, optimizer = "adam", loss = "categorical_crossentropy")
+m <- ggml_fit(m, x_train, y_train, epochs = 5L, batch_size = 32L)
+```
+
+> Merge layers take an explicit R `list()`: `ggml_layer_add(list(a, b))`.
+
+#### Embedding + NLP (integer token input)
+
+```r
+inp <- ggml_input(shape = 20L, dtype = "int32")   # token sequences of length 20
+
+out <- inp |>
+  ggml_layer_embedding(vocab_size = 1000L, dim = 64L) |>
+  ggml_layer_flatten() |>
+  ggml_layer_dense(10L, activation = "softmax")
+
+m <- ggml_model(inputs = inp, outputs = out)
+```
+
+> Token values must be 0-based integers in `[0, vocab_size - 1]`.
+
+#### Multi-output: feature extraction
+
+```r
+inp    <- ggml_input(shape = 64L)
+hidden <- inp    |> ggml_layer_dense(64L, activation = "relu")
+out    <- hidden |> ggml_layer_dense(10L, activation = "softmax")
+
+m     <- ggml_model(inputs = inp, outputs = list(hidden, out))
+preds <- ggml_predict(m, x)
+# preds[[1]] — hidden activations [n × 64]
+# preds[[2]] — class probabilities [n × 10]
+```
+
+#### True multi-input model
+
+```r
+inp1 <- ggml_input(shape = 20L, name = "timeseries")
+inp2 <- ggml_input(shape = 3L,  name = "metadata")
+
+br1 <- inp1 |> ggml_layer_dense(16L, activation = "relu")
+br2 <- inp2 |> ggml_layer_dense(8L,  activation = "relu")
+
+out <- ggml_layer_concatenate(list(br1, br2), axis = 0L) |>
+  ggml_layer_dense(2L, activation = "softmax")
+
+m <- ggml_model(inputs = list(inp1, inp2), outputs = out)
+m <- ggml_compile(m, optimizer = "adam", loss = "categorical_crossentropy")
+
+# x passed as a list of matrices — one per input
+m <- ggml_fit(m, x = list(x_ts, x_meta), y = y,
+              epochs = 10L, batch_size = 32L)
+preds <- ggml_predict(m, list(x_ts, x_meta))
+```
+
+#### Shared layers (Siamese / weight sharing)
+
+```r
+enc <- ggml_dense(32L, activation = "relu", name = "encoder")
+
+x1 <- ggml_input(shape = 16L, name = "left")
+x2 <- ggml_input(shape = 16L, name = "right")
+
+h1 <- ggml_apply(x1, enc)   # same weights
+h2 <- ggml_apply(x2, enc)
+
+out <- ggml_layer_add(list(h1, h2)) |>
+  ggml_layer_dense(2L, activation = "softmax")
+
+m <- ggml_model(inputs = list(x1, x2), outputs = out)
+```
+
+#### Differences from Keras
+
+| Feature | Keras (Python) | ggmlR |
+|---|---|---|
+| Batch dimension | part of `input_shape` | excluded from `shape` |
+| Merge layers | `add([a, b])` | `ggml_layer_add(list(a, b))` |
+| Shared layers | reuse layer object | `ggml_dense()` + `ggml_apply()` |
+| Multi-input data | list of arrays | `list()` of R matrices |
+| Multi-output predict | list of numpy arrays | R list of matrices |
+| Backend | TensorFlow / JAX / PyTorch | ggml (CPU + Vulkan GPU) |
+
 ### Matrix Multiplication
 ```r
 ctx <- ggml_init(16 * 1024 * 1024)

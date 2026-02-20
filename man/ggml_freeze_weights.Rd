@@ -4,14 +4,24 @@
 \alias{ggml_freeze_weights}
 \title{Freeze Layer Weights}
 \usage{
-ggml_freeze_weights(model, from = 1L, to = length(model$layers))
+ggml_freeze_weights(
+  model,
+  from = 1L,
+  to = length(model$layers),
+  layer_names = NULL,
+  ...
+)
 }
 \arguments{
-\item{model}{A ggml_sequential_model (need not be compiled)}
+\item{model}{A model object (ggml_sequential_model or ggml_functional_model)}
 
 \item{from}{Integer index of the first layer to freeze (default: 1)}
 
 \item{to}{Integer index of the last layer to freeze (default: last layer)}
+
+\item{layer_names}{Character vector of layer names to freeze (overrides from/to)}
+
+\item{...}{Additional arguments passed to methods}
 }
 \value{
 The model with selected layers frozen.
@@ -19,8 +29,8 @@ The model with selected layers frozen.
 \description{
 Sets \code{trainable = FALSE} on layers, preventing their weights from being
 updated during training. Accepts optional \code{from} / \code{to} to freeze
-a range of layers (1-based indices, inclusive). If both are omitted, all
-layers are frozen.
+a range of layers by index, or \code{layer_names} to freeze by name.
+If none are provided, all layers are frozen.
 }
 \examples{
 \donttest{

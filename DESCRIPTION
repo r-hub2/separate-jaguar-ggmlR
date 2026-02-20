@@ -38,12 +38,11 @@ BugReports: https://github.com/Zabis13/ggmlR/issues
 Encoding: UTF-8
 SystemRequirements: C++17, GNU make, libvulkan-dev, glslc (optional,
         for GPU on Linux), Vulkan SDK (optional, for GPU on Windows)
-Suggests: testthat (>= 3.0.0), knitr, rmarkdown
-VignetteBuilder: knitr
+Suggests: testthat (>= 3.0.0)
 RoxygenNote: 7.3.3
 Config/testthat/edition: 3
 NeedsCompilation: yes
-Packaged: 2026-02-20 09:52:09 UTC; yuri
+Packaged: 2026-02-20 10:14:07 UTC; yuri
 Author: Yuri Baramykov [aut, cre],
   Georgi Gerganov [ctb, cph] (Author of the GGML library),
   Jeffrey Quesnelle [ctb, cph] (Contributor to ops.cpp),

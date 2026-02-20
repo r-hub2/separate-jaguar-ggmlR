@@ -1,7 +1,13 @@
 # Tests for Functional Neural Network API (Block 1)
 
-# Helper: free backends for a functional model
+# Helper: free all ggml resources held by a functional model
 cleanup_functional_model <- function(model) {
+  if (!is.null(model$compilation$buffer)) {
+    ggml_backend_buffer_free(model$compilation$buffer)
+  }
+  if (!is.null(model$compilation$ctx_weights)) {
+    ggml_free(model$compilation$ctx_weights)
+  }
   if (!is.null(model$compilation$sched)) {
     ggml_backend_sched_free(model$compilation$sched)
   }
@@ -945,7 +951,7 @@ test_that("LSTM functional model fits without error", {
   n        <- 32L
   seq_len  <- 5L
   input_sz <- 4L
-  x <- array(runif(n * seq_len * input_sz), dim = c(n, seq_len, input_sz))
+  x <- array(runif(n * seq_len * input_sz) - 0.5, dim = c(n, seq_len, input_sz))
   y <- matrix(0.0, nrow = n, ncol = 2L)
   for (i in seq_len(n)) y[i, (i %% 2L) + 1L] <- 1.0
 
@@ -965,7 +971,7 @@ test_that("GRU functional model fits without error", {
   n        <- 32L
   seq_len  <- 5L
   input_sz <- 4L
-  x <- array(runif(n * seq_len * input_sz), dim = c(n, seq_len, input_sz))
+  x <- array(runif(n * seq_len * input_sz) - 0.5, dim = c(n, seq_len, input_sz))
   y <- matrix(0.0, nrow = n, ncol = 2L)
   for (i in seq_len(n)) y[i, (i %% 2L) + 1L] <- 1.0
 
