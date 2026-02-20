@@ -2,11 +2,12 @@
 % Please edit documentation in R/nn_layers.R
 \name{nn_init_recurrent_uniform}
 \alias{nn_init_recurrent_uniform}
-\title{Initialize recurrent weight tensor with small uniform values}
+\title{Initialize recurrent weight tensor with small deterministic values}
 \usage{
 nn_init_recurrent_uniform(tensor)
 }
 \description{
-Uses a fixed limit of 0.05 to ensure numerical stability across platforms.
+Uses a fixed zigzag pattern in [-0.01, 0.01] — no RNG, fully reproducible
+across all platforms and independent of the R random seed state.
 }
 \keyword{internal}

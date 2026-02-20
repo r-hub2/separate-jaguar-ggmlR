@@ -1280,15 +1280,22 @@ nn_build_lstm <- function(ctx, input_tensor, layer, batch_size) {
   sh       <- ggml_tensor_shape(input_tensor)
   input_sz <- sh[1]; seq_len <- sh[2]; N <- sh[3]
 
-  # Initial states: zeros [units, N] - use scale(W_init, 0) trick
-  # We create a small all-zero tensor by initializing b_gates sliced view
-  # Easier: reshape a zero-valued bias view to [units, N] via repeat
-  h_t <- ggml_scale(ctx,
-    ggml_new_tensor_2d(ctx, GGML_TYPE_F32, units, N),
-    0.0)
-  c_t <- ggml_scale(ctx,
-    ggml_new_tensor_2d(ctx, GGML_TYPE_F32, units, N),
-    0.0)
+  # Initial states: zeros [units, N]
+  # Use ctx_weights tensors (properly allocated + zero-initialised) to avoid
+  # uninitialized memory in the compute context (NaN * 0 = NaN under IEEE 754).
+  h_shape <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, units, N)
+  c_shape <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, units, N)
+  if (!is.null(layer$weights$h0)) {
+    h_t <- ggml_repeat(ctx, layer$weights$h0, h_shape)
+    c_t <- ggml_repeat(ctx, layer$weights$c0, c_shape)
+  } else {
+    # Fallback: derive zeros from b_gates (always zero-initialised) to avoid
+    # uninitialized memory (NaN * 0 = NaN under IEEE 754).
+    b_h <- ggml_view_1d(ctx, layer$weights$b_gates, units, 0L)
+    b_c <- ggml_view_1d(ctx, layer$weights$b_gates, units, 0L)
+    h_t <- ggml_repeat(ctx, b_h, h_shape)
+    c_t <- ggml_repeat(ctx, b_c, c_shape)
+  }
 
   h_steps <- vector("list", seq_len)
 
@@ -1334,9 +1341,14 @@ nn_build_gru <- function(ctx, input_tensor, layer, batch_size) {
   sh       <- ggml_tensor_shape(input_tensor)
   input_sz <- sh[1]; seq_len <- sh[2]; N <- sh[3]
 
-  h_t <- ggml_scale(ctx,
-    ggml_new_tensor_2d(ctx, GGML_TYPE_F32, units, N),
-    0.0)
+  h_shape <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, units, N)
+  if (!is.null(layer$weights$h0)) {
+    h_t <- ggml_repeat(ctx, layer$weights$h0, h_shape)
+  } else {
+    # Fallback: derive zeros from b_zh (always zero-initialised).
+    b_h <- ggml_view_1d(ctx, layer$weights$b_zh, units, 0L)
+    h_t <- ggml_repeat(ctx, b_h, h_shape)
+  }
 
   h_steps <- vector("list", seq_len)
 

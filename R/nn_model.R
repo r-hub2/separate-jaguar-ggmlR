@@ -464,9 +464,15 @@ nn_build_graph <- function(model, batch_size) {
                                                     units, 4L * units)
       layer$weights$b_gates <- ggml_new_tensor_1d(ctx_weights, GGML_TYPE_F32,
                                                     4L * units)
+      layer$weights$h0      <- ggml_new_tensor_1d(ctx_weights, GGML_TYPE_F32,
+                                                    units)
+      layer$weights$c0      <- ggml_new_tensor_1d(ctx_weights, GGML_TYPE_F32,
+                                                    units)
       ggml_set_name(layer$weights$W_gates, paste0(nm, "_W_gates"))
       ggml_set_name(layer$weights$U_gates, paste0(nm, "_U_gates"))
       ggml_set_name(layer$weights$b_gates, paste0(nm, "_b_gates"))
+      ggml_set_name(layer$weights$h0,      paste0(nm, "_h0"))
+      ggml_set_name(layer$weights$c0,      paste0(nm, "_c0"))
 
     } else if (layer$type == "gru") {
       input_sz <- layer$input_shape[2]
@@ -484,12 +490,14 @@ nn_build_graph <- function(model, batch_size) {
       layer$weights$U_n  <- ggml_new_tensor_2d(ctx_weights, GGML_TYPE_F32,
                                                  units, units)
       layer$weights$b_n  <- ggml_new_tensor_1d(ctx_weights, GGML_TYPE_F32, units)
+      layer$weights$h0   <- ggml_new_tensor_1d(ctx_weights, GGML_TYPE_F32, units)
       ggml_set_name(layer$weights$W_zh, paste0(nm, "_W_zh"))
       ggml_set_name(layer$weights$U_zh, paste0(nm, "_U_zh"))
       ggml_set_name(layer$weights$b_zh, paste0(nm, "_b_zh"))
       ggml_set_name(layer$weights$W_n,  paste0(nm, "_W_n"))
       ggml_set_name(layer$weights$U_n,  paste0(nm, "_U_n"))
       ggml_set_name(layer$weights$b_n,  paste0(nm, "_b_n"))
+      ggml_set_name(layer$weights$h0,   paste0(nm, "_h0"))
     }
 
     layers_built[[i]] <- layer
@@ -615,6 +623,8 @@ nn_build_graph <- function(model, batch_size) {
         nn_init_recurrent_uniform(layer$weights$U_gates)
         nn_init_zeros(layer$weights$b_gates)
       }
+      nn_init_zeros(layer$weights$h0)
+      nn_init_zeros(layer$weights$c0)
       if (isTRUE(layer$trainable)) {
         ggml_set_param(layer$weights$W_gates)
         ggml_set_param(layer$weights$U_gates)
@@ -652,6 +662,7 @@ nn_build_graph <- function(model, batch_size) {
         nn_init_recurrent_uniform(layer$weights$U_n)
         nn_init_zeros(layer$weights$b_n)
       }
+      nn_init_zeros(layer$weights$h0)
       if (isTRUE(layer$trainable)) {
         ggml_set_param(layer$weights$W_zh)
         ggml_set_param(layer$weights$U_zh)

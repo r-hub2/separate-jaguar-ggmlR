@@ -888,13 +888,19 @@ nn_build_functional_node <- function(node, built_tensors, built_shapes,
         W_gates <- reuse_weights$W_gates
         U_gates <- reuse_weights$U_gates
         b_gates <- reuse_weights$b_gates
+        h0      <- reuse_weights$h0
+        c0      <- reuse_weights$c0
       } else {
         W_gates <- ggml_new_tensor_2d(ctx_weights, GGML_TYPE_F32, input_sz, 4L * units)
         U_gates <- ggml_new_tensor_2d(ctx_weights, GGML_TYPE_F32, units,    4L * units)
         b_gates <- ggml_new_tensor_1d(ctx_weights, GGML_TYPE_F32, 4L * units)
+        h0      <- ggml_new_tensor_1d(ctx_weights, GGML_TYPE_F32, units)
+        c0      <- ggml_new_tensor_1d(ctx_weights, GGML_TYPE_F32, units)
         ggml_set_name(W_gates, paste0(nm, "_W_gates"))
         ggml_set_name(U_gates, paste0(nm, "_U_gates"))
         ggml_set_name(b_gates, paste0(nm, "_b_gates"))
+        ggml_set_name(h0,      paste0(nm, "_h0"))
+        ggml_set_name(c0,      paste0(nm, "_c0"))
       }
 
       # Build input tensor [input_sz, seq_len, N] from parent [seq_len*input_sz, N]
@@ -907,8 +913,12 @@ nn_build_functional_node <- function(node, built_tensors, built_shapes,
 
       act_cell <- node$config$activation
       act_rec  <- node$config$recurrent_activation
-      h_t <- ggml_scale(ctx_compute, ggml_new_tensor_2d(ctx_compute, GGML_TYPE_F32, units, batch_size), 0.0)
-      c_t <- ggml_scale(ctx_compute, ggml_new_tensor_2d(ctx_compute, GGML_TYPE_F32, units, batch_size), 0.0)
+      # Use properly allocated zero tensors from ctx_weights to avoid uninitialized
+      # memory in the compute context (NaN * 0 = NaN under IEEE 754).
+      h_shape <- ggml_new_tensor_2d(ctx_compute, GGML_TYPE_F32, units, batch_size)
+      c_shape <- ggml_new_tensor_2d(ctx_compute, GGML_TYPE_F32, units, batch_size)
+      h_t <- ggml_repeat(ctx_compute, h0, h_shape)
+      c_t <- ggml_repeat(ctx_compute, c0, c_shape)
       h_steps <- vector("list", seq_len)
 
       for (t in seq_len(seq_len)) {
@@ -931,7 +941,9 @@ nn_build_functional_node <- function(node, built_tensors, built_shapes,
         out <- h_t
       }
 
-      list(tensor = out, weights = list(W_gates = W_gates, U_gates = U_gates, b_gates = b_gates))
+      list(tensor = out,
+           weights = list(W_gates = W_gates, U_gates = U_gates, b_gates = b_gates,
+                          h0 = h0, c0 = c0))
     },
 
     "gru" = {
@@ -945,6 +957,7 @@ nn_build_functional_node <- function(node, built_tensors, built_shapes,
       if (!is.null(reuse_weights)) {
         W_zh <- reuse_weights$W_zh; U_zh <- reuse_weights$U_zh; b_zh <- reuse_weights$b_zh
         W_n  <- reuse_weights$W_n;  U_n  <- reuse_weights$U_n;  b_n  <- reuse_weights$b_n
+        h0   <- reuse_weights$h0
       } else {
         W_zh <- ggml_new_tensor_2d(ctx_weights, GGML_TYPE_F32, input_sz, 2L * units)
         U_zh <- ggml_new_tensor_2d(ctx_weights, GGML_TYPE_F32, units,    2L * units)
@@ -952,9 +965,11 @@ nn_build_functional_node <- function(node, built_tensors, built_shapes,
         W_n  <- ggml_new_tensor_2d(ctx_weights, GGML_TYPE_F32, input_sz, units)
         U_n  <- ggml_new_tensor_2d(ctx_weights, GGML_TYPE_F32, units,    units)
         b_n  <- ggml_new_tensor_1d(ctx_weights, GGML_TYPE_F32, units)
+        h0   <- ggml_new_tensor_1d(ctx_weights, GGML_TYPE_F32, units)
         ggml_set_name(W_zh, paste0(nm, "_W_zh")); ggml_set_name(U_zh, paste0(nm, "_U_zh"))
         ggml_set_name(b_zh, paste0(nm, "_b_zh")); ggml_set_name(W_n,  paste0(nm, "_W_n"))
         ggml_set_name(U_n,  paste0(nm, "_U_n"));  ggml_set_name(b_n,  paste0(nm, "_b_n"))
+        ggml_set_name(h0,   paste0(nm, "_h0"))
       }
 
       input_3d <- if (length(ggml_tensor_shape(input_t)) == 2L) {
@@ -965,7 +980,8 @@ nn_build_functional_node <- function(node, built_tensors, built_shapes,
 
       act_cell <- node$config$activation
       act_rec  <- node$config$recurrent_activation
-      h_t <- ggml_scale(ctx_compute, ggml_new_tensor_2d(ctx_compute, GGML_TYPE_F32, units, batch_size), 0.0)
+      h_shape <- ggml_new_tensor_2d(ctx_compute, GGML_TYPE_F32, units, batch_size)
+      h_t <- ggml_repeat(ctx_compute, h0, h_shape)
       h_steps <- vector("list", seq_len)
 
       for (t in seq_len(seq_len)) {
@@ -988,7 +1004,7 @@ nn_build_functional_node <- function(node, built_tensors, built_shapes,
 
       list(tensor = out,
            weights = list(W_zh = W_zh, U_zh = U_zh, b_zh = b_zh,
-                          W_n = W_n, U_n = U_n, b_n = b_n))
+                          W_n = W_n, U_n = U_n, b_n = b_n, h0 = h0))
     },
 
     stop("Unknown node_type in graph build: ", node$node_type)
@@ -1216,6 +1232,8 @@ nn_build_functional_graph <- function(model, batch_size, training = FALSE) {
         nn_init_recurrent_uniform(w$U_gates)
         nn_init_zeros(w$b_gates)
       }
+      nn_init_zeros(w$h0)
+      nn_init_zeros(w$c0)
       if (trainable) {
         ggml_set_param(w$W_gates); ggml_set_param(w$U_gates); ggml_set_param(w$b_gates)
       }
@@ -1243,6 +1261,7 @@ nn_build_functional_graph <- function(model, batch_size, training = FALSE) {
         nn_init_recurrent_uniform(w$U_n)
         nn_init_zeros(w$b_n)
       }
+      nn_init_zeros(w$h0)
       if (trainable) {
         ggml_set_param(w$W_zh); ggml_set_param(w$U_zh); ggml_set_param(w$b_zh)
         ggml_set_param(w$W_n);  ggml_set_param(w$U_n);  ggml_set_param(w$b_n)
