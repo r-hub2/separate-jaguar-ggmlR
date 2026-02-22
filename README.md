@@ -30,6 +30,24 @@ sudo apt install libvulkan-dev glslc
 
 **Windows** — install [Rtools](https://cran.r-project.org/bin/windows/Rtools/) and optionally the [Vulkan SDK](https://vulkan.lunarg.com/sdk/home) for GPU support.
 
+### Build options
+
+Force-enable or disable Vulkan GPU backend:
+```r
+install.packages("ggmlR", configure.args = "--with-vulkan")
+install.packages("ggmlR", configure.args = "--without-vulkan")
+```
+
+Enable CPU SIMD acceleration (AVX2, SSE4, etc.) for faster inference on your machine:
+```r
+install.packages("ggmlR", configure.args = "--with-simd")
+```
+
+Options can be combined:
+```r
+install.packages("ggmlR", configure.args = "--with-vulkan --with-simd")
+```
+
 ## Sequential API
 
 The fastest way to get a model running — stack layers with the pipe, compile, train.
@@ -215,7 +233,7 @@ m <- ggml_model(inputs = list(x1, x2), outputs = out)
 | Shared layers | reuse layer object | `ggml_dense()` + `ggml_apply()` |
 | Multi-input data | list of arrays | `list()` of R matrices |
 | Multi-output predict | list of numpy arrays | R list of matrices |
-| Backend | TensorFlow / JAX / PyTorch | ggml (CPU + Vulkan GPU) |
+| Backend | TensorFlow / JAX / PyTorch | ggml (Vulkan GPU, CPU fallback) |
 
 ## Dynamic Autograd Engine (PyTorch-style)
 
