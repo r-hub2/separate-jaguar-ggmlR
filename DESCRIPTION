@@ -1,7 +1,7 @@
 Package: ggmlR
 Type: Package
 Title: 'GGML' Tensor Operations for Machine Learning
-Version: 0.6.1
+Version: 0.6.2
 Authors@R: c(
     person("Yuri", "Baramykov",
         email = "lbsbmsu@mail.ru",
@@ -34,7 +34,7 @@ Description: Provides 'R' bindings to the 'GGML' tensor library for machine
     (half-precision) support on 'Vulkan' GPU, and a multi-head attention layer
     for building Transformer architectures. Serves as backend for 'LLM' (Large
     Language Model) inference via 'llamaR' and Stable Diffusion image
-    generation via 'sdR'. See <https://github.com/ggml-org/ggml> for more
+    generation via 'sd2R'. See <https://github.com/ggml-org/ggml> for more
     information about the underlying library.
 Depends: R (>= 4.1.0)
 License: MIT + file LICENSE
@@ -48,7 +48,7 @@ Suggests: testthat (>= 3.0.0)
 RoxygenNote: 7.3.3
 Config/testthat/edition: 3
 NeedsCompilation: yes
-Packaged: 2026-02-23 07:01:04 UTC; yuri
+Packaged: 2026-03-13 16:51:49 UTC; yuri
 Author: Yuri Baramykov [aut, cre],
   Georgi Gerganov [ctb, cph] (Author of the GGML library),
   Jeffrey Quesnelle [ctb, cph] (Contributor to ops.cpp),
