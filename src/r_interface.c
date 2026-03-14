@@ -123,6 +123,7 @@ extern SEXP R_ggml_backend_graph_plan_compute(SEXP, SEXP);
 // ONNX loader
 extern SEXP R_onnx_load(SEXP);
 extern SEXP R_onnx_summary(SEXP);
+extern SEXP R_onnx_override_input_shapes(SEXP, SEXP, SEXP);
 extern SEXP R_onnx_build(SEXP, SEXP);
 extern SEXP R_onnx_run(SEXP, SEXP, SEXP);
 extern SEXP R_onnx_inputs(SEXP);
@@ -1795,6 +1796,7 @@ static const R_CallMethodDef CallEntries[] = {
     // ONNX
     {"R_onnx_load",                             (DL_FUNC) &R_onnx_load,                              1},
     {"R_onnx_summary",                          (DL_FUNC) &R_onnx_summary,                           1},
+    {"R_onnx_override_input_shapes",            (DL_FUNC) &R_onnx_override_input_shapes,              3},
     {"R_onnx_build",                            (DL_FUNC) &R_onnx_build,                             2},
     {"R_onnx_run",                              (DL_FUNC) &R_onnx_run,                               3},
     {"R_onnx_inputs",                           (DL_FUNC) &R_onnx_inputs,                            1},

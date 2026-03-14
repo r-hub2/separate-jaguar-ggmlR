@@ -68,8 +68,8 @@ typedef struct {
     /* For ONNX_ATTR_STRING: ptr+len into mmap'd buffer */
     const uint8_t *s_data;
     size_t         s_len;
-    /* For ONNX_ATTR_INTS: ptr+count into mmap'd buffer */
-    const int64_t *ints;
+    /* For ONNX_ATTR_INTS: owned array (repeated or packed) */
+    int64_t       *ints;
     int             n_ints;
     /* For ONNX_ATTR_FLOATS */
     const float   *floats;
@@ -161,6 +161,10 @@ int64_t onnx_attr_int(const onnx_node_t *node, const char *name, int64_t def);
 
 /* Get attribute as float with default value. */
 float onnx_attr_float(const onnx_node_t *node, const char *name, float def);
+
+/* Get attribute as string. Returns length, writes to out[]. */
+int onnx_attr_str(const onnx_node_t *node, const char *name,
+                  char *out, int max_len);
 
 /* Get attribute as int array. Returns count, writes to out[]. */
 int onnx_attr_ints(const onnx_node_t *node, const char *name,

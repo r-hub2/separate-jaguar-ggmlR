@@ -221,15 +221,22 @@ static int parse_tensor_proto(pb_reader_t *r, onnx_initializer_t *t) {
                 if (wire == PB_WIRE_LEN) {
                     uint64_t len = pb_read_varint(r);
                     if (r->cur + len <= r->end) {
-                        size_t n = (size_t)(len / sizeof(float));
                         t->decoded_data = malloc(len);
                         if (t->decoded_data) {
                             memcpy(t->decoded_data, r->cur, len);
                             t->decoded_size = len;
                         }
-                        (void)n;
                     }
                     r->cur += len;
+                } else if (wire == PB_WIRE_32BIT) {
+                    /* non-packed repeated float */
+                    uint32_t bits = pb_read_fixed32(r);
+                    size_t count = t->decoded_data ? t->decoded_size / sizeof(float) : 0;
+                    float *buf = (float *)realloc(t->decoded_data,
+                                                   (count + 1) * sizeof(float));
+                    memcpy(&buf[count], &bits, sizeof(float));
+                    t->decoded_data = buf;
+                    t->decoded_size = (count + 1) * sizeof(float);
                 } else {
                     pb_skip(r, wire);
                 }
@@ -252,6 +259,15 @@ static int parse_tensor_proto(pb_reader_t *r, onnx_initializer_t *t) {
                     }
                     t->decoded_data = buf;
                     t->decoded_size = count * sizeof(int32_t);
+                } else if (wire == PB_WIRE_VARINT) {
+                    /* non-packed repeated int32 */
+                    int32_t val = (int32_t)pb_read_varint(r);
+                    size_t count = t->decoded_data ? t->decoded_size / sizeof(int32_t) : 0;
+                    int32_t *buf = (int32_t *)realloc(t->decoded_data,
+                                                       (count + 1) * sizeof(int32_t));
+                    buf[count] = val;
+                    t->decoded_data = buf;
+                    t->decoded_size = (count + 1) * sizeof(int32_t);
                 } else {
                     pb_skip(r, wire);
                 }
@@ -259,6 +275,7 @@ static int parse_tensor_proto(pb_reader_t *r, onnx_initializer_t *t) {
             }
             case TP_INT64_DATA: {
                 if (wire == PB_WIRE_LEN) {
+                    /* packed repeated int64 */
                     pb_reader_t sub;
                     pb_read_submsg(r, &sub);
                     size_t cap = 64;
@@ -273,6 +290,15 @@ static int parse_tensor_proto(pb_reader_t *r, onnx_initializer_t *t) {
                     }
                     t->decoded_data = buf;
                     t->decoded_size = count * sizeof(int64_t);
+                } else if (wire == PB_WIRE_VARINT) {
+                    /* non-packed repeated int64 — one element at a time */
+                    int64_t val = (int64_t)pb_read_varint(r);
+                    size_t count = t->decoded_data ? t->decoded_size / sizeof(int64_t) : 0;
+                    int64_t *buf = (int64_t *)realloc(t->decoded_data,
+                                                       (count + 1) * sizeof(int64_t));
+                    buf[count] = val;
+                    t->decoded_data = buf;
+                    t->decoded_size = (count + 1) * sizeof(int64_t);
                 } else {
                     pb_skip(r, wire);
                 }
@@ -290,13 +316,13 @@ static int parse_tensor_proto(pb_reader_t *r, onnx_initializer_t *t) {
 
 /* AttributeProto field numbers */
 #define AP_NAME    1   /* string */
-#define AP_TYPE   20   /* int32 (AttributeType) */
-#define AP_F       4   /* float */
+#define AP_F       2   /* float */
 #define AP_I       3   /* int64 */
-#define AP_S       5   /* bytes */
-#define AP_T       6   /* TensorProto */
-#define AP_FLOATS  8   /* repeated float */
-#define AP_INTS    9   /* repeated int64 */
+#define AP_S       4   /* bytes (UTF-8 string) */
+#define AP_T       5   /* TensorProto */
+#define AP_FLOATS  7   /* repeated float */
+#define AP_INTS    8   /* repeated int64 */
+#define AP_TYPE   20   /* int32 (AttributeType) */
 
 static int parse_attr(pb_reader_t *r, onnx_attr_t *a) {
     memset(a, 0, sizeof(*a));
@@ -344,6 +370,15 @@ static int parse_attr(pb_reader_t *r, onnx_attr_t *a) {
                     }
                     a->ints   = buf;
                     a->n_ints = (int)count;
+                } else if (wire == PB_WIRE_VARINT) {
+                    /* repeated (non-packed) int64 — single element */
+                    int64_t val = (int64_t)pb_read_varint(r);
+                    size_t count = (size_t)a->n_ints;
+                    size_t cap = count + 1;
+                    int64_t *buf = (int64_t *)realloc(a->ints, cap * sizeof(int64_t));
+                    buf[count] = val;
+                    a->ints   = buf;
+                    a->n_ints = (int)cap;
                 } else {
                     pb_skip(r, wire);
                 }
@@ -700,6 +735,20 @@ int64_t onnx_attr_int(const onnx_node_t *node, const char *name, int64_t def) {
 float onnx_attr_float(const onnx_node_t *node, const char *name, float def) {
     const onnx_attr_t *a = onnx_node_find_attr(node, name);
     return (a && a->type == ONNX_ATTR_FLOAT) ? a->f : def;
+}
+
+int onnx_attr_str(const onnx_node_t *node, const char *name,
+                   char *out, int max_len) {
+    const onnx_attr_t *a = onnx_node_find_attr(node, name);
+    if (!a || a->type != ONNX_ATTR_STRING || !a->s_data || a->s_len == 0) {
+        if (max_len > 0) out[0] = '\0';
+        return 0;
+    }
+    int len = (int)a->s_len;
+    if (len >= max_len) len = max_len - 1;
+    memcpy(out, a->s_data, len);
+    out[len] = '\0';
+    return len;
 }
 
 int onnx_attr_ints(const onnx_node_t *node, const char *name,

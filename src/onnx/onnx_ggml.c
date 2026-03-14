@@ -101,6 +101,7 @@ static int create_initializer_tensors(onnx_ggml_ctx_t *c) {
         }
         if (!t) return -1;
         ggml_set_name(t, init->name);
+        ggml_set_input(t);
         tmap_put(c, init->name, t);
     }
     return 0;
@@ -204,7 +205,11 @@ static int map_node(onnx_ggml_ctx_t *c, const onnx_node_t *n) {
     /* ── Elementwise binary ─────────────────────────────────────── */
     if (strcmp(op, "Add") == 0) {
         if (!a || !b) return -1;
-        out = ggml_add(c->ctx, a, b);
+        /* ggml_add requires b broadcastable into a — swap if a is smaller */
+        if (ggml_nelements(a) < ggml_nelements(b))
+            out = ggml_add(c->ctx, b, a);
+        else
+            out = ggml_add(c->ctx, a, b);
     }
     else if (strcmp(op, "Sub") == 0) {
         if (!a || !b) return -1;
@@ -212,7 +217,10 @@ static int map_node(onnx_ggml_ctx_t *c, const onnx_node_t *n) {
     }
     else if (strcmp(op, "Mul") == 0) {
         if (!a || !b) return -1;
-        out = ggml_mul(c->ctx, a, b);
+        if (ggml_nelements(a) < ggml_nelements(b))
+            out = ggml_mul(c->ctx, b, a);
+        else
+            out = ggml_mul(c->ctx, a, b);
     }
     else if (strcmp(op, "Div") == 0) {
         if (!a || !b) return -1;
@@ -377,9 +385,9 @@ static int map_node(onnx_ggml_ctx_t *c, const onnx_node_t *n) {
         for (int d = 0; d < ndims; d++)
             ne[d] = shape[ndims - 1 - d];
 
-        fprintf(stderr, "  Reshape: a.nel=%lld → ggml ne=[%lld,%lld,%lld,%lld] (ndims=%d)\n",
+        fprintf(stderr, "  Reshape: [%lld] → [%lld,%lld,%lld,%lld]\n",
                 (long long)total, (long long)ne[0], (long long)ne[1],
-                (long long)ne[2], (long long)ne[3], ndims);
+                (long long)ne[2], (long long)ne[3]);
 
         switch (ndims) {
             case 1: out = ggml_reshape_1d(c->ctx, a, ne[0]); break;
@@ -426,14 +434,19 @@ static int map_node(onnx_ggml_ctx_t *c, const onnx_node_t *n) {
 
     /* ── Concat ─────────────────────────────────────────────────── */
     else if (strcmp(op, "Concat") == 0) {
-        if (!a || !b) return -1;
+        if (!a) return -1;
         int64_t axis = onnx_attr_int(n, "axis", 0);
-        int nd = ggml_n_dims(a);
-        /* Convert ONNX axis to ggml dim (reversed) */
+        int nd = GGML_MAX_DIMS;
         int onnx_axis = (int)axis;
         if (onnx_axis < 0) onnx_axis = nd + onnx_axis;
         int dim = nd - 1 - onnx_axis;
-        out = ggml_concat(c->ctx, a, b, dim);
+        /* Concat supports N inputs — chain pairwise */
+        out = a;
+        for (int i = 1; i < n->n_inputs; i++) {
+            struct ggml_tensor *inp = get_input(c, n, i);
+            if (!inp) continue;
+            out = ggml_concat(c->ctx, out, inp, dim);
+        }
     }
 
     /* ── Gather ─────────────────────────────────────────────────── */
@@ -509,29 +522,30 @@ static int map_node(onnx_ggml_ctx_t *c, const onnx_node_t *n) {
     }
 
     /* ── Pooling ────────────────────────────────────────────────── */
-    else if (strcmp(op, "MaxPool") == 0) {
+    else if (strcmp(op, "MaxPool") == 0 || strcmp(op, "AveragePool") == 0) {
         if (!a) return -1;
         int64_t kshape[2] = {1, 1}, strides[2] = {1, 1}, pads[4] = {0};
         onnx_attr_ints(n, "kernel_shape", kshape, 2);
         onnx_attr_ints(n, "strides", strides, 2);
         onnx_attr_ints(n, "pads", pads, 4);
-        /* ONNX: kernel_shape=[kH,kW], strides=[sH,sW], pads=[pH,pW,...].
-         * ggml: k0→ne[0]=W, k1→ne[1]=H. So k0=kW, k1=kH. */
-        fprintf(stderr, "  MaxPool: kernel=[%lld,%lld] strides=[%lld,%lld]\n",
-                (long long)kshape[0], (long long)kshape[1],
-                (long long)strides[0], (long long)strides[1]);
-        out = ggml_pool_2d(c->ctx, a, GGML_OP_POOL_MAX,
-                           (int)kshape[1], (int)kshape[0],
-                           (int)strides[1], (int)strides[0],
-                           (int)pads[1], (int)pads[0]);
-    }
-    else if (strcmp(op, "AveragePool") == 0) {
-        if (!a) return -1;
-        int64_t kshape[2] = {1, 1}, strides[2] = {1, 1}, pads[4] = {0};
-        onnx_attr_ints(n, "kernel_shape", kshape, 2);
-        onnx_attr_ints(n, "strides", strides, 2);
-        onnx_attr_ints(n, "pads", pads, 4);
-        out = ggml_pool_2d(c->ctx, a, GGML_OP_POOL_AVG,
+        /* auto_pad: compute pads from input shape */
+        char auto_pad[32] = "";
+        onnx_attr_str(n, "auto_pad", auto_pad, sizeof(auto_pad));
+        if (strcmp(auto_pad, "SAME_UPPER") == 0 || strcmp(auto_pad, "SAME_LOWER") == 0) {
+            /* input is [W,H,C,N] in ggml. ONNX spatial: H=ne[1], W=ne[0] */
+            for (int d = 0; d < 2; d++) {
+                int64_t in_d = (d == 0) ? a->ne[1] : a->ne[0]; /* H, W */
+                int64_t out_d = (in_d + strides[d] - 1) / strides[d];
+                int64_t total_pad = (out_d - 1) * strides[d] + kshape[d] - in_d;
+                if (total_pad < 0) total_pad = 0;
+                pads[d]     = (strcmp(auto_pad, "SAME_LOWER") == 0) ?
+                              (total_pad + 1) / 2 : total_pad / 2;
+                pads[d + 2] = total_pad - pads[d];
+            }
+        }
+        enum ggml_op_pool pool_op = (strcmp(op, "MaxPool") == 0) ?
+                                     GGML_OP_POOL_MAX : GGML_OP_POOL_AVG;
+        out = ggml_pool_2d(c->ctx, a, pool_op,
                            (int)kshape[1], (int)kshape[0],
                            (int)strides[1], (int)strides[0],
                            (int)pads[1], (int)pads[0]);
@@ -552,16 +566,28 @@ static int map_node(onnx_ggml_ctx_t *c, const onnx_node_t *n) {
         onnx_attr_ints(n, "strides", strides, 2);
         onnx_attr_ints(n, "pads", pads, 4);
         onnx_attr_ints(n, "dilations", dilations, 2);
+        /* auto_pad */
+        char auto_pad[32] = "";
+        onnx_attr_str(n, "auto_pad", auto_pad, sizeof(auto_pad));
+        if (strcmp(auto_pad, "SAME_UPPER") == 0 || strcmp(auto_pad, "SAME_LOWER") == 0) {
+            for (int d = 0; d < 2; d++) {
+                int64_t in_d = (d == 0) ? a->ne[1] : a->ne[0]; /* H, W */
+                int64_t k_d = (d == 0) ? b->ne[1] : b->ne[0];
+                int64_t out_d = (in_d + strides[d] - 1) / strides[d];
+                int64_t eff_k = (k_d - 1) * dilations[d] + 1;
+                int64_t total_pad = (out_d - 1) * strides[d] + eff_k - in_d;
+                if (total_pad < 0) total_pad = 0;
+                pads[d]     = (strcmp(auto_pad, "SAME_LOWER") == 0) ?
+                              (total_pad + 1) / 2 : total_pad / 2;
+                pads[d + 2] = total_pad - pads[d];
+            }
+        }
 
         int ndims_kernel = ggml_n_dims(b);
         if (ndims_kernel <= 2) {
-            /* Conv1D: ggml_conv_1d(kernel, input, ...) */
             out = ggml_conv_1d(c->ctx, b, a,
                                (int)strides[0], (int)pads[0], (int)dilations[0]);
         } else {
-            /* Conv2D: ONNX strides=[sH,sW], pads=[pH,pW,...], dilations=[dH,dW].
-             * ggml conv_2d params: s0→ne[0]=W, s1→ne[1]=H.
-             * So s0=sW=strides[1], s1=sH=strides[0]. */
             out = ggml_conv_2d(c->ctx, b, a,
                                (int)strides[1], (int)strides[0],
                                (int)pads[1], (int)pads[0],

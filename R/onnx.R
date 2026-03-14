@@ -1,7 +1,7 @@
 # onnx.R — ONNX model inference via ggml backend
 #
 # Minimal API:
-#   onnx_load(path, device)  — load .onnx file, build ggml graph
+#   onnx_load(path, device, input_shapes)  — load .onnx file, build ggml graph
 #   onnx_summary(model)      — model metadata
 #   onnx_run(model, inputs)  — run inference
 #   onnx_inputs(model)       — list expected inputs and shapes
@@ -15,10 +15,15 @@
 #' @param path Path to .onnx file.
 #' @param device Backend device: \code{"vulkan"} (default if available)
 #'   or \code{"cpu"}.
+#' @param input_shapes Optional named list of integer vectors specifying
+#'   fixed shapes for inputs with dynamic dimensions. Names must match
+#'   input tensor names. Each shape must include all dimensions including
+#'   batch, e.g. \code{list(image = c(1L, 3L, 224L, 224L))}.
+#'   Required when the model has dynamic dimensions and no default shape.
 #' @return An opaque model object (external pointer) for use with
 #'   \code{onnx_run()}, \code{onnx_summary()}, and \code{onnx_inputs()}.
 #' @export
-onnx_load <- function(path, device = NULL) {
+onnx_load <- function(path, device = NULL, input_shapes = NULL) {
   path <- normalizePath(path, mustWork = TRUE)
 
   # Parse the ONNX protobuf
@@ -27,8 +32,30 @@ onnx_load <- function(path, device = NULL) {
   # Get summary before building (onnx_ptr gets consumed by build)
   info <- .Call("R_onnx_summary", onnx_ptr)
 
+  # Override input shapes if provided
+  if (!is.null(input_shapes)) {
+    stopifnot(is.list(input_shapes), !is.null(names(input_shapes)))
+    shape_names <- names(input_shapes)
+    shape_vals <- lapply(input_shapes, as.integer)
+    .Call("R_onnx_override_input_shapes", onnx_ptr, shape_names, shape_vals)
+  }
+
   # Build ggml graph + allocate on device
   ctx_ptr <- .Call("R_onnx_build", onnx_ptr, device)
+
+  # Check for remaining dynamic dimensions
+  inp <- .Call("R_onnx_inputs", ctx_ptr)
+  for (nm in names(inp)) {
+    if (any(inp[[nm]] < 0L)) {
+      dims_str <- paste(ifelse(inp[[nm]] < 0L, "?", inp[[nm]]), collapse = "x")
+      stop("Input '", nm, "' has dynamic shape [", dims_str, "]. ",
+           "Specify fixed shape via input_shapes parameter, e.g. ",
+           "onnx_load(\"", basename(path), "\", input_shapes = list(",
+           nm, " = c(1, 3, 224, 224))). ",
+           "Alternatively, re-export the model with static shapes.",
+           call. = FALSE)
+    }
+  }
 
   structure(
     list(

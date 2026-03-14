@@ -95,8 +95,7 @@ SEXP R_onnx_summary(SEXP model_ptr_) {
             }
         }
         if (!found && n_unique < 512) {
-            strncpy(unique_ops[n_unique], m->nodes[i].op_type, 127);
-            unique_ops[n_unique][127] = '\0';
+            snprintf(unique_ops[n_unique], 128, "%s", m->nodes[i].op_type);
             n_unique++;
         }
     }
@@ -203,6 +202,38 @@ SEXP R_onnx_run(SEXP ctx_ptr_, SEXP input_names_, SEXP input_data_) {
     Rf_setAttrib(result, R_NamesSymbol, out_names);
     UNPROTECT(2);
     return result;
+}
+
+/* ── R_onnx_override_input_shapes(model_ptr, names, shapes) ─────── */
+
+SEXP R_onnx_override_input_shapes(SEXP model_ptr_, SEXP names_, SEXP shapes_) {
+    onnx_model_t *m = (onnx_model_t *)R_ExternalPtrAddr(model_ptr_);
+    if (!m) Rf_error("onnx_override_input_shapes: NULL model pointer");
+
+    int n = Rf_length(names_);
+    for (int k = 0; k < n; k++) {
+        const char *name = CHAR(STRING_ELT(names_, k));
+        SEXP shape = VECTOR_ELT(shapes_, k);
+        int ndims = Rf_length(shape);
+
+        /* Find this input in model */
+        int found = 0;
+        for (int i = 0; i < m->n_inputs; i++) {
+            if (strcmp(m->inputs[i].name, name) == 0) {
+                /* Override dims */
+                m->inputs[i].n_dims = ndims > ONNX_MAX_DIMS ? ONNX_MAX_DIMS : ndims;
+                for (int d = 0; d < m->inputs[i].n_dims; d++) {
+                    m->inputs[i].dims[d] = (int64_t)INTEGER(shape)[d];
+                }
+                found = 1;
+                break;
+            }
+        }
+        if (!found) {
+            Rf_warning("onnx_load: input_shapes contains unknown input '%s'", name);
+        }
+    }
+    return R_NilValue;
 }
 
 /* ── R_onnx_inputs(ctx_ptr) — list model inputs info ────────────── */
