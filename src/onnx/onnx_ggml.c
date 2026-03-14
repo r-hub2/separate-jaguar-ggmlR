@@ -81,13 +81,15 @@ static int create_initializer_tensors(onnx_ggml_ctx_t *c) {
         onnx_initializer_t *init = &c->onnx->initializers[i];
         enum ggml_type type = onnx_dtype_to_ggml(init->data_type);
 
-        /* Use ONNX dims directly (no reversal).
-         * Data will be transposed from row-major to column-major during load. */
+        /* Reverse ONNX dims → ggml ne[].
+         * ONNX is row-major: dims[0]=outermost (batch/OC), dims[last]=innermost.
+         * ggml is column-major: ne[0]=innermost, ne[last]=outermost.
+         * So ne[i] = dims[ndims-1-i]. */
         int64_t ne[4] = {1, 1, 1, 1};
         int ndims = init->n_dims > 0 ? init->n_dims : 1;
         if (ndims > 4) ndims = 4;
-        for (int d = 0; d < init->n_dims && d < 4; d++) {
-            ne[d] = init->dims[d];
+        for (int d = 0; d < ndims; d++) {
+            ne[d] = init->dims[ndims - 1 - d];
         }
 
         struct ggml_tensor *t;
@@ -111,6 +113,9 @@ static int load_weights(onnx_ggml_ctx_t *c) {
         onnx_initializer_t *init = &c->onnx->initializers[i];
         struct ggml_tensor *t = tmap_get(c, init->name);
         if (!t) continue;
+        /* Skip tensors not in the graph (e.g. shape constants for Reshape) —
+         * they have no buffer allocated by the scheduler */
+        if (!t->buffer) continue;
 
         const void *data = NULL;
         size_t data_size = 0;
@@ -127,29 +132,9 @@ static int load_weights(onnx_ggml_ctx_t *c) {
             size_t tsize = ggml_nbytes(t);
             size_t elem_size = onnx_dtype_size(init->data_type);
 
-            /* For 2D+ tensors, transpose from ONNX row-major to ggml column-major.
-             * For 1D tensors, data is identical in both layouts. */
-            if (init->n_dims == 2 && elem_size > 0) {
-                int64_t rows = init->dims[0];
-                int64_t cols = init->dims[1];
-                size_t total = (size_t)(rows * cols) * elem_size;
-                if (total <= tsize) {
-                    uint8_t *tmp = malloc(total);
-                    if (tmp) {
-                        const uint8_t *src = (const uint8_t *)data;
-                        /* Transpose: src[i*cols+j] → dst[j*rows+i] */
-                        for (int64_t i = 0; i < rows; i++) {
-                            for (int64_t j = 0; j < cols; j++) {
-                                memcpy(tmp + (j * rows + i) * elem_size,
-                                       src + (i * cols + j) * elem_size,
-                                       elem_size);
-                            }
-                        }
-                        ggml_backend_tensor_set(t, tmp, 0, total);
-                        free(tmp);
-                    }
-                }
-            } else {
+            /* With reversed dims, ONNX row-major data maps directly to ggml
+             * column-major layout — no transposition needed. */
+            {
                 size_t copy_size = data_size < tsize ? data_size : tsize;
                 ggml_backend_tensor_set(t, data, 0, copy_size);
             }
@@ -170,9 +155,9 @@ static int create_input_tensors(onnx_ggml_ctx_t *c) {
         int64_t ne[4] = {1, 1, 1, 1};
         int ndims = vi->n_dims > 0 ? vi->n_dims : 1;
         if (ndims > 4) ndims = 4;
-        /* Use ONNX dims directly (no reversal) */
-        for (int d = 0; d < vi->n_dims && d < 4; d++) {
-            int64_t dim = vi->dims[d];
+        /* Reverse ONNX dims → ggml ne[] (row-major → column-major) */
+        for (int d = 0; d < ndims; d++) {
+            int64_t dim = vi->dims[ndims - 1 - d];
             if (dim <= 0) dim = 1; /* symbolic/dynamic dim → default 1 */
             ne[d] = dim;
         }
@@ -207,6 +192,15 @@ static int map_node(onnx_ggml_ctx_t *c, const onnx_node_t *n) {
 
     const char *op = n->op_type;
 
+    fprintf(stderr, "onnx_ggml: mapping op '%s'", op);
+    if (a) fprintf(stderr, " a=[%lld,%lld,%lld,%lld]",
+                   (long long)a->ne[0], (long long)a->ne[1],
+                   (long long)a->ne[2], (long long)a->ne[3]);
+    if (b) fprintf(stderr, " b=[%lld,%lld,%lld,%lld]",
+                   (long long)b->ne[0], (long long)b->ne[1],
+                   (long long)b->ne[2], (long long)b->ne[3]);
+    fprintf(stderr, "\n");
+
     /* ── Elementwise binary ─────────────────────────────────────── */
     if (strcmp(op, "Add") == 0) {
         if (!a || !b) return -1;
@@ -228,14 +222,13 @@ static int map_node(onnx_ggml_ctx_t *c, const onnx_node_t *n) {
     /* ── MatMul / Gemm ──────────────────────────────────────────── */
     else if (strcmp(op, "MatMul") == 0) {
         if (!a || !b) return -1;
-        /* ONNX MatMul(A[M,K], B[K,N]): result = A @ B.
-         * Stored with ONNX dims: A.ne=[M,K], B.ne=[K,N].
-         * Data transposed to column-major during load → correct values.
-         * ggml_mul_mat(a,b) contracts ne[0]: a.ne[0]==b.ne[0].
-         * B.ne[0]=K (contraction dim). A has K at ne[1].
-         * Transpose A to move K to ne[0]: ggml_mul_mat(B, A^T).
-         * Only 'a' (first arg) must be non-transposed → B is first. */
-        out = ggml_mul_mat(c->ctx, b, ggml_transpose(c->ctx, a));
+        /* ONNX MatMul(A[M,K], B[K,N]) → result [M,N].
+         * With reversed dims: A.ne=[K,M], B.ne=[N,K].
+         * ggml_mul_mat(a,b) contracts a.ne[0]==b.ne[0], result=[a.ne[1],b.ne[1]].
+         * Need contraction on K: transpose B → B^T.ne=[K,N].
+         * ggml_mul_mat(B^T, A): K==K ✓, result=[N,M] (= ONNX [M,N] reversed) ✓ */
+        struct ggml_tensor *bt = ggml_cont(c->ctx, ggml_transpose(c->ctx, b));
+        out = ggml_mul_mat(c->ctx, bt, a);
     }
     else if (strcmp(op, "Gemm") == 0) {
         if (!a || !b) return -1;
@@ -244,12 +237,12 @@ static int map_node(onnx_ggml_ctx_t *c, const onnx_node_t *n) {
         float alpha = onnx_attr_float(n, "alpha", 1.0f);
         float beta  = onnx_attr_float(n, "beta", 1.0f);
 
-        /* ONNX dims stored directly (no reversal), data transposed to col-major.
-         * A[M,K], B[K,N]. ggml_mul_mat(first, second) needs first.ne[0]==second.ne[0].
-         * Default (no trans): need to transpose A so K is at ne[0].
-         * B already has ne[0]=K. transA/transB flip this. */
-        struct ggml_tensor *ta = transA ? a : ggml_transpose(c->ctx, a);
-        struct ggml_tensor *tb = transB ? ggml_transpose(c->ctx, b) : b;
+        /* With reversed dims: A[M,K] → ne=[K,M], B[K,N] → ne=[N,K].
+         * Need ta with ne[0]=K (contraction), tb with ne[0]=K.
+         * Default: A already has K at ne[0]. B needs transpose.
+         * transA flips A dims, transB flips B dims. */
+        struct ggml_tensor *ta = transA ? ggml_cont(c->ctx, ggml_transpose(c->ctx, a)) : a;
+        struct ggml_tensor *tb = transB ? b : ggml_cont(c->ctx, ggml_transpose(c->ctx, b));
 
         out = ggml_mul_mat(c->ctx, tb, ta);
 
@@ -360,39 +353,64 @@ static int map_node(onnx_ggml_ctx_t *c, const onnx_node_t *n) {
             memcpy(shape, shape_init->decoded_data, ndims * sizeof(int64_t));
         }
 
-        /* Resolve -1 and 0 dims */
+        /* Resolve -1 and 0 dims (in ONNX order).
+         * shape[d]==0 means keep original ONNX dim d.
+         * We can get ONNX dim d from a->ne[ndims_a-1-d] (reversed). */
         int64_t total = ggml_nelements(a);
         int64_t product = 1;
         int neg_idx = -1;
+        int ndims_a = ggml_n_dims(a);
         for (int d = 0; d < ndims; d++) {
-            if (shape[d] == 0) shape[d] = (d < ggml_n_dims(a)) ?  a->ne[d] : 1;
+            if (shape[d] == 0) {
+                /* Map ONNX dim d → ggml ne index (reversed) */
+                int ggml_d = ndims_a - 1 - d;
+                shape[d] = (ggml_d >= 0 && ggml_d < ndims_a) ? a->ne[ggml_d] : 1;
+            }
             if (shape[d] == -1) neg_idx = d;
             else product *= shape[d];
         }
         if (neg_idx >= 0 && product > 0)
             shape[neg_idx] = total / product;
 
+        /* Reverse ONNX shape → ggml ne order for reshape */
+        int64_t ne[4] = {1, 1, 1, 1};
+        for (int d = 0; d < ndims; d++)
+            ne[d] = shape[ndims - 1 - d];
+
+        fprintf(stderr, "  Reshape: a.nel=%lld → ggml ne=[%lld,%lld,%lld,%lld] (ndims=%d)\n",
+                (long long)total, (long long)ne[0], (long long)ne[1],
+                (long long)ne[2], (long long)ne[3], ndims);
+
         switch (ndims) {
-            case 1: out = ggml_reshape_1d(c->ctx, a, shape[0]); break;
-            case 2: out = ggml_reshape_2d(c->ctx, a, shape[1], shape[0]); break;
-            case 3: out = ggml_reshape_3d(c->ctx, a, shape[2], shape[1], shape[0]); break;
-            case 4: out = ggml_reshape_4d(c->ctx, a, shape[3], shape[2], shape[1], shape[0]); break;
-            default: out = ggml_reshape_2d(c->ctx, a, shape[ndims-1], total / shape[ndims-1]); break;
+            case 1: out = ggml_reshape_1d(c->ctx, a, ne[0]); break;
+            case 2: out = ggml_reshape_2d(c->ctx, a, ne[0], ne[1]); break;
+            case 3: out = ggml_reshape_3d(c->ctx, a, ne[0], ne[1], ne[2]); break;
+            case 4: out = ggml_reshape_4d(c->ctx, a, ne[0], ne[1], ne[2], ne[3]); break;
+            default: out = ggml_reshape_2d(c->ctx, a, ne[0], total / ne[0]); break;
         }
     }
     else if (strcmp(op, "Transpose") == 0) {
         if (!a) return -1;
-        /* Default: reverse all dims. For 2D this is standard transpose. */
         int64_t perm[4];
         int n_perm = onnx_attr_ints(n, "perm", perm, 4);
-        if (n_perm == 0 || ggml_n_dims(a) == 2) {
-            out = ggml_transpose(c->ctx, a);
+        int nd = ggml_n_dims(a);
+        if (n_perm == 0 || nd == 2) {
+            /* Default: reverse all dims → standard transpose */
+            out = ggml_cont(c->ctx, ggml_transpose(c->ctx, a));
         } else {
-            /* General permute */
+            /* Convert ONNX perm to ggml permute axes.
+             * ONNX perm[i]=j means output ONNX dim i ← input ONNX dim j.
+             * ggml ax[k] means output ggml dim k ← input ggml dim ax[k].
+             * ONNX dim i → ggml dim (nd-1-i).
+             * So: ax[nd-1-i] = nd-1-perm[i]. */
             int ax[4] = {0, 1, 2, 3};
-            for (int d = 0; d < n_perm && d < 4; d++)
-                ax[d] = (int)perm[d];
-            out = ggml_permute(c->ctx, a, ax[0], ax[1], ax[2], ax[3]);
+            for (int i = 0; i < n_perm && i < nd; i++) {
+                int ggml_out = nd - 1 - i;
+                int ggml_in  = nd - 1 - (int)perm[i];
+                if (ggml_out >= 0 && ggml_out < 4 && ggml_in >= 0 && ggml_in < 4)
+                    ax[ggml_out] = ggml_in;
+            }
+            out = ggml_cont(c->ctx, ggml_permute(c->ctx, a, ax[0], ax[1], ax[2], ax[3]));
         }
     }
     else if (strcmp(op, "Flatten") == 0) {
@@ -410,11 +428,11 @@ static int map_node(onnx_ggml_ctx_t *c, const onnx_node_t *n) {
     else if (strcmp(op, "Concat") == 0) {
         if (!a || !b) return -1;
         int64_t axis = onnx_attr_int(n, "axis", 0);
-        /* ggml_concat concatenates along dim 2 by default.
-         * Map ONNX axis to ggml dim. */
-        int dim = (int)axis;
-        if (dim < 0) dim = ggml_n_dims(a) + dim;
-        /* ggml concat: dim parameter */
+        int nd = ggml_n_dims(a);
+        /* Convert ONNX axis to ggml dim (reversed) */
+        int onnx_axis = (int)axis;
+        if (onnx_axis < 0) onnx_axis = nd + onnx_axis;
+        int dim = nd - 1 - onnx_axis;
         out = ggml_concat(c->ctx, a, b, dim);
     }
 
@@ -433,9 +451,22 @@ static int map_node(onnx_ggml_ctx_t *c, const onnx_node_t *n) {
         struct ggml_tensor *mean  = get_input(c, n, 3);
         struct ggml_tensor *var   = get_input(c, n, 4);
 
+        /* With reversed dims, input [N,C,H,W] → ggml [W,H,C,N].
+         * BN params [C] → ggml ne[0]=C. Need reshape to [1,1,C,1]
+         * for broadcast over [W,H,C,N]. For 2D input [N,C] → ggml [C,N],
+         * params [C] broadcast fine (ne[0]=C matches). */
+        int nd = ggml_n_dims(a);
+        if (nd > 2) {
+            /* Reshape channel params [C] → [1,1,C,1] for spatial broadcast */
+            int64_t ch = ggml_nelements(mean);
+            if (mean)  mean  = ggml_reshape_4d(c->ctx, mean,  1, 1, ch, 1);
+            if (var)   var   = ggml_reshape_4d(c->ctx, var,   1, 1, ch, 1);
+            if (scale) scale = ggml_reshape_4d(c->ctx, scale, 1, 1, ch, 1);
+            if (bias)  bias  = ggml_reshape_4d(c->ctx, bias,  1, 1, ch, 1);
+        }
+
         /* x_norm = (x - mean) / sqrt(var + eps) */
         out = ggml_sub(c->ctx, a, mean);
-        /* var + eps, then sqrt */
         struct ggml_tensor *eps_t = ggml_new_f32(c->ctx, eps);
         struct ggml_tensor *std = ggml_sqrt(c->ctx, ggml_add(c->ctx, var, eps_t));
         out = ggml_div(c->ctx, out, std);
@@ -445,9 +476,12 @@ static int map_node(onnx_ggml_ctx_t *c, const onnx_node_t *n) {
     else if (strcmp(op, "LayerNormalization") == 0) {
         if (!a) return -1;
         float eps = onnx_attr_float(n, "epsilon", 1e-5f);
-        out = ggml_norm(c->ctx, a, eps);
         struct ggml_tensor *scale = get_input(c, n, 1);
         struct ggml_tensor *bias  = get_input(c, n, 2);
+
+        /* With reversed dims, ONNX last axis (normalized) = ggml ne[0].
+         * ggml_norm normalizes over ne[0] — exactly what we need. */
+        out = ggml_norm(c->ctx, a, eps);
         if (scale) out = ggml_mul(c->ctx, out, scale);
         if (bias)  out = ggml_add(c->ctx, out, bias);
     }
@@ -458,6 +492,13 @@ static int map_node(onnx_ggml_ctx_t *c, const onnx_node_t *n) {
         out = ggml_group_norm(c->ctx, a, (int)num_groups, eps);
         struct ggml_tensor *scale = get_input(c, n, 1);
         struct ggml_tensor *bias  = get_input(c, n, 2);
+        /* Reshape [C] → [1,1,C,1] for broadcast over [W,H,C,N] */
+        int nd = ggml_n_dims(a);
+        if (nd > 2) {
+            int64_t ch = ggml_nelements(scale ? scale : bias);
+            if (scale) scale = ggml_reshape_4d(c->ctx, scale, 1, 1, ch, 1);
+            if (bias)  bias  = ggml_reshape_4d(c->ctx, bias,  1, 1, ch, 1);
+        }
         if (scale) out = ggml_mul(c->ctx, out, scale);
         if (bias)  out = ggml_add(c->ctx, out, bias);
     }
@@ -474,10 +515,15 @@ static int map_node(onnx_ggml_ctx_t *c, const onnx_node_t *n) {
         onnx_attr_ints(n, "kernel_shape", kshape, 2);
         onnx_attr_ints(n, "strides", strides, 2);
         onnx_attr_ints(n, "pads", pads, 4);
+        /* ONNX: kernel_shape=[kH,kW], strides=[sH,sW], pads=[pH,pW,...].
+         * ggml: k0→ne[0]=W, k1→ne[1]=H. So k0=kW, k1=kH. */
+        fprintf(stderr, "  MaxPool: kernel=[%lld,%lld] strides=[%lld,%lld]\n",
+                (long long)kshape[0], (long long)kshape[1],
+                (long long)strides[0], (long long)strides[1]);
         out = ggml_pool_2d(c->ctx, a, GGML_OP_POOL_MAX,
-                           (int)kshape[0], (int)kshape[1],
-                           (int)strides[0], (int)strides[1],
-                           (int)pads[0], (int)pads[1]);
+                           (int)kshape[1], (int)kshape[0],
+                           (int)strides[1], (int)strides[0],
+                           (int)pads[1], (int)pads[0]);
     }
     else if (strcmp(op, "AveragePool") == 0) {
         if (!a) return -1;
@@ -486,9 +532,9 @@ static int map_node(onnx_ggml_ctx_t *c, const onnx_node_t *n) {
         onnx_attr_ints(n, "strides", strides, 2);
         onnx_attr_ints(n, "pads", pads, 4);
         out = ggml_pool_2d(c->ctx, a, GGML_OP_POOL_AVG,
-                           (int)kshape[0], (int)kshape[1],
-                           (int)strides[0], (int)strides[1],
-                           (int)pads[0], (int)pads[1]);
+                           (int)kshape[1], (int)kshape[0],
+                           (int)strides[1], (int)strides[0],
+                           (int)pads[1], (int)pads[0]);
     }
     else if (strcmp(op, "GlobalAveragePool") == 0) {
         if (!a) return -1;
@@ -508,20 +554,30 @@ static int map_node(onnx_ggml_ctx_t *c, const onnx_node_t *n) {
         onnx_attr_ints(n, "dilations", dilations, 2);
 
         int ndims_kernel = ggml_n_dims(b);
-        if (ndims_kernel <= 3) {
-            /* Conv1D */
+        if (ndims_kernel <= 2) {
+            /* Conv1D: ggml_conv_1d(kernel, input, ...) */
             out = ggml_conv_1d(c->ctx, b, a,
                                (int)strides[0], (int)pads[0], (int)dilations[0]);
         } else {
-            /* Conv2D */
+            /* Conv2D: ONNX strides=[sH,sW], pads=[pH,pW,...], dilations=[dH,dW].
+             * ggml conv_2d params: s0→ne[0]=W, s1→ne[1]=H.
+             * So s0=sW=strides[1], s1=sH=strides[0]. */
             out = ggml_conv_2d(c->ctx, b, a,
-                               (int)strides[0], (int)strides[1],
-                               (int)pads[0], (int)pads[1],
-                               (int)dilations[0], (int)dilations[1]);
+                               (int)strides[1], (int)strides[0],
+                               (int)pads[1], (int)pads[0],
+                               (int)dilations[1], (int)dilations[0]);
         }
-        /* Add bias if present */
+        /* Add bias if present — reshape bias [C] to [1,1,C,1] for broadcast */
         struct ggml_tensor *bias = get_input(c, n, 2);
-        if (bias) out = ggml_add(c->ctx, out, bias);
+        if (bias) {
+            /* With reversed dims, output is [W,H,C_out,N].
+             * Bias is [C_out] (1D). ggml_add broadcasts: bias ne[0]=C_out
+             * must match out ne[0]=W — doesn't match.
+             * Need to reshape bias to [1,1,C_out,1] so it broadcasts over C dim. */
+            int64_t c_out = ggml_nelements(bias);
+            struct ggml_tensor *bias_4d = ggml_reshape_4d(c->ctx, bias, 1, 1, c_out, 1);
+            out = ggml_add(c->ctx, out, bias_4d);
+        }
     }
 
     /* ── Reduction ──────────────────────────────────────────────── */
@@ -605,7 +661,11 @@ onnx_ggml_ctx_t *onnx_ggml_build(onnx_model_t *onnx, const char *device) {
         }
     }
 
-    /* Choose backend */
+    /* Choose backends — always have CPU, optionally add Vulkan */
+    c->backend_cpu = ggml_backend_cpu_init();
+    if (!c->backend_cpu) goto fail;
+
+    c->backend_gpu = NULL;
     int use_vulkan = 0;
     if (device == NULL || strcmp(device, "vulkan") == 0) {
 #ifdef GGML_USE_VULKAN
@@ -619,20 +679,33 @@ onnx_ggml_ctx_t *onnx_ggml_build(onnx_model_t *onnx, const char *device) {
 
     if (use_vulkan) {
 #ifdef GGML_USE_VULKAN
-        c->backend = ggml_backend_vk_init(0);
-        if (!c->backend) {
-            fprintf(stderr, "onnx_ggml: Vulkan init failed, falling back to CPU\n");
-            c->backend = ggml_backend_cpu_init();
+        c->backend_gpu = ggml_backend_vk_init(0);
+        if (!c->backend_gpu) {
+            fprintf(stderr, "onnx_ggml: Vulkan init failed, using CPU only\n");
         }
 #endif
-    } else {
-        c->backend = ggml_backend_cpu_init();
     }
-    if (!c->backend) goto fail;
 
-    /* Allocate buffer */
-    c->buffer = ggml_backend_alloc_ctx_tensors(c->ctx, c->backend);
-    if (!c->buffer) goto fail;
+    /* Create scheduler with CPU fallback */
+    {
+        ggml_backend_t backends[2];
+        int n_backends = 0;
+        if (c->backend_gpu) {
+            backends[n_backends++] = c->backend_gpu;
+        }
+        backends[n_backends++] = c->backend_cpu;
+
+        c->sched = ggml_backend_sched_new(
+            backends, NULL, n_backends,
+            GGML_DEFAULT_GRAPH_SIZE,
+            false,  /* parallel */
+            true    /* op_offload — let sched pick best backend per op */
+        );
+        if (!c->sched) goto fail;
+    }
+
+    /* Allocate graph buffers via scheduler */
+    if (!ggml_backend_sched_alloc_graph(c->sched, c->graph)) goto fail;
 
     /* Load weights into allocated tensors */
     if (load_weights(c) != 0) goto fail;
@@ -647,7 +720,8 @@ fail:
 int onnx_ggml_run(onnx_ggml_ctx_t *ctx,
                   const char **input_names, const float **input_data,
                   int n_inputs) {
-    /* Set input data — R passes row-major data, ggml needs column-major */
+    /* Set input data — with reversed dims, row-major data maps directly
+     * to ggml column-major layout, no transposition needed. */
     for (int i = 0; i < n_inputs; i++) {
         struct ggml_tensor *t = tmap_get(ctx, input_names[i]);
         if (!t) {
@@ -655,28 +729,12 @@ int onnx_ggml_run(onnx_ggml_ctx_t *ctx,
             return -1;
         }
         size_t nbytes = ggml_nbytes(t);
-        int ndims = ggml_n_dims(t);
-
-        if (ndims == 2 && t->ne[0] > 1 && t->ne[1] > 1) {
-            /* Transpose 2D input from row-major to column-major */
-            int64_t rows = t->ne[0], cols = t->ne[1];
-            size_t elem_size = sizeof(float);
-            float *tmp = malloc(nbytes);
-            if (tmp) {
-                for (int64_t r = 0; r < rows; r++)
-                    for (int64_t cc = 0; cc < cols; cc++)
-                        tmp[cc * rows + r] = input_data[i][r * cols + cc];
-                ggml_backend_tensor_set(t, tmp, 0, nbytes);
-                free(tmp);
-            }
-        } else {
-            ggml_backend_tensor_set(t, input_data[i], 0, nbytes);
-        }
+        ggml_backend_tensor_set(t, input_data[i], 0, nbytes);
     }
 
-    /* Compute */
-    if (!ctx->graph) return -1;
-    enum ggml_status status = ggml_backend_graph_compute(ctx->backend, ctx->graph);
+    /* Compute via scheduler (handles CPU fallback for unsupported ops) */
+    if (!ctx->graph || !ctx->sched) return -1;
+    enum ggml_status status = ggml_backend_sched_graph_compute(ctx->sched, ctx->graph);
     return (status == GGML_STATUS_SUCCESS) ? 0 : -1;
 }
 
@@ -688,8 +746,9 @@ struct ggml_tensor *onnx_ggml_output(onnx_ggml_ctx_t *ctx, int index) {
 
 void onnx_ggml_free(onnx_ggml_ctx_t *ctx) {
     if (!ctx) return;
-    if (ctx->buffer)  ggml_backend_buffer_free(ctx->buffer);
-    if (ctx->backend) ggml_backend_free(ctx->backend);
+    if (ctx->sched)       ggml_backend_sched_free(ctx->sched);
+    if (ctx->backend_gpu) ggml_backend_free(ctx->backend_gpu);
+    if (ctx->backend_cpu) ggml_backend_free(ctx->backend_cpu);
     if (ctx->ctx)     ggml_free(ctx->ctx);
     free(ctx->tensor_map_keys);
     free(ctx->tensor_map_vals);

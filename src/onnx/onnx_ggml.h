@@ -20,8 +20,11 @@ typedef struct {
     onnx_model_t       *onnx;        /* parsed ONNX model (owns mmap) */
     struct ggml_context *ctx;         /* ggml context for tensors */
     struct ggml_cgraph  *graph;       /* computation graph */
-    ggml_backend_t       backend;     /* compute backend (Vulkan or CPU) */
-    ggml_backend_buffer_t buffer;     /* buffer for weights + compute */
+
+    /* Scheduler with CPU fallback for unsupported Vulkan ops */
+    ggml_backend_sched_t sched;       /* scheduler (owns buffer allocation) */
+    ggml_backend_t       backend_gpu; /* Vulkan backend (NULL if CPU-only) */
+    ggml_backend_t       backend_cpu; /* CPU backend (always present) */
 
     /* Name → ggml_tensor lookup for wiring nodes */
     struct ggml_tensor **tensor_map_vals;

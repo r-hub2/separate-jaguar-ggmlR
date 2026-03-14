@@ -182,12 +182,12 @@ SEXP R_onnx_run(SEXP ctx_ptr_, SEXP input_names_, SEXP input_data_) {
                 rdata[j] = (double)buf[j];
             }
 
-            /* Set dim attribute based on tensor shape */
+            /* Set dim attribute in ONNX order (reverse ggml ne[]) */
             int ndims = ggml_n_dims(t);
             if (ndims > 1) {
                 SEXP dim = PROTECT(Rf_allocVector(INTSXP, ndims));
                 for (int d = 0; d < ndims; d++) {
-                    INTEGER(dim)[d] = (int)t->ne[d];
+                    INTEGER(dim)[d] = (int)t->ne[ndims - 1 - d];
                 }
                 Rf_setAttrib(vec, R_DimSymbol, dim);
                 UNPROTECT(1);
@@ -227,7 +227,7 @@ SEXP R_onnx_inputs(SEXP ctx_ptr_) {
 
         SET_STRING_ELT(names, idx, Rf_mkChar(vi->name));
 
-        /* Shape vector */
+        /* Shape vector — return in ONNX order (not reversed) */
         SEXP shape = PROTECT(Rf_allocVector(INTSXP, vi->n_dims));
         for (int d = 0; d < vi->n_dims; d++) {
             INTEGER(shape)[d] = (int)vi->dims[d];
