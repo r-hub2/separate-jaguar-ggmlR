@@ -193,16 +193,7 @@ static int map_node(onnx_ggml_ctx_t *c, const onnx_node_t *n) {
 
     const char *op = n->op_type;
 
-    fprintf(stderr, "onnx_ggml: mapping op '%s'", op);
-    if (a) fprintf(stderr, " a=[%lld,%lld,%lld,%lld]",
-                   (long long)a->ne[0], (long long)a->ne[1],
-                   (long long)a->ne[2], (long long)a->ne[3]);
-    if (b) fprintf(stderr, " b=[%lld,%lld,%lld,%lld]",
-                   (long long)b->ne[0], (long long)b->ne[1],
-                   (long long)b->ne[2], (long long)b->ne[3]);
-    fprintf(stderr, "\n");
-
-    /* ── Elementwise binary ─────────────────────────────────────── */
+/* ── Elementwise binary ─────────────────────────────────────── */
     if (strcmp(op, "Add") == 0) {
         if (!a || !b) return -1;
         /* ggml_add requires b broadcastable into a — swap if a is smaller */
@@ -384,10 +375,6 @@ static int map_node(onnx_ggml_ctx_t *c, const onnx_node_t *n) {
         int64_t ne[4] = {1, 1, 1, 1};
         for (int d = 0; d < ndims; d++)
             ne[d] = shape[ndims - 1 - d];
-
-        fprintf(stderr, "  Reshape: [%lld] → [%lld,%lld,%lld,%lld]\n",
-                (long long)total, (long long)ne[0], (long long)ne[1],
-                (long long)ne[2], (long long)ne[3]);
 
         switch (ndims) {
             case 1: out = ggml_reshape_1d(c->ctx, a, ne[0]); break;
