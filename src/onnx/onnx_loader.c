@@ -94,7 +94,7 @@ static void pb_skip(pb_reader_t *r, int wire_type) {
     switch (wire_type) {
         case PB_WIRE_VARINT: pb_read_varint(r); break;
         case PB_WIRE_64BIT:  r->cur += 8; break;
-        case PB_WIRE_32BIT:  r->cur += 5; break; /* group end (deprecated) */
+        case PB_WIRE_32BIT:  r->cur += 4; break; /* fixed32 (4 bytes) */
         case PB_WIRE_LEN: {
             uint64_t len = pb_read_varint(r);
             r->cur += len;
@@ -174,7 +174,7 @@ static void onnx_munmap(uint8_t *data, size_t size, int fd) {
 #define TP_STRING_DATA 6   /* repeated bytes */
 #define TP_INT64_DATA  7   /* repeated int64, packed */
 #define TP_NAME        8   /* string */
-#define TP_RAW_DATA   13   /* bytes */
+#define TP_RAW_DATA    9   /* bytes (field 9 in onnx.proto3) */
 #define TP_DOUBLE_DATA 10  /* repeated double, packed */
 #define TP_UINT64_DATA 11  /* repeated uint64, packed */
 #define TP_EXTERNAL    14  /* repeated ExternalData */
@@ -351,6 +351,15 @@ static int parse_attr(pb_reader_t *r, onnx_attr_t *a) {
                     a->s_len  = (size_t)len;
                 }
                 r->cur += len;
+                break;
+            }
+            case AP_T: {
+                /* TensorProto — used by Constant op */
+                pb_reader_t sub;
+                pb_read_submsg(r, &sub);
+                a->tensor = (onnx_initializer_t *)calloc(1, sizeof(onnx_initializer_t));
+                if (a->tensor)
+                    parse_tensor_proto(&sub, a->tensor);
                 break;
             }
             case AP_INTS: {
@@ -692,11 +701,16 @@ void onnx_free(onnx_model_t *m) {
             free(m->initializers[i].decoded_data);
     }
 
-    /* Free attribute ints arrays (allocated during parsing) */
+    /* Free attribute data (allocated during parsing) */
     for (int i = 0; i < m->n_nodes; i++) {
         for (int j = 0; j < m->nodes[i].n_attrs; j++) {
             if (m->nodes[i].attrs[j].ints)
                 free((void *)m->nodes[i].attrs[j].ints);
+            if (m->nodes[i].attrs[j].tensor) {
+                if (m->nodes[i].attrs[j].tensor->decoded_data)
+                    free(m->nodes[i].attrs[j].tensor->decoded_data);
+                free(m->nodes[i].attrs[j].tensor);
+            }
         }
     }
 

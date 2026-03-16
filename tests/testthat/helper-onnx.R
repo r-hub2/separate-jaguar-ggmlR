@@ -93,7 +93,7 @@
 }
 
 # TensorProto (field 1 = dims repeated, field 2 = data_type,
-#              field 8 = name, field 13 = raw_data)
+#              field 8 = name, field 9 = raw_data)
 .onnx_tensor <- function(name, dims, data_type = 1L, raw_data = raw(0)) {
   out <- raw(0)
   # dims (field 1, varint, packed would be better but repeated varint works)
@@ -103,7 +103,7 @@
   out <- c(out, .pb_varint_field(2L, data_type))
   out <- c(out, .pb_string(8L, name))
   if (length(raw_data) > 0) {
-    out <- c(out, .pb_bytes(13L, raw_data))
+    out <- c(out, .pb_bytes(9L, raw_data))
   }
   out
 }
@@ -129,6 +129,15 @@
     out <- c(out, .pb_varint_field(8L, v))  # ints (repeated)
   }
   out <- c(out, .pb_varint_field(20L, 7L))     # type = INTS
+  out
+}
+
+# AttributeProto with TensorProto value (field 5 = t, type 20 = 4 TENSOR)
+.onnx_attr_tensor <- function(name, dims, data_type = 1L, raw_data = raw(0)) {
+  out <- .pb_string(1L, name)   # name
+  tensor <- .onnx_tensor("", dims, data_type, raw_data)
+  out <- c(out, .pb_bytes(5L, tensor))  # t (field 5)
+  out <- c(out, .pb_varint_field(20L, 4L))  # type = TENSOR
   out
 }
 
@@ -317,8 +326,19 @@
   shape_tensor <- .onnx_tensor("shape", length(output_dims), 7L, shape_raw)
   shape_vi <- .onnx_value_info("shape", 7L, length(output_dims))
 
-  total <- prod(output_dims)
-  outp <- .onnx_value_info("Y", 1L, output_dims)
+  # Resolve -1 and 0 for output value_info (protobuf can't encode negative varints)
+  resolved <- output_dims
+  total_in <- prod(input_dims)
+  neg_idx <- which(resolved == -1L)
+  zero_idx <- which(resolved == 0L)
+  if (length(zero_idx) > 0) {
+    for (i in zero_idx) resolved[i] <- input_dims[i]
+  }
+  if (length(neg_idx) == 1) {
+    known <- prod(resolved[-neg_idx])
+    resolved[neg_idx] <- total_in / known
+  }
+  outp <- .onnx_value_info("Y", 1L, resolved)
   node <- .onnx_node("Reshape", c("X", "shape"), "Y")
 
   graph <- .onnx_graph("test", list(node),

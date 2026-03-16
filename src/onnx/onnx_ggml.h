@@ -29,14 +29,52 @@ typedef struct {
     /* Name → ggml_tensor lookup for wiring nodes */
     struct ggml_tensor **tensor_map_vals;
     char              (*tensor_map_keys)[ONNX_MAX_NAME];
+    int                *tensor_map_ndims;  /* original ONNX ndims (for >4D axis mapping) */
+    int64_t           (*tensor_map_onnx_ne)[ONNX_MAX_DIMS]; /* full ONNX shape (up to 8D) */
     int                 tensor_map_size;
     int                 tensor_map_cap;
+
+    /* Deferred data for Shape op outputs (filled after sched alloc) */
+    struct ggml_tensor *shape_tensor_ptrs[64];
+    int64_t             shape_tensors_ne[64][ONNX_MAX_DIMS + 1]; /* [0]=ndims, [1..]=dims */
+    int                 n_shape_tensors;
+
+    /* Deferred data for ConstantOfShape + scalar constants (filled after sched alloc) */
+    struct ggml_tensor *const_fill_ptrs[256];
+    float               const_fill_vals[256];
+    int                 n_const_fills;
+
+    /* Deferred data for EyeLike (identity matrix, filled after sched alloc) */
+    struct ggml_tensor *eye_fill_ptrs[64];
+    int                 eye_fill_rows[64]; /* ggml ne[1] */
+    int                 eye_fill_cols[64]; /* ggml ne[0] */
+    int                 eye_fill_k[64];    /* diagonal offset */
+    int                 n_eye_fills;
+
+    /* Deferred strided Slice (step != 1): copy src→dst with stride after alloc */
+    struct ggml_tensor *slice_fill_src[64];
+    struct ggml_tensor *slice_fill_dst[64];
+    int64_t             slice_fill_starts[64][4];  /* per-ggml-dim start offsets */
+    int64_t             slice_fill_steps[64][4];   /* per-ggml-dim step values */
+    int64_t             slice_fill_out_ne[64][4];  /* output ne per ggml dim */
+    int                 slice_fill_ndims[64];      /* onnx ndims */
+    int                 n_slice_fills;
+
+    /* Compile-time known values for shape tensors (Shape, Constant, Slice, Concat outputs).
+     * Used by Reshape/Expand/etc. to determine target shape at graph build time. */
+    char              (*cval_keys)[ONNX_MAX_NAME];
+    int64_t           (*cval_data)[ONNX_MAX_DIMS]; /* values (not dims!) */
+    int                *cval_lens;                  /* number of values */
+    int                 cval_size;
+    int                 cval_cap;
+
+    int                 is_allocated;   /* 1 after first sched_alloc_and_load */
 } onnx_ggml_ctx_t;
 
 /* Build ggml graph from parsed ONNX model.
  * device: "vulkan" or "cpu" (NULL defaults to vulkan if available, else cpu).
  * Returns NULL on failure. */
-onnx_ggml_ctx_t *onnx_ggml_build(onnx_model_t *onnx, const char *device);
+onnx_ggml_ctx_t *onnx_ggml_build(onnx_model_t *onnx, const char *device, int n_threads);
 
 /* Run inference. input_data/input_names: arrays of length n_inputs.
  * Each input_data[i] is a flat float array matching the model input shape.
