@@ -7,6 +7,8 @@
 #include "ggml-backend.h"
 #include "ggml-cpu.h"
 
+extern int ggmlR_get_n_threads(void);
+
 // ============================================================================
 // Backend Scheduler Functions
 // ============================================================================
@@ -54,6 +56,7 @@ SEXP R_ggml_backend_sched_new(SEXP backends_list, SEXP parallel, SEXP graph_size
         free(backends);
         error("Failed to initialize CPU backend");
     }
+    ggml_backend_cpu_set_n_threads(backends[n_backends - 1], ggmlR_get_n_threads());
 
     // Create scheduler
     // bufts = NULL means use default buffer types for each backend
