@@ -5,7 +5,19 @@
 #include <Rinternals.h>
 #include "ggml.h"
 #include "ggml-backend.h"
+#include "ggml-cpu.h"
 #include "ggml-opt.h"
+
+extern int ggmlR_get_n_threads(void);
+
+// Sync CPU backend thread count in scheduler before compute
+static void opt_sync_cpu_threads(ggml_backend_sched_t sched) {
+    int n = ggml_backend_sched_get_n_backends(sched);
+    ggml_backend_t cpu = ggml_backend_sched_get_backend(sched, n - 1);
+    if (ggml_backend_is_cpu(cpu)) {
+        ggml_backend_cpu_set_n_threads(cpu, ggmlR_get_n_threads());
+    }
+}
 
 // ============================================================================
 // Loss Type Constants
@@ -224,6 +236,8 @@ SEXP R_ggml_opt_init(SEXP sched_ptr, SEXP loss_type, SEXP optimizer_type, SEXP o
     if (outputs_ptr != R_NilValue) {
         params.outputs = (struct ggml_tensor *)R_ExternalPtrAddr(outputs_ptr);
     }
+
+    opt_sync_cpu_threads(sched);
 
     ggml_opt_context_t opt_ctx = ggml_opt_init(params);
 
@@ -617,6 +631,8 @@ SEXP R_ggml_opt_fit(SEXP sched_ptr, SEXP ctx_compute_ptr,
     ggml_opt_result_t result_val   = ggml_opt_result_init();
 
     ggml_opt_epoch_callback epoch_callback = is_silent ? NULL : ggml_opt_epoch_callback_progress_bar;
+
+    opt_sync_cpu_threads(sched);
 
     // Allocate history arrays
     double * hist_train_loss = (double *)R_alloc(n_epoch, sizeof(double));

@@ -244,6 +244,16 @@ SEXP R_ggml_backend_sched_alloc_graph(SEXP sched_ptr, SEXP graph_ptr) {
     return ScalarLogical(success);
 }
 
+// Update CPU backend thread count from current ggmlR setting
+static void sched_sync_cpu_threads(ggml_backend_sched_t sched) {
+    int n = ggml_backend_sched_get_n_backends(sched);
+    // CPU backend is always last in the scheduler
+    ggml_backend_t cpu = ggml_backend_sched_get_backend(sched, n - 1);
+    if (ggml_backend_is_cpu(cpu)) {
+        ggml_backend_cpu_set_n_threads(cpu, ggmlR_get_n_threads());
+    }
+}
+
 // Compute graph using scheduler (distributes work across backends)
 SEXP R_ggml_backend_sched_graph_compute(SEXP sched_ptr, SEXP graph_ptr) {
     ggml_backend_sched_t sched = (ggml_backend_sched_t)R_ExternalPtrAddr(sched_ptr);
@@ -256,6 +266,7 @@ SEXP R_ggml_backend_sched_graph_compute(SEXP sched_ptr, SEXP graph_ptr) {
         error("Invalid graph pointer");
     }
 
+    sched_sync_cpu_threads(sched);
     enum ggml_status status = ggml_backend_sched_graph_compute(sched, graph);
 
     return ScalarInteger((int)status);
@@ -273,6 +284,7 @@ SEXP R_ggml_backend_sched_graph_compute_async(SEXP sched_ptr, SEXP graph_ptr) {
         error("Invalid graph pointer");
     }
 
+    sched_sync_cpu_threads(sched);
     enum ggml_status status = ggml_backend_sched_graph_compute_async(sched, graph);
 
     return ScalarInteger((int)status);
