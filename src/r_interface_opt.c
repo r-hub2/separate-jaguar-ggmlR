@@ -10,12 +10,15 @@
 
 extern int ggmlR_get_n_threads(void);
 
-// Sync CPU backend thread count in scheduler before compute
+// Update all CPU backends in scheduler with current ggmlR thread setting
 static void opt_sync_cpu_threads(ggml_backend_sched_t sched) {
+    int n_threads = ggmlR_get_n_threads();
     int n = ggml_backend_sched_get_n_backends(sched);
-    ggml_backend_t cpu = ggml_backend_sched_get_backend(sched, n - 1);
-    if (ggml_backend_is_cpu(cpu)) {
-        ggml_backend_cpu_set_n_threads(cpu, ggmlR_get_n_threads());
+    for (int i = 0; i < n; i++) {
+        ggml_backend_t b = ggml_backend_sched_get_backend(sched, i);
+        if (ggml_backend_is_cpu(b)) {
+            ggml_backend_cpu_set_n_threads(b, n_threads);
+        }
     }
 }
 

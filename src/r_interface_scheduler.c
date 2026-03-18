@@ -244,13 +244,15 @@ SEXP R_ggml_backend_sched_alloc_graph(SEXP sched_ptr, SEXP graph_ptr) {
     return ScalarLogical(success);
 }
 
-// Update CPU backend thread count from current ggmlR setting
+// Update all CPU backends in scheduler with current ggmlR thread setting
 static void sched_sync_cpu_threads(ggml_backend_sched_t sched) {
+    int n_threads = ggmlR_get_n_threads();
     int n = ggml_backend_sched_get_n_backends(sched);
-    // CPU backend is always last in the scheduler
-    ggml_backend_t cpu = ggml_backend_sched_get_backend(sched, n - 1);
-    if (ggml_backend_is_cpu(cpu)) {
-        ggml_backend_cpu_set_n_threads(cpu, ggmlR_get_n_threads());
+    for (int i = 0; i < n; i++) {
+        ggml_backend_t b = ggml_backend_sched_get_backend(sched, i);
+        if (ggml_backend_is_cpu(b)) {
+            ggml_backend_cpu_set_n_threads(b, n_threads);
+        }
     }
 }
 
