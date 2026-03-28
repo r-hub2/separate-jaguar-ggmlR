@@ -1,19 +1,18 @@
 #!/usr/bin/env Rscript
 # ============================================================================
-# ONNX Model Benchmark: GPU (Vulkan) vs CPU inference speed
+# ONNX Benchmark: GPU F32 vs F16 weight precision comparison
 # ============================================================================
 
 library(ggmlR)
 
 cat("==============================================================\n")
-cat("  ONNX Benchmark: GPU (Vulkan) vs CPU\n")
+cat("  ONNX Benchmark: GPU F32 vs F16 (Vulkan)\n")
 cat("==============================================================\n\n")
 
 # --- Каталог с моделями ---
 ONNX_DIR <- "/mnt/Data2/DS_projects/ONNX models-main"
 
 # --- Реестр моделей для бенчмарка ---
-# Каждая запись: file, input_name, input_shape, description
 models <- list(
   list(
     name        = "Inception V3",
@@ -98,15 +97,16 @@ if (vulkan_ok) {
   cat(sprintf("GPU: %s (%.1f / %.1f GB)\n", gpu_name,
               gpu_mem$free / 1e9, gpu_mem$total / 1e9))
 } else {
-  cat("GPU: Vulkan not available\n")
+  cat("GPU: Vulkan not available — nothing to compare\n")
+  quit(status = 0)
 }
 cat(sprintf("Warmup: %d, Runs: %d\n\n", N_WARMUP, N_RUNS))
 
-# --- Функция бенчмарка одной модели на одном устройстве ---
+# --- Функция бенчмарка ---
 bench_one <- function(onnx_path, input_name, input_shape, device,
                       input_data, n_warmup, n_runs,
-                      extra_inputs = NULL, extra_data = NULL) {
-  # Загрузка
+                      extra_inputs = NULL, extra_data = NULL,
+                      dtype = "f32") {
   t0 <- proc.time()
   shapes <- list()
   shapes[[input_name]] <- input_shape
@@ -114,7 +114,8 @@ bench_one <- function(onnx_path, input_name, input_shape, device,
     for (nm in names(extra_inputs))
       shapes[[nm]] <- extra_inputs[[nm]]
   }
-  model <- onnx_load(onnx_path, device = device, input_shapes = shapes)
+  model <- onnx_load(onnx_path, device = device, input_shapes = shapes,
+                     dtype = dtype)
   load_time <- (proc.time() - t0)[3]
 
   inputs <- list()
@@ -125,9 +126,8 @@ bench_one <- function(onnx_path, input_name, input_shape, device,
   }
 
   # Прогрев
-  for (i in seq_len(n_warmup)) {
+  for (i in seq_len(n_warmup))
     out <- onnx_run(model, inputs)
-  }
 
   # Замеры
   times <- numeric(n_runs)
@@ -137,11 +137,9 @@ bench_one <- function(onnx_path, input_name, input_shape, device,
     times[i] <- (proc.time() - t0)[3]
   }
 
-  # Top-5
   probs <- out[[1]]
   top5_idx <- order(probs, decreasing = TRUE)[1:5]
 
-  # Free model to release VRAM before next benchmark
   rm(model, out); gc(verbose = FALSE)
 
   list(
@@ -150,7 +148,6 @@ bench_one <- function(onnx_path, input_name, input_shape, device,
     mean_ms   = mean(times) * 1000,
     min_ms    = min(times) * 1000,
     max_ms    = max(times) * 1000,
-    sd_ms     = sd(times) * 1000,
     fps       = 1.0 / mean(times),
     top5      = top5_idx
   )
@@ -170,11 +167,8 @@ for (m in models) {
   cat("==============================================================\n")
   cat(sprintf("  %s  (%.1f MB)\n", m$name, size_mb))
   cat(sprintf("  %s\n", m$description))
-  cat(sprintf("  Input: %s [%s]\n", m$input_name,
-              paste(m$input_shape, collapse = "x")))
   cat("==============================================================\n")
 
-  # Генерируем входные данные
   set.seed(42)
   input_data <- runif(prod(m$input_shape))
   extra_data <- NULL
@@ -186,70 +180,49 @@ for (m in models) {
 
   res <- list(name = m$name)
 
-  # Device info для GPU-модели
-  if (vulkan_ok) {
-    shapes_di <- list()
-    shapes_di[[m$input_name]] <- m$input_shape
-    if (!is.null(m$extra_inputs)) {
-      for (nm in names(m$extra_inputs))
-        shapes_di[[nm]] <- m$extra_inputs[[nm]]
-    }
-    di_model <- tryCatch(
-      onnx_load(onnx_path, device = "vulkan", input_shapes = shapes_di),
-      error = function(e) NULL)
-    if (!is.null(di_model)) {
-      di <- onnx_device_info(di_model)
-      cat(sprintf("  Backends: %s\n", paste(di$backends, collapse = ", ")))
-      cat(sprintf("  Graph: %d nodes, %d splits\n", di$n_nodes, di$n_splits))
-      cat(sprintf("  Ops: GPU=%d, CPU-only=%d\n", di$gpu_ops, di$cpu_ops))
-      if (di$cpu_ops > 0) {
-        ops_str <- paste(sprintf("%s(%d)", names(di$cpu_only_ops),
-                                 di$cpu_only_ops), collapse = ", ")
-        cat(sprintf("  CPU-only ops: %s\n", ops_str))
-      }
-      cat(sprintf("  Actual buffer: %s\n", di$actual_backend))
-    }
-    rm(di_model); gc(verbose = FALSE)
-    mem_before <- ggml_vulkan_device_memory(0)
-    cat(sprintf("  GPU memory before: %.1f MB free\n", mem_before$free / 1e6))
-  }
-
-  # CPU
-  cat("  CPU ... ")
+  # CPU (baseline)
+  cat("  CPU     ... ")
   res$cpu <- tryCatch(
     bench_one(onnx_path, m$input_name, m$input_shape, "cpu",
               input_data, N_WARMUP, N_RUNS,
               extra_inputs = m$extra_inputs, extra_data = extra_data),
     error = function(e) { cat("ERROR:", e$message, "\n"); NULL }
   )
-  if (!is.null(res$cpu)) {
-    cat(sprintf("%.1f ms  (%.1f FPS)\n", res$cpu$mean_ms, res$cpu$fps))
-  }
+  if (!is.null(res$cpu))
+    cat(sprintf("%.1f ms\n", res$cpu$mean_ms))
 
-  # GPU
-  if (vulkan_ok) {
-    cat("  GPU ... ")
-    res$gpu <- tryCatch(
-      bench_one(onnx_path, m$input_name, m$input_shape, "vulkan",
-                input_data, N_WARMUP, N_RUNS,
-                extra_inputs = m$extra_inputs, extra_data = extra_data),
-      error = function(e) { cat("ERROR:", e$message, "\n"); NULL }
-    )
-    if (!is.null(res$gpu)) {
-      cat(sprintf("%.1f ms  (%.1f FPS)\n", res$gpu$mean_ms, res$gpu$fps))
-    }
-    mem_after <- ggml_vulkan_device_memory(0)
-    gpu_used <- (mem_before$free - mem_after$free) / 1e6
-    cat(sprintf("  GPU memory after:  %.1f MB free (used: %.1f MB)\n",
-                mem_after$free / 1e6, gpu_used))
-  }
+  # GPU F32
+  cat("  GPU F32 ... ")
+  res$gpu <- tryCatch(
+    bench_one(onnx_path, m$input_name, m$input_shape, "vulkan",
+              input_data, N_WARMUP, N_RUNS,
+              extra_inputs = m$extra_inputs, extra_data = extra_data,
+              dtype = "f32"),
+    error = function(e) { cat("ERROR:", e$message, "\n"); NULL }
+  )
+  if (!is.null(res$gpu))
+    cat(sprintf("%.1f ms\n", res$gpu$mean_ms))
 
-  # Speedup
-  if (!is.null(res$cpu) && !is.null(res$gpu)) {
-    speedup <- res$cpu$mean_ms / res$gpu$mean_ms
-    cat(sprintf("  Speedup: %.2fx\n", speedup))
-    match <- identical(res$cpu$top5, res$gpu$top5)
-    cat(sprintf("  Top-5 match: %s\n", if (match) "YES" else "NO"))
+  # GPU F16
+  cat("  GPU F16 ... ")
+  res$gpu_f16 <- tryCatch(
+    bench_one(onnx_path, m$input_name, m$input_shape, "vulkan",
+              input_data, N_WARMUP, N_RUNS,
+              extra_inputs = m$extra_inputs, extra_data = extra_data,
+              dtype = "f16"),
+    error = function(e) { cat("ERROR:", e$message, "\n"); NULL }
+  )
+  if (!is.null(res$gpu_f16))
+    cat(sprintf("%.1f ms\n", res$gpu_f16$mean_ms))
+
+  # Сравнение
+  if (!is.null(res$gpu) && !is.null(res$gpu_f16)) {
+    f16_gain <- res$gpu$mean_ms / res$gpu_f16$mean_ms
+    cat(sprintf("  F16 vs F32: %.2fx\n", f16_gain))
+  }
+  if (!is.null(res$cpu) && !is.null(res$gpu_f16)) {
+    match16 <- identical(res$cpu$top5, res$gpu_f16$top5)
+    cat(sprintf("  Top-5 match (F16 vs CPU): %s\n", if (match16) "YES" else "NO"))
   }
 
   cat("\n")
@@ -261,26 +234,26 @@ cat("==============================================================\n")
 cat("  Summary\n")
 cat("==============================================================\n\n")
 
-cat(sprintf("%-20s %10s %10s %10s %10s %8s\n",
-            "Model", "CPU(ms)", "GPU(ms)", "Speedup", "CPU FPS", "GPU FPS"))
-cat(sprintf("%-20s %10s %10s %10s %10s %8s\n",
-            "--------------------", "--------", "--------",
+cat(sprintf("%-20s %10s %10s %10s %10s %10s %10s\n",
+            "Model", "CPU(ms)", "GPU F32", "GPU F16", "F32 spd", "F16 spd", "F16/F32"))
+cat(sprintf("%-20s %10s %10s %10s %10s %10s %10s\n",
+            "--------------------", "--------", "--------", "--------",
             "--------", "--------", "--------"))
 
 for (r in all_results) {
-  cpu_ms  <- if (!is.null(r$cpu)) sprintf("%.1f", r$cpu$mean_ms) else "—"
-  gpu_ms  <- if (!is.null(r$gpu)) sprintf("%.1f", r$gpu$mean_ms) else "—"
-  cpu_fps <- if (!is.null(r$cpu)) sprintf("%.1f", r$cpu$fps) else "—"
-  gpu_fps <- if (!is.null(r$gpu)) sprintf("%.1f", r$gpu$fps) else "—"
+  cpu_ms    <- if (!is.null(r$cpu))     sprintf("%.1f", r$cpu$mean_ms) else "—"
+  gpu_ms    <- if (!is.null(r$gpu))     sprintf("%.1f", r$gpu$mean_ms) else "—"
+  gpu16_ms  <- if (!is.null(r$gpu_f16)) sprintf("%.1f", r$gpu_f16$mean_ms) else "—"
 
-  if (!is.null(r$cpu) && !is.null(r$gpu)) {
-    spd <- sprintf("%.2fx", r$cpu$mean_ms / r$gpu$mean_ms)
-  } else {
-    spd <- "—"
-  }
+  spd32 <- if (!is.null(r$cpu) && !is.null(r$gpu))
+    sprintf("%.1fx", r$cpu$mean_ms / r$gpu$mean_ms) else "—"
+  spd16 <- if (!is.null(r$cpu) && !is.null(r$gpu_f16))
+    sprintf("%.1fx", r$cpu$mean_ms / r$gpu_f16$mean_ms) else "—"
+  f16_gain <- if (!is.null(r$gpu) && !is.null(r$gpu_f16))
+    sprintf("%.2fx", r$gpu$mean_ms / r$gpu_f16$mean_ms) else "—"
 
-  cat(sprintf("%-20s %10s %10s %10s %10s %8s\n",
-              r$name, cpu_ms, gpu_ms, spd, cpu_fps, gpu_fps))
+  cat(sprintf("%-20s %10s %10s %10s %10s %10s %10s\n",
+              r$name, cpu_ms, gpu_ms, gpu16_ms, spd32, spd16, f16_gain))
 }
 
 cat("\n==============================================================\n")

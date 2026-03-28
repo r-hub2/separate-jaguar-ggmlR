@@ -6,6 +6,7 @@
 #include <R.h>
 #include <Rinternals.h>
 #include <R_ext/Rdynload.h>
+#include <string.h>
 
 #include "onnx_loader.h"
 #include "onnx_ggml.h"
@@ -111,16 +112,26 @@ SEXP R_onnx_summary(SEXP model_ptr_) {
     return result;
 }
 
-/* ── R_onnx_build(model_ptr, device, n_threads) ────────────────── */
+/* ── R_onnx_build(model_ptr, device, n_threads, dtype) ──────────── */
 
-SEXP R_onnx_build(SEXP model_ptr_, SEXP device_, SEXP n_threads_) {
+SEXP R_onnx_build(SEXP model_ptr_, SEXP device_, SEXP n_threads_, SEXP dtype_) {
     onnx_model_t *m = (onnx_model_t *)R_ExternalPtrAddr(model_ptr_);
     if (!m) Rf_error("onnx_build: NULL model pointer");
 
     const char *device = Rf_isNull(device_) ? NULL : CHAR(STRING_ELT(device_, 0));
     int n_threads = Rf_asInteger(n_threads_);
 
-    onnx_ggml_ctx_t *ctx = onnx_ggml_build(m, device, n_threads);
+    /* Parse dtype: "f16" → GGML_TYPE_F16, anything else → GGML_TYPE_F32 */
+    enum ggml_type model_dtype = GGML_TYPE_F32;
+    if (!Rf_isNull(dtype_)) {
+        const char *dtype_str = CHAR(STRING_ELT(dtype_, 0));
+        if (strcmp(dtype_str, "f16") == 0 || strcmp(dtype_str, "fp16") == 0 ||
+            strcmp(dtype_str, "float16") == 0) {
+            model_dtype = GGML_TYPE_F16;
+        }
+    }
+
+    onnx_ggml_ctx_t *ctx = onnx_ggml_build(m, device, n_threads, model_dtype);
     if (!ctx) {
         Rf_error("onnx_build: failed to build ggml graph");
         return R_NilValue;
@@ -291,6 +302,7 @@ SEXP R_onnx_inputs(SEXP ctx_ptr_) {
 SEXP R_onnx_device_info(SEXP ctx_ptr_) {
     onnx_ggml_ctx_t *ctx = (onnx_ggml_ctx_t *)R_ExternalPtrAddr(ctx_ptr_);
     if (!ctx) Rf_error("onnx_device_info: NULL context pointer");
+    if (!ctx->graph) Rf_error("onnx_device_info: NULL graph");
 
     /* 8 fields: backends, n_backends, n_splits, n_nodes, gpu_ops, cpu_ops, cpu_only_ops, actual_backend */
     SEXP result = PROTECT(Rf_allocVector(VECSXP, 8));
@@ -314,7 +326,7 @@ SEXP R_onnx_device_info(SEXP ctx_ptr_) {
     /* n_splits */
     SET_STRING_ELT(names, 2, Rf_mkChar("n_splits"));
     SET_VECTOR_ELT(result, 2, Rf_ScalarInteger(
-        ggml_backend_sched_get_n_splits(ctx->sched)));
+        ctx->sched ? ggml_backend_sched_get_n_splits(ctx->sched) : 0));
 
     /* n_nodes */
     int n_nodes = ggml_graph_n_nodes(ctx->graph);
@@ -373,7 +385,7 @@ SEXP R_onnx_device_info(SEXP ctx_ptr_) {
     /* actual_backend — check where the last graph node's buffer actually lives */
     {
         const char *actual = "unknown";
-        struct ggml_tensor *last = ggml_graph_node(ctx->graph, n_nodes - 1);
+        struct ggml_tensor *last = n_nodes > 0 ? ggml_graph_node(ctx->graph, n_nodes - 1) : NULL;
         if (last && last->buffer) {
             ggml_backend_buffer_type_t buft = ggml_backend_buffer_get_type(last->buffer);
             const char *buft_name = ggml_backend_buft_name(buft);
