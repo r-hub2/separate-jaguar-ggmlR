@@ -221,7 +221,7 @@
 #define GGML_QNT_VERSION        2    // bump this on quantization format changes
 #define GGML_QNT_VERSION_FACTOR 1000 // do not change this
 
-#define GGML_MAX_DIMS           4
+#define GGML_MAX_DIMS           5
 #define GGML_MAX_PARAMS         2048
 #define GGML_MAX_SRC            10
 #define GGML_MAX_N_THREADS      512
@@ -569,6 +569,8 @@ extern "C" {
 
         GGML_OP_GLU,
 
+        GGML_OP_SCATTER_ELEMENTS,
+
         GGML_OP_COUNT,
     };
 
@@ -825,6 +827,15 @@ extern "C" {
             int64_t ne1,
             int64_t ne2,
             int64_t ne3);
+
+    GGML_API struct ggml_tensor * ggml_new_tensor_5d(
+            struct ggml_context * ctx,
+            enum   ggml_type type,
+            int64_t ne0,
+            int64_t ne1,
+            int64_t ne2,
+            int64_t ne3,
+            int64_t ne4);
 
     GGML_API void * ggml_new_buffer(struct ggml_context * ctx, size_t nbytes);
 
@@ -1579,6 +1590,15 @@ extern "C" {
             int64_t               ne2,
             int64_t               ne3);
 
+    GGML_API struct ggml_tensor * ggml_reshape_5d(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * a,
+            int64_t               ne0,
+            int64_t               ne1,
+            int64_t               ne2,
+            int64_t               ne3,
+            int64_t               ne4);
+
     // offset in bytes
     GGML_API struct ggml_tensor * ggml_view_1d(
             struct ggml_context * ctx,
@@ -1661,6 +1681,19 @@ extern "C" {
             struct ggml_tensor  * a,  // destination
             struct ggml_tensor  * b,  // source
             struct ggml_tensor  * c); // row indices
+
+    // scatter_elements: output = copy(data), then output[indices] += updates (axis=0, reduction=add)
+    //   data:    [ne0, ne1, ...]  — base tensor (copied to output first)
+    //   updates: [ne0, n_idx, ...] — values to scatter
+    //   indices: [n_idx] i32      — row indices into data
+    //   reduction: 0=none(overwrite), 1=add
+    GGML_API struct ggml_tensor * ggml_scatter_elements(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * data,
+            struct ggml_tensor  * updates,
+            struct ggml_tensor  * indices,
+            int                   reduction,
+            int                   axis);
 
     GGML_API struct ggml_tensor * ggml_diag(
         struct ggml_context     * ctx,
