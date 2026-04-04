@@ -21,7 +21,7 @@ TOTAL_LIGHT    <- 1000L  # light models (MNIST, EmotionFerPlus)
 TOTAL_HEAVY    <- 1000L  # heavy models (SqueezeNet, BERT, Inception)
 MONITOR_EVERY  <- 100L    # VRAM snapshot interval (every N batches)
 N_WARMUP       <- 5L       # warmup runs before measurement
-CSV_FILE       <- "stress_test_results.csv"
+CSV_FILE       <- file.path(tempdir(), "stress_test_results.csv")
 
 # API mode: run inference through HTTP (plumber) instead of direct onnx_run.
 # Set to TRUE to test production-like latency with HTTP overhead.
