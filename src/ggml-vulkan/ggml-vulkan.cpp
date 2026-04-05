@@ -610,6 +610,7 @@ struct vk_device_struct {
     bool coopmat2;
 
     bool pipeline_executable_properties_support {};
+    bool push_descriptors {};
 
     size_t idx;
 
@@ -2132,6 +2133,11 @@ static void ggml_pipeline_request_descriptor_sets(ggml_backend_vk_context *ctx, 
 
 static void ggml_pipeline_allocate_descriptor_sets(ggml_backend_vk_context * ctx) {
 
+    if (ctx->device->push_descriptors) {
+        // Push descriptors — no descriptor pool allocation needed
+        return;
+    }
+
     if (ctx->descriptor_sets.size() >= ctx->pipeline_descriptor_set_requirements) {
         // Enough descriptors are available
         return;
@@ -2585,26 +2591,31 @@ static void ggml_vk_sync_buffers(ggml_backend_vk_context* ctx, vk_context& subct
         ctx->prealloc_x_need_sync = ctx->prealloc_y_need_sync = ctx->prealloc_split_k_need_sync = false;
     }
 
-    subctx->s->buffer.pipelineBarrier(
-        subctx->p->q->stage_flags,
-        subctx->p->q->stage_flags,
-        {},
-        { {
-          { !transfer_queue ? (vk::AccessFlagBits::eShaderRead | vk::AccessFlagBits::eShaderWrite | vk::AccessFlagBits::eTransferRead | vk::AccessFlagBits::eTransferWrite) : (vk::AccessFlagBits::eTransferRead | vk::AccessFlagBits::eTransferWrite) },
-          { !transfer_queue ? (vk::AccessFlagBits::eShaderRead | vk::AccessFlagBits::eShaderWrite | vk::AccessFlagBits::eTransferRead | vk::AccessFlagBits::eTransferWrite) : (vk::AccessFlagBits::eTransferRead | vk::AccessFlagBits::eTransferWrite) }
-        } },
-        {},
-        {}
-    );
+    const vk::AccessFlags2 access = !transfer_queue
+        ? (vk::AccessFlagBits2::eShaderRead | vk::AccessFlagBits2::eShaderWrite |
+           vk::AccessFlagBits2::eTransferRead | vk::AccessFlagBits2::eTransferWrite)
+        : (vk::AccessFlagBits2::eTransferRead | vk::AccessFlagBits2::eTransferWrite);
+
+    const vk::PipelineStageFlags2 stages = !transfer_queue
+        ? (vk::PipelineStageFlagBits2::eComputeShader | vk::PipelineStageFlagBits2::eTransfer)
+        : vk::PipelineStageFlagBits2::eTransfer;
+
+    vk::MemoryBarrier2 barrier{};
+    barrier.setSrcStageMask(stages);
+    barrier.setSrcAccessMask(access);
+    barrier.setDstStageMask(stages);
+    barrier.setDstAccessMask(access);
+
+    vk::DependencyInfo dep_info{};
+    dep_info.setMemoryBarriers(barrier);
+    subctx->s->buffer.pipelineBarrier2(dep_info);
 }
 
 static void ggml_vk_set_event(vk_context& ctx, vk::Event& event) {
     VK_LOG_DEBUG("ggml_vk_set_event()");
 
-    ctx->s->buffer.setEvent(
-        event,
-        ctx->p->q->stage_flags
-    );
+    vk::DependencyInfo event_dep{};
+    ctx->s->buffer.setEvent2(event, event_dep);
 }
 
 static void ggml_vk_wait_events(vk_context& ctx, std::vector<vk::Event>&& events) {
@@ -2613,14 +2624,24 @@ static void ggml_vk_wait_events(vk_context& ctx, std::vector<vk::Event>&& events
         return;
     }
 
-    ctx->s->buffer.waitEvents(
-        events,
-        ctx->p->q->stage_flags,
-        ctx->p->q->stage_flags,
-        {},
-        {},
-        {}
-    );
+    const vk::PipelineStageFlags2 stages =
+        vk::PipelineStageFlagBits2::eComputeShader | vk::PipelineStageFlagBits2::eTransfer;
+    const vk::AccessFlags2 access =
+        vk::AccessFlagBits2::eShaderRead | vk::AccessFlagBits2::eShaderWrite |
+        vk::AccessFlagBits2::eTransferRead | vk::AccessFlagBits2::eTransferWrite;
+
+    vk::MemoryBarrier2 wait_barrier{};
+    wait_barrier.setSrcStageMask(stages);
+    wait_barrier.setSrcAccessMask(access);
+    wait_barrier.setDstStageMask(stages);
+    wait_barrier.setDstAccessMask(access);
+
+    vk::DependencyInfo wait_dep{};
+    wait_dep.setMemoryBarriers(wait_barrier);
+
+    for (auto& event : events) {
+        ctx->s->buffer.waitEvents2({ event }, wait_dep);
+    }
 }
 
 // number of rows/cols for flash attention shader
@@ -4395,6 +4416,7 @@ static vk_device ggml_vk_get_device(size_t idx) {
         bool pipeline_robustness = false;
         bool coopmat2_support = false;
         bool pipeline_executable_properties_support = false;
+        bool push_descriptor_ext = false;
         device->coopmat_support = false;
         device->integer_dot_product = false;
         bool bfloat16_support = false;
@@ -4442,6 +4464,8 @@ static vk_device ggml_vk_get_device(size_t idx) {
             } else if (strcmp("VK_EXT_memory_priority", properties.extensionName) == 0 &&
                        getenv("GGML_VK_ENABLE_MEMORY_PRIORITY")) {
                 device->memory_priority = true;
+            } else if (strcmp("VK_KHR_push_descriptor", properties.extensionName) == 0) {
+                push_descriptor_ext = true;
             }
         }
 
@@ -4495,10 +4519,22 @@ static vk_device ggml_vk_get_device(size_t idx) {
             last_struct = (VkBaseOutStructure *)&shader_integer_dot_product_props;
         }
 
+        vk::PhysicalDevicePushDescriptorPropertiesKHR push_descriptor_props;
+        if (push_descriptor_ext) {
+            last_struct->pNext = (VkBaseOutStructure *)&push_descriptor_props;
+            last_struct = (VkBaseOutStructure *)&push_descriptor_props;
+        }
+
         device->physical_device.getProperties2(&props2);
         device->properties = props2.properties;
         device->vendor_id = device->properties.vendorID;
         device->driver_id = driver_props.driverID;
+
+        device->push_descriptors = push_descriptor_ext &&
+                                   push_descriptor_props.maxPushDescriptors >= MAX_PARAMETER_COUNT;
+        if (device->push_descriptors) {
+            VK_LOG_DEBUG("ggml_vulkan: Push descriptors enabled (max=" << push_descriptor_props.maxPushDescriptors << ")");
+        }
 
         // Implementing the async backend interfaces seems broken on older Intel HW,
         // see https://github.com/ggml-org/llama.cpp/issues/17302.
@@ -4620,7 +4656,12 @@ static vk_device ggml_vk_get_device(size_t idx) {
         vk12_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
         vk11_features.pNext = &vk12_features;
 
-        last_struct = (VkBaseOutStructure *)&vk12_features;
+        VkPhysicalDeviceVulkan13Features vk13_features {};
+        vk13_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
+        vk13_features.pNext = nullptr;
+        vk12_features.pNext = &vk13_features;
+
+        last_struct = (VkBaseOutStructure *)&vk13_features;
 
         VkPhysicalDevicePipelineRobustnessFeaturesEXT pl_robustness_features;
         pl_robustness_features.pNext = nullptr;
@@ -4710,6 +4751,10 @@ static vk_device ggml_vk_get_device(size_t idx) {
             last_struct->pNext = (VkBaseOutStructure *)&pep_features;
             last_struct = (VkBaseOutStructure *)&pep_features;
             device_extensions.push_back("VK_KHR_pipeline_executable_properties");
+        }
+
+        if (device->push_descriptors) {
+            device_extensions.push_back("VK_KHR_push_descriptor");
         }
 
         vkGetPhysicalDeviceFeatures2(device->physical_device, &device_features2);
@@ -5016,8 +5061,12 @@ static vk_device ggml_vk_get_device(size_t idx) {
 
         vk::DescriptorSetLayoutBindingFlagsCreateInfo dslbfci = { dsl_binding_flags };
 
+        vk::DescriptorSetLayoutCreateFlags dsl_flags = {};
+        if (device->push_descriptors) {
+            dsl_flags |= vk::DescriptorSetLayoutCreateFlagBits::ePushDescriptorKHR;
+        }
         vk::DescriptorSetLayoutCreateInfo descriptor_set_layout_create_info(
-            {},
+            dsl_flags,
             dsl_binding);
         descriptor_set_layout_create_info.setPNext(&dslbfci);
         device->dsl = device->device.createDescriptorSetLayout(descriptor_set_layout_create_info);
@@ -5243,9 +5292,9 @@ static void ggml_vk_instance_init() {
 
     uint32_t api_version = vk::enumerateInstanceVersion();
 
-    if (api_version < VK_API_VERSION_1_2) {
-        std::cerr << "ggml_vulkan: Error: Vulkan 1.2 required." << std::endl;
-        throw vk::SystemError(vk::Result::eErrorFeatureNotPresent, "Vulkan 1.2 required");
+    if (api_version < VK_API_VERSION_1_3) {
+        std::cerr << "ggml_vulkan: Error: Vulkan 1.3 required." << std::endl;
+        throw vk::SystemError(vk::Result::eErrorFeatureNotPresent, "Vulkan 1.3 required");
     }
 
     vk::ApplicationInfo app_info{ "ggml-vulkan", 1, nullptr, 0, api_version };
@@ -5994,21 +6043,23 @@ static void ggml_vk_dispatch_pipeline(ggml_backend_vk_context* ctx, vk_context& 
     GGML_ASSERT(wg0 <= ctx->device->properties.limits.maxComputeWorkGroupCount[0] &&
                 wg1 <= ctx->device->properties.limits.maxComputeWorkGroupCount[1] &&
                 wg2 <= ctx->device->properties.limits.maxComputeWorkGroupCount[2]);
-    GGML_ASSERT(ctx->descriptor_set_idx < ctx->descriptor_sets.size());
     GGML_ASSERT(descriptor_buffer_infos.size() <= MAX_PARAMETER_COUNT);
     GGML_ASSERT(pipeline->parameter_count == descriptor_buffer_infos.size());
 
-    vk::DescriptorSet& descriptor_set = ctx->descriptor_sets[ctx->descriptor_set_idx++];
-    vk::WriteDescriptorSet write_descriptor_set{ descriptor_set, 0, 0, pipeline->parameter_count, vk::DescriptorType::eStorageBuffer, nullptr, descriptor_buffer_infos.begin() };
-    ctx->device->device.updateDescriptorSets({ write_descriptor_set }, {});
-
     subctx->s->buffer.pushConstants(pipeline->layout, vk::ShaderStageFlagBits::eCompute, 0, push_constant_size(push_constants), push_constant_data(push_constants));
     subctx->s->buffer.bindPipeline(vk::PipelineBindPoint::eCompute, pipeline->pipeline);
-    subctx->s->buffer.bindDescriptorSets(vk::PipelineBindPoint::eCompute,
-                                pipeline->layout,
-                                0,
-                                { descriptor_set },
-                                {});
+
+    if (ctx->device->push_descriptors) {
+        vk::WriteDescriptorSet write_descriptor_set{ {}, 0, 0, pipeline->parameter_count, vk::DescriptorType::eStorageBuffer, nullptr, descriptor_buffer_infos.begin() };
+        subctx->s->buffer.pushDescriptorSetKHR(vk::PipelineBindPoint::eCompute, pipeline->layout, 0, { write_descriptor_set });
+    } else {
+        GGML_ASSERT(ctx->descriptor_set_idx < ctx->descriptor_sets.size());
+        vk::DescriptorSet& descriptor_set = ctx->descriptor_sets[ctx->descriptor_set_idx++];
+        vk::WriteDescriptorSet write_descriptor_set{ descriptor_set, 0, 0, pipeline->parameter_count, vk::DescriptorType::eStorageBuffer, nullptr, descriptor_buffer_infos.begin() };
+        ctx->device->device.updateDescriptorSets({ write_descriptor_set }, {});
+        subctx->s->buffer.bindDescriptorSets(vk::PipelineBindPoint::eCompute, pipeline->layout, 0, { descriptor_set }, {});
+    }
+
     subctx->s->buffer.dispatch(wg0, wg1, wg2);
 }
 
@@ -10110,13 +10161,15 @@ static void ggml_vk_scatter_elements(ggml_backend_vk_context * ctx, vk_context& 
                                            src_sb.buffer, src_sb.offset,
                                            ggml_nbytes(data));
         /* Barrier: copy must finish before scatter shader reads/writes dst */
-        subctx->s->buffer.pipelineBarrier(
-            vk::PipelineStageFlagBits::eTransfer,
-            vk::PipelineStageFlagBits::eComputeShader,
-            {},
-            { vk::MemoryBarrier(vk::AccessFlagBits::eTransferWrite,
-                                vk::AccessFlagBits::eShaderRead | vk::AccessFlagBits::eShaderWrite) },
-            {}, {});
+        vk::MemoryBarrier2 scatter_barrier{};
+        scatter_barrier.setSrcStageMask(vk::PipelineStageFlagBits2::eTransfer);
+        scatter_barrier.setSrcAccessMask(vk::AccessFlagBits2::eTransferWrite);
+        scatter_barrier.setDstStageMask(vk::PipelineStageFlagBits2::eComputeShader);
+        scatter_barrier.setDstAccessMask(vk::AccessFlagBits2::eShaderRead | vk::AccessFlagBits2::eShaderWrite);
+
+        vk::DependencyInfo scatter_dep{};
+        scatter_dep.setMemoryBarriers(scatter_barrier);
+        subctx->s->buffer.pipelineBarrier2(scatter_dep);
     }
 
     /* Step 2: run scatter shader — pass updates as src0, indices as src1 */

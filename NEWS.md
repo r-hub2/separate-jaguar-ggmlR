@@ -1,3 +1,30 @@
+# ggmlR 0.6.9
+
+## GGUF file reader
+
+* **`gguf_load(path)`** — opens a GGUF file (v2/v3) and reads all metadata and tensor descriptors. Returns an S3 object of class `"gguf"`.
+* **`gguf_metadata(x)`** — returns all key-value metadata pairs as a named list (architecture, tokenizer config, quantization info, etc.).
+* **`gguf_tensor_names(x)`** — lists all tensor names in the file.
+* **`gguf_tensor_info(x, name)`** — returns shape, type, and size in bytes for a single tensor.
+* **`gguf_tensor_data(x, name)`** — dequantizes (if needed) and returns tensor weights as an R numeric array with correct dimensions.
+* **`gguf_free(x)`** — explicitly frees GGUF context (also called by GC).
+* Supports all ggml quantization types (F32, F16, Q4_0, Q8_0, K-quants, etc.) with automatic dequantization to F32.
+* `print.gguf()` method shows file version, tensor count, and metadata count.
+
+## Vulkan backend: Synchronization2 + Push Descriptors
+
+* **Minimum Vulkan version raised to 1.3** (was 1.2).
+* **Synchronization2** (Vulkan 1.3 core): all pipeline barriers, event set/wait migrated from legacy `vkCmdPipelineBarrier` / `vkCmdSetEvent` / `vkCmdWaitEvents` to the Vulkan 1.3 `pipelineBarrier2` / `setEvent2` / `waitEvents2` API. More precise stage and access masks per barrier reduce unnecessary GPU stalls.
+* **Push Descriptors** (`VK_KHR_push_descriptor`): when the extension is available and `maxPushDescriptors >= 12`, descriptor sets are pushed directly into the command buffer via `pushDescriptorSetKHR()`, eliminating descriptor pool allocation, descriptor set updates, and bind calls. Falls back to the traditional descriptor pool path on hardware without the extension.
+
+## Keras-compatible API
+
+* **`fit()`** now accepts a `callbacks` parameter for sequential models (passed through to `ggml_fit_sequential()`).
+
+## Test suite
+
+* New test files: `test-gguf.R`, `test-graph-utils.R`, `test-inplace-ops.R`, `test-keras-api.R`, `test-misc-ops.R`, `test-model-ops.R`, `test-print-methods.R`, `test-tensor-utils.R`, `test-threading.R`, `test-autograd-missing.R`, `test-nn-functional-missing.R`, `test-quants-missing.R`.
+
 # ggmlR 0.6.8
 
 ## Bug fixes
