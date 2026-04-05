@@ -21,8 +21,9 @@ Authors@R: c(
     )
 Description: Provides 'R' bindings to the 'GGML' tensor library for machine
     learning, designed primarily for 'Vulkan' GPU acceleration with full CPU
-    fallback. Requires 'Vulkan' 1.3+ and uses 'Synchronization2' for precise
-    barrier control; supports 'Push Descriptors' ('VK_KHR_push_descriptor')
+    fallback. Requires 'Vulkan' 1.2+ with legacy pipeline barriers (avoids
+    'Synchronization2' due to RADV performance issues); supports 'Push
+    Descriptors' ('VK_KHR_push_descriptor')
     to eliminate descriptor pool overhead when available. 'Vulkan' support is
     auto-detected at build time on Linux (when 'libvulkan-dev' and 'glslc'
     are installed) and on Windows (when 'Vulkan' 'SDK' is installed and
@@ -68,7 +69,7 @@ RoxygenNote: 7.3.3
 Config/testthat/edition: 3
 Config/build/clean-inst-doc: false
 NeedsCompilation: yes
-Packaged: 2026-04-05 10:59:10 UTC; yuri
+Packaged: 2026-04-05 11:39:11 UTC; yuri
 Author: Yuri Baramykov [aut, cre],
   Georgi Gerganov [ctb, cph] (Author of the GGML library),
   Jeffrey Quesnelle [ctb, cph] (Contributor to ops.cpp),

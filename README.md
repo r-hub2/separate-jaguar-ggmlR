@@ -623,13 +623,13 @@ Supported GPUs: NVIDIA, AMD, Intel, ARM Mali, Qualcomm Adreno.
 
 ### Vulkan optimizations
 
-- **Vulkan 1.3 required** — uses Synchronization2 (`pipelineBarrier2`, `setEvent2`, `waitEvents2`) for precise stage/access barriers
+- **Vulkan 1.2** — uses legacy pipeline barriers (Synchronization2 avoided due to RADV performance regression on AMD)
 - **Push Descriptors** (`VK_KHR_push_descriptor`) — when available, descriptors are pushed directly into the command buffer, eliminating descriptor pool allocation overhead. Falls back to descriptor pools on older hardware.
 
 ## System Requirements
 
 - R ≥ 4.1.0, C++17 compiler
-- **Optional GPU**: Vulkan 1.3+, `libvulkan-dev` + `glslc` (Linux) or Vulkan SDK (Windows)
+- **Optional GPU**: Vulkan 1.2+, `libvulkan-dev` + `glslc` (Linux) or Vulkan SDK (Windows)
 - Platforms: Linux, macOS, Windows (x86-64, ARM64)
 
 ## See Also

@@ -11,11 +11,10 @@
 * Supports all ggml quantization types (F32, F16, Q4_0, Q8_0, K-quants, etc.) with automatic dequantization to F32.
 * `print.gguf()` method shows file version, tensor count, and metadata count.
 
-## Vulkan backend: Synchronization2 + Push Descriptors
+## Vulkan backend: revert to Vulkan 1.2 + Push Descriptors
 
-* **Minimum Vulkan version raised to 1.3** (was 1.2).
-* **Synchronization2** (Vulkan 1.3 core): all pipeline barriers, event set/wait migrated from legacy `vkCmdPipelineBarrier` / `vkCmdSetEvent` / `vkCmdWaitEvents` to the Vulkan 1.3 `pipelineBarrier2` / `setEvent2` / `waitEvents2` API. More precise stage and access masks per barrier reduce unnecessary GPU stalls.
-* **Push Descriptors** (`VK_KHR_push_descriptor`): when the extension is available and `maxPushDescriptors >= 12`, descriptor sets are pushed directly into the command buffer via `pushDescriptorSetKHR()`, eliminating descriptor pool allocation, descriptor set updates, and bind calls. Falls back to the traditional descriptor pool path on hardware without the extension.
+* **Vulkan API version capped at 1.2** (was 1.3). Requesting a Vulkan 1.3 instance implicitly enables Synchronization2 (core in 1.3), which causes significant performance degradation on RADV (Mesa) drivers — particularly on newer AMD hardware (RX 9070 and similar). Capping at 1.2 avoids the implicit promotion while retaining all functionality.
+* **Push Descriptors** (`VK_KHR_push_descriptor`): unchanged — when the extension is available and `maxPushDescriptors >= 12`, descriptor sets are pushed directly into the command buffer via `pushDescriptorSetKHR()`, eliminating descriptor pool overhead. Falls back to the traditional descriptor pool path on hardware without the extension.
 
 ## Keras-compatible API
 

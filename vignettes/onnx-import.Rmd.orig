@@ -13,7 +13,7 @@ knitr::opts_chunk$set(eval = FALSE)
 
 ggmlR includes a built-in zero-dependency ONNX loader (hand-written protobuf
 parser in C). Load any compatible ONNX model and run inference on CPU or
-Vulkan GPU — no Python, no TensorFlow, no ONNX Runtime required.
+Vulkan GPU — no external dependencies or runtimes required.
 
 ```{r}
 library(ggmlR)
@@ -126,20 +126,12 @@ For full working examples with real ONNX Zoo models see:
 
 If a model fails to load or produces wrong results:
 
-1. **Check operator support** — print the model's op list with Python's
-   `onnx` package and compare against the table above.
+1. **Check operator support** — use `onnx_summary()` to list the ops
+   your model uses and compare against the supported ops table above.
 
 2. **Verify protobuf field numbers** — the built-in parser is hand-written;
-   an unexpected field can cause silent mis-parsing.  Dump raw field tags:
-
-```{python}
-# Python: dump all field numbers seen in a TensorProto
-import onnx, sys
-m = onnx.load(sys.argv[1])
-for init in m.graph.initializer:
-    raw = init.SerializeToString()
-    # inspect field tags with a raw protobuf parser
-```
+   an unexpected field can cause silent mis-parsing. See the ONNX debugging
+   section in `CLAUDE.md` for field number tables.
 
 3. **NaN tracing** — use the eval callback for per-node inspection rather
    than a post-compute scan (which aliases buffers and gives false readings).
@@ -148,6 +140,3 @@ for init in m.graph.initializer:
    buffers over weight buffers. ggmlR calls `sched_alloc_and_load()` before
    each compute to reset allocation. If you see correct results on the first
    run but garbage on subsequent runs, this is the cause.
-
-See also the ONNX debugging section in `CLAUDE.md` for field number tables
-and the Python dump script.

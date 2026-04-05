@@ -2591,31 +2591,26 @@ static void ggml_vk_sync_buffers(ggml_backend_vk_context* ctx, vk_context& subct
         ctx->prealloc_x_need_sync = ctx->prealloc_y_need_sync = ctx->prealloc_split_k_need_sync = false;
     }
 
-    const vk::AccessFlags2 access = !transfer_queue
-        ? (vk::AccessFlagBits2::eShaderRead | vk::AccessFlagBits2::eShaderWrite |
-           vk::AccessFlagBits2::eTransferRead | vk::AccessFlagBits2::eTransferWrite)
-        : (vk::AccessFlagBits2::eTransferRead | vk::AccessFlagBits2::eTransferWrite);
-
-    const vk::PipelineStageFlags2 stages = !transfer_queue
-        ? (vk::PipelineStageFlagBits2::eComputeShader | vk::PipelineStageFlagBits2::eTransfer)
-        : vk::PipelineStageFlagBits2::eTransfer;
-
-    vk::MemoryBarrier2 barrier{};
-    barrier.setSrcStageMask(stages);
-    barrier.setSrcAccessMask(access);
-    barrier.setDstStageMask(stages);
-    barrier.setDstAccessMask(access);
-
-    vk::DependencyInfo dep_info{};
-    dep_info.setMemoryBarriers(barrier);
-    subctx->s->buffer.pipelineBarrier2(dep_info);
+    subctx->s->buffer.pipelineBarrier(
+        subctx->p->q->stage_flags,
+        subctx->p->q->stage_flags,
+        {},
+        { {
+          { !transfer_queue ? (vk::AccessFlagBits::eShaderRead | vk::AccessFlagBits::eShaderWrite | vk::AccessFlagBits::eTransferRead | vk::AccessFlagBits::eTransferWrite) : (vk::AccessFlagBits::eTransferRead | vk::AccessFlagBits::eTransferWrite) },
+          { !transfer_queue ? (vk::AccessFlagBits::eShaderRead | vk::AccessFlagBits::eShaderWrite | vk::AccessFlagBits::eTransferRead | vk::AccessFlagBits::eTransferWrite) : (vk::AccessFlagBits::eTransferRead | vk::AccessFlagBits::eTransferWrite) }
+        } },
+        {},
+        {}
+    );
 }
 
 static void ggml_vk_set_event(vk_context& ctx, vk::Event& event) {
     VK_LOG_DEBUG("ggml_vk_set_event()");
 
-    vk::DependencyInfo event_dep{};
-    ctx->s->buffer.setEvent2(event, event_dep);
+    ctx->s->buffer.setEvent(
+        event,
+        ctx->p->q->stage_flags
+    );
 }
 
 static void ggml_vk_wait_events(vk_context& ctx, std::vector<vk::Event>&& events) {
@@ -2624,24 +2619,14 @@ static void ggml_vk_wait_events(vk_context& ctx, std::vector<vk::Event>&& events
         return;
     }
 
-    const vk::PipelineStageFlags2 stages =
-        vk::PipelineStageFlagBits2::eComputeShader | vk::PipelineStageFlagBits2::eTransfer;
-    const vk::AccessFlags2 access =
-        vk::AccessFlagBits2::eShaderRead | vk::AccessFlagBits2::eShaderWrite |
-        vk::AccessFlagBits2::eTransferRead | vk::AccessFlagBits2::eTransferWrite;
-
-    vk::MemoryBarrier2 wait_barrier{};
-    wait_barrier.setSrcStageMask(stages);
-    wait_barrier.setSrcAccessMask(access);
-    wait_barrier.setDstStageMask(stages);
-    wait_barrier.setDstAccessMask(access);
-
-    vk::DependencyInfo wait_dep{};
-    wait_dep.setMemoryBarriers(wait_barrier);
-
-    for (auto& event : events) {
-        ctx->s->buffer.waitEvents2({ event }, wait_dep);
-    }
+    ctx->s->buffer.waitEvents(
+        events,
+        ctx->p->q->stage_flags,
+        ctx->p->q->stage_flags,
+        {},
+        {},
+        {}
+    );
 }
 
 // number of rows/cols for flash attention shader
@@ -4531,7 +4516,8 @@ static vk_device ggml_vk_get_device(size_t idx) {
         device->driver_id = driver_props.driverID;
 
         device->push_descriptors = push_descriptor_ext &&
-                                   push_descriptor_props.maxPushDescriptors >= MAX_PARAMETER_COUNT;
+                                   push_descriptor_props.maxPushDescriptors >= MAX_PARAMETER_COUNT &&
+                                   getenv("GGML_VK_DISABLE_PUSH_DESCRIPTORS") == nullptr;
         if (device->push_descriptors) {
             VK_LOG_DEBUG("ggml_vulkan: Push descriptors enabled (max=" << push_descriptor_props.maxPushDescriptors << ")");
         }
@@ -4656,12 +4642,7 @@ static vk_device ggml_vk_get_device(size_t idx) {
         vk12_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
         vk11_features.pNext = &vk12_features;
 
-        VkPhysicalDeviceVulkan13Features vk13_features {};
-        vk13_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
-        vk13_features.pNext = nullptr;
-        vk12_features.pNext = &vk13_features;
-
-        last_struct = (VkBaseOutStructure *)&vk13_features;
+        last_struct = (VkBaseOutStructure *)&vk12_features;
 
         VkPhysicalDevicePipelineRobustnessFeaturesEXT pl_robustness_features;
         pl_robustness_features.pNext = nullptr;
@@ -5292,10 +5273,14 @@ static void ggml_vk_instance_init() {
 
     uint32_t api_version = vk::enumerateInstanceVersion();
 
-    if (api_version < VK_API_VERSION_1_3) {
-        std::cerr << "ggml_vulkan: Error: Vulkan 1.3 required." << std::endl;
-        throw vk::SystemError(vk::Result::eErrorFeatureNotPresent, "Vulkan 1.3 required");
+    if (api_version < VK_API_VERSION_1_2) {
+        std::cerr << "ggml_vulkan: Error: Vulkan 1.2 required." << std::endl;
+        throw vk::SystemError(vk::Result::eErrorFeatureNotPresent, "Vulkan 1.2 required");
     }
+
+    // Cap at Vulkan 1.2 to avoid implicit Synchronization2 promotion in 1.3+
+    // which causes performance degradation on RADV (Mesa) drivers
+    api_version = VK_API_VERSION_1_2;
 
     vk::ApplicationInfo app_info{ "ggml-vulkan", 1, nullptr, 0, api_version };
 
@@ -10161,15 +10146,13 @@ static void ggml_vk_scatter_elements(ggml_backend_vk_context * ctx, vk_context& 
                                            src_sb.buffer, src_sb.offset,
                                            ggml_nbytes(data));
         /* Barrier: copy must finish before scatter shader reads/writes dst */
-        vk::MemoryBarrier2 scatter_barrier{};
-        scatter_barrier.setSrcStageMask(vk::PipelineStageFlagBits2::eTransfer);
-        scatter_barrier.setSrcAccessMask(vk::AccessFlagBits2::eTransferWrite);
-        scatter_barrier.setDstStageMask(vk::PipelineStageFlagBits2::eComputeShader);
-        scatter_barrier.setDstAccessMask(vk::AccessFlagBits2::eShaderRead | vk::AccessFlagBits2::eShaderWrite);
-
-        vk::DependencyInfo scatter_dep{};
-        scatter_dep.setMemoryBarriers(scatter_barrier);
-        subctx->s->buffer.pipelineBarrier2(scatter_dep);
+        subctx->s->buffer.pipelineBarrier(
+            vk::PipelineStageFlagBits::eTransfer,
+            vk::PipelineStageFlagBits::eComputeShader,
+            {},
+            { vk::MemoryBarrier(vk::AccessFlagBits::eTransferWrite,
+                                vk::AccessFlagBits::eShaderRead | vk::AccessFlagBits::eShaderWrite) },
+            {}, {});
     }
 
     /* Step 2: run scatter shader — pass updates as src0, indices as src1 */
