@@ -1,7 +1,7 @@
 Package: ggmlR
 Type: Package
 Title: 'GGML' Tensor Operations for Machine Learning
-Version: 0.6.9
+Version: 0.7.0
 Authors@R: c(
     person("Yuri", "Baramykov",
         email = "lbsbmsu@mail.ru",
@@ -22,7 +22,7 @@ Authors@R: c(
 Description: Provides 'R' bindings to the 'GGML' tensor library for machine
     learning, designed primarily for 'Vulkan' GPU acceleration with full CPU
     fallback. Requires 'Vulkan' 1.2+ with legacy pipeline barriers (avoids
-    'Synchronization2' due to RADV performance issues); supports 'Push
+    'Synchronization2' due to 'RADV' performance issues); supports 'Push
     Descriptors' ('VK_KHR_push_descriptor')
     to eliminate descriptor pool overhead when available. 'Vulkan' support is
     auto-detected at build time on Linux (when 'libvulkan-dev' and 'glslc'
@@ -30,7 +30,7 @@ Description: Provides 'R' bindings to the 'GGML' tensor library for machine
     'VULKAN_SDK' environment variable is set); all operations fall back to
     CPU transparently when no GPU is available.
     Supports tensors up to 5D natively (GGML_MAX_DIMS=5).
-    Implements tensor operations, neural network layers, quantization, and a
+    Implements tensor operations, neural network layers, 'quantization', and a
     'Keras'-like sequential model API for building and training networks.
     Includes 'AdamW' (Adam with Weight decay) and 'SGD' (Stochastic Gradient
     Descent) optimizers with 'MSE' (Mean Squared Error) and cross-entropy
@@ -63,13 +63,13 @@ Encoding: UTF-8
 SystemRequirements: C++17, GNU make, libvulkan-dev, glslc (optional,
         for GPU on Linux), 'Vulkan' 'SDK' (optional, for GPU on
         Windows)
-Suggests: knitr, rmarkdown, Rcpp, testthat (>= 3.0.0)
+Suggests: Rcpp, testthat (>= 3.0.0)
 VignetteBuilder: Rcpp
 RoxygenNote: 7.3.3
 Config/testthat/edition: 3
 Config/build/clean-inst-doc: false
 NeedsCompilation: yes
-Packaged: 2026-04-05 13:42:37 UTC; yuri
+Packaged: 2026-04-05 16:30:07 UTC; yuri
 Author: Yuri Baramykov [aut, cre],
   Georgi Gerganov [ctb, cph] (Author of the GGML library),
   Jeffrey Quesnelle [ctb, cph] (Contributor to ops.cpp),
