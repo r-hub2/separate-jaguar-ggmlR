@@ -63,13 +63,13 @@ Encoding: UTF-8
 SystemRequirements: C++17, GNU make, libvulkan-dev, glslc (optional,
         for GPU on Linux), 'Vulkan' 'SDK' (optional, for GPU on
         Windows)
-Suggests: knitr, rmarkdown, testthat (>= 3.0.0)
-VignetteBuilder: knitr
+Suggests: knitr, rmarkdown, Rcpp, testthat (>= 3.0.0)
+VignetteBuilder: Rcpp
 RoxygenNote: 7.3.3
 Config/testthat/edition: 3
 Config/build/clean-inst-doc: false
 NeedsCompilation: yes
-Packaged: 2026-04-05 11:39:11 UTC; yuri
+Packaged: 2026-04-05 13:42:37 UTC; yuri
 Author: Yuri Baramykov [aut, cre],
   Georgi Gerganov [ctb, cph] (Author of the GGML library),
   Jeffrey Quesnelle [ctb, cph] (Contributor to ops.cpp),
