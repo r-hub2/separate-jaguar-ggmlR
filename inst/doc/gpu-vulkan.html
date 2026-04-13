@@ -48,8 +48,9 @@ overflow: visible;
 }
 </style>
 <style type="text/css" data-origin="pandoc">
+html { -webkit-text-size-adjust: 100%; }
 pre > code.sourceCode { white-space: pre; position: relative; }
-pre > code.sourceCode > span { line-height: 1.25; }
+pre > code.sourceCode > span { display: inline-block; line-height: 1.25; }
 pre > code.sourceCode > span:empty { height: 1.2em; }
 .sourceCode { overflow: visible; }
 code.sourceCode > span { color: inherit; text-decoration: inherit; }
@@ -352,42 +353,52 @@ ONNX) fall back to CPU transparently when no GPU is present.</p>
 <span id="cb2-3"><a href="#cb2-3" tabindex="-1"></a>  <span class="fu">ggml_vulkan_status</span>()              <span class="co"># print device list and properties</span></span>
 <span id="cb2-4"><a href="#cb2-4" tabindex="-1"></a>} <span class="cf">else</span> {</span>
 <span id="cb2-5"><a href="#cb2-5" tabindex="-1"></a>  <span class="fu">cat</span>(<span class="st">&quot;No Vulkan GPU — running on CPU</span><span class="sc">\n</span><span class="st">&quot;</span>)</span>
-<span id="cb2-6"><a href="#cb2-6" tabindex="-1"></a>}</span>
-<span id="cb2-7"><a href="#cb2-7" tabindex="-1"></a></span>
-<span id="cb2-8"><a href="#cb2-8" tabindex="-1"></a>n <span class="ot">&lt;-</span> <span class="fu">ggml_vulkan_device_count</span>()</span>
-<span id="cb2-9"><a href="#cb2-9" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">&quot;Vulkan device count:&quot;</span>, n, <span class="st">&quot;</span><span class="sc">\n</span><span class="st">&quot;</span>)</span></code></pre></div>
+<span id="cb2-6"><a href="#cb2-6" tabindex="-1"></a>}</span></code></pre></div>
+<pre><code>## Vulkan is available
+## Vulkan: AVAILABLE
+##   Devices: 1 
+##   [0] AMD Radeon RX 9070 (RADV GFX1201)
+##       Memory: 16.60 GB free / 17.18 GB total</code></pre>
+<div class="sourceCode" id="cb4"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb4-1"><a href="#cb4-1" tabindex="-1"></a>n <span class="ot">&lt;-</span> <span class="fu">ggml_vulkan_device_count</span>()</span>
+<span id="cb4-2"><a href="#cb4-2" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">&quot;Vulkan device count:&quot;</span>, n, <span class="st">&quot;</span><span class="sc">\n</span><span class="st">&quot;</span>)</span></code></pre></div>
+<pre><code>## Vulkan device count: 1</code></pre>
 <hr />
 </div>
 <div id="device-enumeration" class="section level2">
 <h2>2. Device enumeration</h2>
-<div class="sourceCode" id="cb3"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb3-1"><a href="#cb3-1" tabindex="-1"></a><span class="co"># Low-level device registry (all backends including CPU)</span></span>
-<span id="cb3-2"><a href="#cb3-2" tabindex="-1"></a><span class="fu">ggml_backend_load_all</span>()</span>
-<span id="cb3-3"><a href="#cb3-3" tabindex="-1"></a></span>
-<span id="cb3-4"><a href="#cb3-4" tabindex="-1"></a>n_dev <span class="ot">&lt;-</span> <span class="fu">ggml_backend_dev_count</span>()</span>
-<span id="cb3-5"><a href="#cb3-5" tabindex="-1"></a><span class="cf">for</span> (i <span class="cf">in</span> <span class="fu">seq_len</span>(n_dev)) {</span>
-<span id="cb3-6"><a href="#cb3-6" tabindex="-1"></a>  dev  <span class="ot">&lt;-</span> <span class="fu">ggml_backend_dev_get</span>(i <span class="sc">-</span> <span class="dv">1</span><span class="dt">L</span>)   <span class="co"># 0-based</span></span>
-<span id="cb3-7"><a href="#cb3-7" tabindex="-1"></a>  name <span class="ot">&lt;-</span> <span class="fu">ggml_backend_dev_name</span>(dev)</span>
-<span id="cb3-8"><a href="#cb3-8" tabindex="-1"></a>  desc <span class="ot">&lt;-</span> <span class="fu">ggml_backend_dev_description</span>(dev)</span>
-<span id="cb3-9"><a href="#cb3-9" tabindex="-1"></a>  mem  <span class="ot">&lt;-</span> <span class="fu">ggml_backend_dev_memory</span>(dev)</span>
-<span id="cb3-10"><a href="#cb3-10" tabindex="-1"></a>  <span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">&quot;[%d] %s — %s</span><span class="sc">\n</span><span class="st">&quot;</span>, i, name, desc))</span>
-<span id="cb3-11"><a href="#cb3-11" tabindex="-1"></a>  <span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">&quot;    %.1f GB free / %.1f GB total</span><span class="sc">\n</span><span class="st">&quot;</span>,</span>
-<span id="cb3-12"><a href="#cb3-12" tabindex="-1"></a>              mem[<span class="st">&quot;free&quot;</span>] <span class="sc">/</span> <span class="fl">1e9</span>, mem[<span class="st">&quot;total&quot;</span>] <span class="sc">/</span> <span class="fl">1e9</span>))</span>
-<span id="cb3-13"><a href="#cb3-13" tabindex="-1"></a>}</span></code></pre></div>
+<div class="sourceCode" id="cb6"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb6-1"><a href="#cb6-1" tabindex="-1"></a><span class="co"># Low-level device registry (all backends including CPU)</span></span>
+<span id="cb6-2"><a href="#cb6-2" tabindex="-1"></a><span class="fu">ggml_backend_load_all</span>()</span>
+<span id="cb6-3"><a href="#cb6-3" tabindex="-1"></a></span>
+<span id="cb6-4"><a href="#cb6-4" tabindex="-1"></a>n_dev <span class="ot">&lt;-</span> <span class="fu">ggml_backend_dev_count</span>()</span>
+<span id="cb6-5"><a href="#cb6-5" tabindex="-1"></a><span class="cf">for</span> (i <span class="cf">in</span> <span class="fu">seq_len</span>(n_dev)) {</span>
+<span id="cb6-6"><a href="#cb6-6" tabindex="-1"></a>  dev  <span class="ot">&lt;-</span> <span class="fu">ggml_backend_dev_get</span>(i <span class="sc">-</span> <span class="dv">1</span><span class="dt">L</span>)   <span class="co"># 0-based</span></span>
+<span id="cb6-7"><a href="#cb6-7" tabindex="-1"></a>  name <span class="ot">&lt;-</span> <span class="fu">ggml_backend_dev_name</span>(dev)</span>
+<span id="cb6-8"><a href="#cb6-8" tabindex="-1"></a>  desc <span class="ot">&lt;-</span> <span class="fu">ggml_backend_dev_description</span>(dev)</span>
+<span id="cb6-9"><a href="#cb6-9" tabindex="-1"></a>  mem  <span class="ot">&lt;-</span> <span class="fu">ggml_backend_dev_memory</span>(dev)</span>
+<span id="cb6-10"><a href="#cb6-10" tabindex="-1"></a>  <span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">&quot;[%d] %s — %s</span><span class="sc">\n</span><span class="st">&quot;</span>, i, name, desc))</span>
+<span id="cb6-11"><a href="#cb6-11" tabindex="-1"></a>  <span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">&quot;    %.1f GB free / %.1f GB total</span><span class="sc">\n</span><span class="st">&quot;</span>,</span>
+<span id="cb6-12"><a href="#cb6-12" tabindex="-1"></a>              mem[<span class="st">&quot;free&quot;</span>] <span class="sc">/</span> <span class="fl">1e9</span>, mem[<span class="st">&quot;total&quot;</span>] <span class="sc">/</span> <span class="fl">1e9</span>))</span>
+<span id="cb6-13"><a href="#cb6-13" tabindex="-1"></a>}</span></code></pre></div>
+<pre><code>## [1] Vulkan0 — AMD Radeon RX 9070 (RADV GFX1201)
+##     16.6 GB free / 17.2 GB total
+## [2] CPU — AMD Ryzen 5 5600 6-Core Processor
+##     33.6 GB free / 33.6 GB total</code></pre>
 <p>Full example: <code>inst/examples/device_discovery.R</code></p>
 <hr />
 </div>
 <div id="autograd-device-selection" class="section level2">
 <h2>3. Autograd device selection</h2>
-<div class="sourceCode" id="cb4"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb4-1"><a href="#cb4-1" tabindex="-1"></a><span class="co"># Select GPU (falls back to CPU if unavailable)</span></span>
-<span id="cb4-2"><a href="#cb4-2" tabindex="-1"></a>device <span class="ot">&lt;-</span> <span class="fu">tryCatch</span>({</span>
-<span id="cb4-3"><a href="#cb4-3" tabindex="-1"></a>  <span class="fu">ag_device</span>(<span class="st">&quot;gpu&quot;</span>)</span>
-<span id="cb4-4"><a href="#cb4-4" tabindex="-1"></a>  <span class="st">&quot;gpu&quot;</span></span>
-<span id="cb4-5"><a href="#cb4-5" tabindex="-1"></a>}, <span class="at">error =</span> <span class="cf">function</span>(e) {</span>
-<span id="cb4-6"><a href="#cb4-6" tabindex="-1"></a>  <span class="fu">message</span>(<span class="st">&quot;GPU not available, using CPU&quot;</span>)</span>
-<span id="cb4-7"><a href="#cb4-7" tabindex="-1"></a>  <span class="st">&quot;cpu&quot;</span></span>
-<span id="cb4-8"><a href="#cb4-8" tabindex="-1"></a>})</span>
-<span id="cb4-9"><a href="#cb4-9" tabindex="-1"></a></span>
-<span id="cb4-10"><a href="#cb4-10" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">&quot;Active device:&quot;</span>, device, <span class="st">&quot;</span><span class="sc">\n</span><span class="st">&quot;</span>)</span></code></pre></div>
+<div class="sourceCode" id="cb8"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb8-1"><a href="#cb8-1" tabindex="-1"></a><span class="co"># Select GPU (falls back to CPU if unavailable)</span></span>
+<span id="cb8-2"><a href="#cb8-2" tabindex="-1"></a>device <span class="ot">&lt;-</span> <span class="fu">tryCatch</span>({</span>
+<span id="cb8-3"><a href="#cb8-3" tabindex="-1"></a>  <span class="fu">ag_device</span>(<span class="st">&quot;gpu&quot;</span>)</span>
+<span id="cb8-4"><a href="#cb8-4" tabindex="-1"></a>  <span class="st">&quot;gpu&quot;</span></span>
+<span id="cb8-5"><a href="#cb8-5" tabindex="-1"></a>}, <span class="at">error =</span> <span class="cf">function</span>(e) {</span>
+<span id="cb8-6"><a href="#cb8-6" tabindex="-1"></a>  <span class="fu">message</span>(<span class="st">&quot;GPU not available, using CPU&quot;</span>)</span>
+<span id="cb8-7"><a href="#cb8-7" tabindex="-1"></a>  <span class="st">&quot;cpu&quot;</span></span>
+<span id="cb8-8"><a href="#cb8-8" tabindex="-1"></a>})</span>
+<span id="cb8-9"><a href="#cb8-9" tabindex="-1"></a></span>
+<span id="cb8-10"><a href="#cb8-10" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">&quot;Active device:&quot;</span>, device, <span class="st">&quot;</span><span class="sc">\n</span><span class="st">&quot;</span>)</span></code></pre></div>
+<pre><code>## Active device: gpu</code></pre>
 <p>After <code>ag_device(&quot;gpu&quot;)</code>, all subsequent
 <code>ag_param</code> and <code>ag_tensor</code> calls allocate on the
 GPU. Switch back with <code>ag_device(&quot;cpu&quot;)</code>.</p>
@@ -395,25 +406,27 @@ GPU. Switch back with <code>ag_device(&quot;cpu&quot;)</code>.</p>
 </div>
 <div id="mixed-precision-f16-bf16" class="section level2">
 <h2>4. Mixed precision (f16 / bf16)</h2>
-<div class="sourceCode" id="cb5"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb5-1"><a href="#cb5-1" tabindex="-1"></a><span class="cf">if</span> (device <span class="sc">==</span> <span class="st">&quot;gpu&quot;</span>) {</span>
-<span id="cb5-2"><a href="#cb5-2" tabindex="-1"></a>  <span class="fu">ag_dtype</span>(<span class="st">&quot;f16&quot;</span>)     <span class="co"># half-precision on Vulkan GPU</span></span>
-<span id="cb5-3"><a href="#cb5-3" tabindex="-1"></a>  <span class="co"># ag_dtype(&quot;bf16&quot;) # bfloat16 — falls back to f16 on Vulkan automatically</span></span>
-<span id="cb5-4"><a href="#cb5-4" tabindex="-1"></a>} <span class="cf">else</span> {</span>
-<span id="cb5-5"><a href="#cb5-5" tabindex="-1"></a>  <span class="fu">ag_dtype</span>(<span class="st">&quot;f32&quot;</span>)     <span class="co"># full precision on CPU</span></span>
-<span id="cb5-6"><a href="#cb5-6" tabindex="-1"></a>}</span>
-<span id="cb5-7"><a href="#cb5-7" tabindex="-1"></a></span>
-<span id="cb5-8"><a href="#cb5-8" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">&quot;Active dtype:&quot;</span>, <span class="fu">ag_dtype</span>(), <span class="st">&quot;</span><span class="sc">\n</span><span class="st">&quot;</span>)</span></code></pre></div>
+<div class="sourceCode" id="cb10"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb10-1"><a href="#cb10-1" tabindex="-1"></a><span class="cf">if</span> (device <span class="sc">==</span> <span class="st">&quot;gpu&quot;</span>) {</span>
+<span id="cb10-2"><a href="#cb10-2" tabindex="-1"></a>  <span class="fu">ag_dtype</span>(<span class="st">&quot;f16&quot;</span>)     <span class="co"># half-precision on Vulkan GPU</span></span>
+<span id="cb10-3"><a href="#cb10-3" tabindex="-1"></a>  <span class="co"># ag_dtype(&quot;bf16&quot;) # bfloat16 — falls back to f16 on Vulkan automatically</span></span>
+<span id="cb10-4"><a href="#cb10-4" tabindex="-1"></a>} <span class="cf">else</span> {</span>
+<span id="cb10-5"><a href="#cb10-5" tabindex="-1"></a>  <span class="fu">ag_dtype</span>(<span class="st">&quot;f32&quot;</span>)     <span class="co"># full precision on CPU</span></span>
+<span id="cb10-6"><a href="#cb10-6" tabindex="-1"></a>}</span>
+<span id="cb10-7"><a href="#cb10-7" tabindex="-1"></a></span>
+<span id="cb10-8"><a href="#cb10-8" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">&quot;Active dtype:&quot;</span>, <span class="fu">ag_default_dtype</span>(), <span class="st">&quot;</span><span class="sc">\n</span><span class="st">&quot;</span>)</span></code></pre></div>
+<pre><code>## Active dtype: f16</code></pre>
 <p><code>bf16 → f16</code> fallback is automatic on Vulkan because bf16
 is not natively supported in GLSL shaders.</p>
 <hr />
 </div>
 <div id="vulkan-memory-info" class="section level2">
 <h2>5. Vulkan memory info</h2>
-<div class="sourceCode" id="cb6"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb6-1"><a href="#cb6-1" tabindex="-1"></a><span class="cf">if</span> (<span class="fu">ggml_vulkan_available</span>()) {</span>
-<span id="cb6-2"><a href="#cb6-2" tabindex="-1"></a>  mem <span class="ot">&lt;-</span> <span class="fu">ggml_vulkan_memory</span>(<span class="at">device_index =</span> <span class="dv">0</span><span class="dt">L</span>)</span>
-<span id="cb6-3"><a href="#cb6-3" tabindex="-1"></a>  <span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">&quot;GPU memory: %.1f MB free / %.1f MB total</span><span class="sc">\n</span><span class="st">&quot;</span>,</span>
-<span id="cb6-4"><a href="#cb6-4" tabindex="-1"></a>              mem[<span class="st">&quot;free&quot;</span>] <span class="sc">/</span> <span class="fl">1e6</span>, mem[<span class="st">&quot;total&quot;</span>] <span class="sc">/</span> <span class="fl">1e6</span>))</span>
-<span id="cb6-5"><a href="#cb6-5" tabindex="-1"></a>}</span></code></pre></div>
+<div class="sourceCode" id="cb12"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb12-1"><a href="#cb12-1" tabindex="-1"></a><span class="cf">if</span> (<span class="fu">ggml_vulkan_available</span>()) {</span>
+<span id="cb12-2"><a href="#cb12-2" tabindex="-1"></a>  mem <span class="ot">&lt;-</span> <span class="fu">ggml_vulkan_device_memory</span>(<span class="dv">0</span><span class="dt">L</span>)</span>
+<span id="cb12-3"><a href="#cb12-3" tabindex="-1"></a>  <span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">&quot;GPU memory: %.1f MB free / %.1f MB total</span><span class="sc">\n</span><span class="st">&quot;</span>,</span>
+<span id="cb12-4"><a href="#cb12-4" tabindex="-1"></a>              mem<span class="sc">$</span>free <span class="sc">/</span> <span class="fl">1e6</span>, mem<span class="sc">$</span>total <span class="sc">/</span> <span class="fl">1e6</span>))</span>
+<span id="cb12-5"><a href="#cb12-5" tabindex="-1"></a>}</span></code></pre></div>
+<pre><code>## GPU memory: 16603.8 MB free / 17179.9 MB total</code></pre>
 <hr />
 </div>
 <div id="multi-gpu" class="section level2">
@@ -421,10 +434,10 @@ is not natively supported in GLSL shaders.</p>
 <p>ggmlR supports multiple Vulkan devices via the backend scheduler.
 <code>dp_train()</code> distributes data across replicas
 automatically:</p>
-<div class="sourceCode" id="cb7"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb7-1"><a href="#cb7-1" tabindex="-1"></a>n_gpu <span class="ot">&lt;-</span> <span class="fu">ggml_vulkan_device_count</span>()</span>
-<span id="cb7-2"><a href="#cb7-2" tabindex="-1"></a><span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">&quot;Using %d GPU(s)</span><span class="sc">\n</span><span class="st">&quot;</span>, n_gpu))</span>
-<span id="cb7-3"><a href="#cb7-3" tabindex="-1"></a></span>
-<span id="cb7-4"><a href="#cb7-4" tabindex="-1"></a><span class="co"># dp_train handles multi-GPU internally — see vignette(&quot;data-parallel-training&quot;)</span></span></code></pre></div>
+<div class="sourceCode" id="cb14"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb14-1"><a href="#cb14-1" tabindex="-1"></a>n_gpu <span class="ot">&lt;-</span> <span class="fu">ggml_vulkan_device_count</span>()</span>
+<span id="cb14-2"><a href="#cb14-2" tabindex="-1"></a><span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">&quot;Using %d GPU(s)</span><span class="sc">\n</span><span class="st">&quot;</span>, n_gpu))</span></code></pre></div>
+<pre><code>## Using 1 GPU(s)</code></pre>
+<div class="sourceCode" id="cb16"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb16-1"><a href="#cb16-1" tabindex="-1"></a><span class="co"># dp_train handles multi-GPU internally — see vignette(&quot;data-parallel-training&quot;)</span></span></code></pre></div>
 <p>For low-level multi-GPU scheduler usage see
 <code>inst/examples/multi_gpu_example.R</code>.</p>
 <hr />
@@ -433,24 +446,30 @@ automatically:</p>
 <h2>7. Sequential / functional API on GPU</h2>
 <p>The high-level <code>ggml_fit()</code> API picks up the Vulkan
 backend automatically — no extra configuration needed:</p>
-<div class="sourceCode" id="cb8"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb8-1"><a href="#cb8-1" tabindex="-1"></a>model <span class="ot">&lt;-</span> <span class="fu">ggml_model_sequential</span>() <span class="sc">|&gt;</span></span>
-<span id="cb8-2"><a href="#cb8-2" tabindex="-1"></a>  <span class="fu">ggml_layer_dense</span>(<span class="dv">64</span><span class="dt">L</span>, <span class="at">activation =</span> <span class="st">&quot;relu&quot;</span>, <span class="at">input_shape =</span> <span class="dv">4</span><span class="dt">L</span>) <span class="sc">|&gt;</span></span>
-<span id="cb8-3"><a href="#cb8-3" tabindex="-1"></a>  <span class="fu">ggml_layer_dense</span>(<span class="dv">3</span><span class="dt">L</span>,  <span class="at">activation =</span> <span class="st">&quot;softmax&quot;</span>) <span class="sc">|&gt;</span></span>
-<span id="cb8-4"><a href="#cb8-4" tabindex="-1"></a>  <span class="fu">ggml_compile</span>(<span class="at">optimizer =</span> <span class="st">&quot;adam&quot;</span>, <span class="at">loss =</span> <span class="st">&quot;categorical_crossentropy&quot;</span>)</span>
-<span id="cb8-5"><a href="#cb8-5" tabindex="-1"></a></span>
-<span id="cb8-6"><a href="#cb8-6" tabindex="-1"></a><span class="co"># Training runs on GPU if Vulkan is available</span></span>
-<span id="cb8-7"><a href="#cb8-7" tabindex="-1"></a>model <span class="ot">&lt;-</span> <span class="fu">ggml_fit</span>(model, x_train, y_train, <span class="at">epochs =</span> <span class="dv">50</span><span class="dt">L</span>, <span class="at">batch_size =</span> <span class="dv">32</span><span class="dt">L</span>)</span></code></pre></div>
+<div class="sourceCode" id="cb17"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb17-1"><a href="#cb17-1" tabindex="-1"></a><span class="fu">data</span>(iris)</span>
+<span id="cb17-2"><a href="#cb17-2" tabindex="-1"></a>x_train <span class="ot">&lt;-</span> <span class="fu">scale</span>(<span class="fu">as.matrix</span>(iris[, <span class="dv">1</span><span class="sc">:</span><span class="dv">4</span>]))</span>
+<span id="cb17-3"><a href="#cb17-3" tabindex="-1"></a>y_train <span class="ot">&lt;-</span> <span class="fu">model.matrix</span>(<span class="sc">~</span> Species <span class="sc">-</span> <span class="dv">1</span>, iris)</span>
+<span id="cb17-4"><a href="#cb17-4" tabindex="-1"></a></span>
+<span id="cb17-5"><a href="#cb17-5" tabindex="-1"></a>model <span class="ot">&lt;-</span> <span class="fu">ggml_model_sequential</span>() <span class="sc">|&gt;</span></span>
+<span id="cb17-6"><a href="#cb17-6" tabindex="-1"></a>  <span class="fu">ggml_layer_dense</span>(<span class="dv">64</span><span class="dt">L</span>, <span class="at">activation =</span> <span class="st">&quot;relu&quot;</span>, <span class="at">input_shape =</span> <span class="dv">4</span><span class="dt">L</span>) <span class="sc">|&gt;</span></span>
+<span id="cb17-7"><a href="#cb17-7" tabindex="-1"></a>  <span class="fu">ggml_layer_dense</span>(<span class="dv">3</span><span class="dt">L</span>,  <span class="at">activation =</span> <span class="st">&quot;softmax&quot;</span>) <span class="sc">|&gt;</span></span>
+<span id="cb17-8"><a href="#cb17-8" tabindex="-1"></a>  <span class="fu">ggml_compile</span>(<span class="at">optimizer =</span> <span class="st">&quot;adam&quot;</span>, <span class="at">loss =</span> <span class="st">&quot;categorical_crossentropy&quot;</span>)</span></code></pre></div>
+<pre><code>## Using Vulkan GPU backend: AMD Radeon RX 9070 (RADV GFX1201)</code></pre>
+<div class="sourceCode" id="cb19"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb19-1"><a href="#cb19-1" tabindex="-1"></a><span class="co"># Training runs on GPU if Vulkan is available</span></span>
+<span id="cb19-2"><a href="#cb19-2" tabindex="-1"></a>model <span class="ot">&lt;-</span> <span class="fu">ggml_fit</span>(model, x_train, y_train, <span class="at">epochs =</span> <span class="dv">50</span><span class="dt">L</span>,</span>
+<span id="cb19-3"><a href="#cb19-3" tabindex="-1"></a>                  <span class="at">batch_size =</span> <span class="dv">32</span><span class="dt">L</span>, <span class="at">verbose =</span> <span class="dv">0</span><span class="dt">L</span>)</span></code></pre></div>
+<pre><code>## Note: dropping last 22 sample(s) (150 -&gt; 128) because batch_size=32 must divide evenly. Training metrics are computed on 128 samples only.</code></pre>
 <hr />
 </div>
 <div id="onnx-inference-on-gpu" class="section level2">
 <h2>8. ONNX inference on GPU</h2>
-<div class="sourceCode" id="cb9"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb9-1"><a href="#cb9-1" tabindex="-1"></a><span class="co"># Weights loaded to GPU once at load time</span></span>
-<span id="cb9-2"><a href="#cb9-2" tabindex="-1"></a>model_onnx <span class="ot">&lt;-</span> <span class="fu">ggml_onnx_load</span>(<span class="st">&quot;model.onnx&quot;</span>, <span class="at">backend =</span> <span class="st">&quot;vulkan&quot;</span>)</span>
-<span id="cb9-3"><a href="#cb9-3" tabindex="-1"></a></span>
-<span id="cb9-4"><a href="#cb9-4" tabindex="-1"></a><span class="co"># Repeated inference — no weight re-transfer</span></span>
-<span id="cb9-5"><a href="#cb9-5" tabindex="-1"></a><span class="cf">for</span> (i <span class="cf">in</span> <span class="fu">seq_len</span>(<span class="dv">100</span><span class="dt">L</span>)) {</span>
-<span id="cb9-6"><a href="#cb9-6" tabindex="-1"></a>  out <span class="ot">&lt;-</span> <span class="fu">ggml_onnx_run</span>(model_onnx, <span class="fu">list</span>(<span class="at">input =</span> batch[[i]]))</span>
-<span id="cb9-7"><a href="#cb9-7" tabindex="-1"></a>}</span></code></pre></div>
+<div class="sourceCode" id="cb21"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb21-1"><a href="#cb21-1" tabindex="-1"></a><span class="co"># Weights loaded to GPU once at load time</span></span>
+<span id="cb21-2"><a href="#cb21-2" tabindex="-1"></a>model_onnx <span class="ot">&lt;-</span> <span class="fu">ggml_onnx_load</span>(<span class="st">&quot;model.onnx&quot;</span>, <span class="at">backend =</span> <span class="st">&quot;vulkan&quot;</span>)</span>
+<span id="cb21-3"><a href="#cb21-3" tabindex="-1"></a></span>
+<span id="cb21-4"><a href="#cb21-4" tabindex="-1"></a><span class="co"># Repeated inference — no weight re-transfer</span></span>
+<span id="cb21-5"><a href="#cb21-5" tabindex="-1"></a><span class="cf">for</span> (i <span class="cf">in</span> <span class="fu">seq_len</span>(<span class="dv">100</span><span class="dt">L</span>)) {</span>
+<span id="cb21-6"><a href="#cb21-6" tabindex="-1"></a>  out <span class="ot">&lt;-</span> <span class="fu">ggml_onnx_run</span>(model_onnx, <span class="fu">list</span>(<span class="at">input =</span> batch[[i]]))</span>
+<span id="cb21-7"><a href="#cb21-7" tabindex="-1"></a>}</span></code></pre></div>
 <hr />
 </div>
 <div id="build-configuration" class="section level2">
@@ -459,14 +478,19 @@ backend automatically — no extra configuration needed:</p>
 <code>libvulkan-dev</code> and <code>glslc</code> are detected at
 install time. SIMD (AVX2/AVX512) for the CPU fallback requires an
 explicit flag:</p>
-<div class="sourceCode" id="cb10"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb10-1"><a href="#cb10-1" tabindex="-1"></a><span class="co"># Default install (Vulkan auto-detected, CPU fallback without SIMD)</span></span>
-<span id="cb10-2"><a href="#cb10-2" tabindex="-1"></a><span class="ex">R</span> CMD INSTALL .</span>
-<span id="cb10-3"><a href="#cb10-3" tabindex="-1"></a></span>
-<span id="cb10-4"><a href="#cb10-4" tabindex="-1"></a><span class="co"># With CPU SIMD acceleration</span></span>
-<span id="cb10-5"><a href="#cb10-5" tabindex="-1"></a><span class="ex">R</span> CMD INSTALL . <span class="at">--configure-args</span><span class="op">=</span><span class="st">&quot;--with-simd&quot;</span></span></code></pre></div>
+<div class="sourceCode" id="cb22"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb22-1"><a href="#cb22-1" tabindex="-1"></a><span class="co"># Default install (Vulkan auto-detected, CPU fallback without SIMD)</span></span>
+<span id="cb22-2"><a href="#cb22-2" tabindex="-1"></a><span class="ex">R</span> CMD INSTALL .</span>
+<span id="cb22-3"><a href="#cb22-3" tabindex="-1"></a></span>
+<span id="cb22-4"><a href="#cb22-4" tabindex="-1"></a><span class="co"># With CPU SIMD acceleration</span></span>
+<span id="cb22-5"><a href="#cb22-5" tabindex="-1"></a><span class="ex">R</span> CMD INSTALL . <span class="at">--configure-args</span><span class="op">=</span><span class="st">&quot;--with-simd&quot;</span></span></code></pre></div>
 <p>To check what was compiled in:</p>
-<div class="sourceCode" id="cb11"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb11-1"><a href="#cb11-1" tabindex="-1"></a><span class="fu">cat</span>(<span class="fu">ggml_version</span>(), <span class="st">&quot;</span><span class="sc">\n</span><span class="st">&quot;</span>)</span>
-<span id="cb11-2"><a href="#cb11-2" tabindex="-1"></a><span class="fu">ggml_vulkan_status</span>()   <span class="co"># shows &quot;Vulkan not available&quot; if not compiled in</span></span></code></pre></div>
+<div class="sourceCode" id="cb23"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb23-1"><a href="#cb23-1" tabindex="-1"></a><span class="fu">cat</span>(<span class="fu">ggml_version</span>(), <span class="st">&quot;</span><span class="sc">\n</span><span class="st">&quot;</span>)</span></code></pre></div>
+<pre><code>## 0.9.5</code></pre>
+<div class="sourceCode" id="cb25"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb25-1"><a href="#cb25-1" tabindex="-1"></a><span class="fu">ggml_vulkan_status</span>()   <span class="co"># shows &quot;Vulkan not available&quot; if not compiled in</span></span></code></pre></div>
+<pre><code>## Vulkan: AVAILABLE
+##   Devices: 1 
+##   [0] AMD Radeon RX 9070 (RADV GFX1201)
+##       Memory: 16.60 GB free / 17.18 GB total</code></pre>
 </div>
 
 

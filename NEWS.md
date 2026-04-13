@@ -1,3 +1,26 @@
+# ggmlR 0.7.1
+
+## mlr3 integration
+
+* **`LearnerClassifGGML` / `LearnerRegrGGML`** — ggmlR sequential and functional networks are now first-class `mlr3` learners. After `library(ggmlR)` (with `mlr3` installed), the learners become available via:
+  ```r
+  lrn("classif.ggml")
+  lrn("regr.ggml")
+  ```
+  `mlr3`, `paradox`, `R6` and related packages are in `Suggests`: ggmlR does not pull them in unless the user has them installed, and the integration is wired up lazily in `.onLoad`.
+
+* **`ggml_default_mlp()`** — exported builder for a configurable MLP. Used as the default `model_fn` by both learners and available directly for manual use or as a template for custom builders. Supports classification (softmax head) and regression (linear head) via `task_type`.
+
+* **User-supplied architectures via `model_fn`** — the learners expose a `model_fn` field on the R6 object. The function receives `(task, n_features, n_out, pars)` and must return an uncompiled `ggml_sequential_model` or `ggml_functional_model`; the learner then calls `ggml_compile()` with the correct loss. Both the sequential and functional ggmlR APIs are supported, so any network you can build with ggmlR layers can be used as an `mlr3` learner.
+
+* **Parallel tuning via in-memory marshalling** — the learners declare the `"marshal"` property and implement `marshal_model` / `unmarshal_model` S3 methods for `mlr3`'s marshal generics. Trained models are serialized into a self-describing container (`format`, `version`, `ggmlR_version`, `R_version`, SHA-256 checksum, payload) that can be transported to parallel workers by `future` / `callr` without file-system round-trips. Two new helpers, **`ggml_marshal_model()`** and **`ggml_unmarshal_model()`**, expose the same machinery outside of `mlr3`.
+
+* **Observation weights** — `LearnerClassifGGML` declares `properties = "weights"` and reads `task$weights_learner` (with a fallback to the legacy `task$weights`), passing them to `ggml_fit()` as `sample_weight`. Row alignment follows `task$row_ids`, so arbitrary internal task ordering is handled correctly. Regression weights are not yet enabled pending a semantic fix to weighted MSE in `ggml_fit_sequential()`.
+
+* **Callbacks** — both learners expose a `callbacks` parameter (`p_uty`) that is forwarded to `ggml_fit()`, enabling early stopping, LR schedules, and reduce-on-plateau during `mlr3` tuning. Only honoured for sequential models; functional-API fit currently ignores callbacks.
+
+* **New Suggests:** `mlr3 (>= 0.21.0)`, `paradox`, `R6`, `checkmate`, `digest`, `mlr3pipelines`.
+
 # ggmlR 0.7.0
 
 ## Vignettes: prebuilt HTML via Rcpp::asis
