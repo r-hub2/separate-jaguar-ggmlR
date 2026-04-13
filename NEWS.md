@@ -1,3 +1,22 @@
+# ggmlR 0.7.2
+
+## Vulkan: RDNA4 (RX 9000) cooperative matrix support
+
+* **AMD RDNA4 (GFX12xx) detected correctly** — `get_device_architecture()` now identifies RDNA4 by `wavefrontsPerSimd == 16` (distinct from RDNA3's 8 and RDNA1's 20). Previously GFX1201 fell through to `AMD_RDNA3` due to identical subgroup size range (min=32, max=64).
+* **`VK_AMD_shader_core_properties` queried at device init** — `wavefronts_per_simd` is now stored in `vk_device_struct` and read once during `ggml_vk_get_device()`, not just inside `get_device_architecture()`.
+* **`SHADERGEN_DEFINES` propagated to C++ compiler** — `configure` now appends `SHADERGEN_DEFINES` (which includes `-DGGML_VULKAN_COOPMAT_GLSLC_SUPPORT`) to `VULKAN_CPPFLAGS`. Previously these defines were only passed to `vulkan-shaders-gen`, so all `#if defined(GGML_VULKAN_COOPMAT_GLSLC_SUPPORT)` blocks in `ggml-vulkan.cpp` were dead code at runtime.
+* **`ggml_backend_vk_get_device_caps()` extended** — now returns `subgroup_min_size`, `subgroup_max_size`, `wavefronts_per_simd`, and `arch` (string) in addition to the original 5 fields. R function `ggml_vulkan_device_caps()` exposes all 9 fields.
+* **Result on RX 9070 (RADV GFX1201):** `coopmat_support=YES`, `coopmat1_fa_support=YES` — KHR cooperative matrix GEMM and flash-attention paths now active.
+
+## Vulkan: Q4_K flash attention (FA_SCALAR + FA_COOPMAT1)
+
+* **Q4_K in flash attention** — `GGML_OP_FLASH_ATTN_EXT` now accepts `K`/`V` tensors in `Q4_K` format on Vulkan. Previously Q4_K fell back to CPU; now it runs fully on GPU via both the scalar and cooperative-matrix (KHR) paths.
+* `dequantize4_q4k()` added to `flash_attn_base.glsl` — decodes 4 consecutive Q4_K elements from a `block_q4_K_packed16` block: reconstructs the 6-bit scale and min for the sub-block, reads two consecutive `uint16` from `qs[]`, and extracts four nibbles. Works for both K and V bindings.
+* `flash_attn.comp` (FA_SCALAR) and `flash_attn_cm1.comp` (FA_COOPMAT1) now compiled with `DATA_A_Q4_K` / `BLOCK_SIZE=QUANT_K_Q4_K=256`. Four SPIR-V variants generated: f32acc and f16acc for each path.
+* `vulkan-shaders-gen.cpp` — `q4_k` added to the FA scalar and coopmat1 generation conditions.
+* `ggml-vulkan.cpp` — `CREATE_FA(GGML_TYPE_Q4_K, ...)` added for FA_SCALAR and FA_COOPMAT1; `GGML_TYPE_Q4_K` added to the supported-types switch in `ggml_backend_vk_device_supports_op`.
+* Note: most efficient when head dimension (`HSK`) is a multiple of 256 (e.g. DeepSeek-V2/V3 MLA). For HSK=128 (Llama, Mistral) the shader is functionally correct but pads the inner loop to 256.
+
 # ggmlR 0.7.1
 
 ## tidymodels / parsnip integration

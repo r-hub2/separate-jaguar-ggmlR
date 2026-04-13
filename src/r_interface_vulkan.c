@@ -216,3 +216,37 @@ SEXP R_ggml_vulkan_list_devices(void) {
     return allocVector(VECSXP, 0);
 #endif
 }
+
+SEXP R_ggml_vulkan_device_caps(SEXP device_idx) {
+#ifdef GGML_USE_VULKAN
+    bool coopmat_support = false, coopmat1_fa_support = false, fp16 = false, subgroup_no_shmem = false;
+    uint32_t subgroup_size = 0, subgroup_min_size = 0, subgroup_max_size = 0, wavefronts_per_simd = 0;
+    const char *arch_name = "OTHER";
+    ggml_backend_vk_get_device_caps(asInteger(device_idx), &coopmat_support, &coopmat1_fa_support,
+                                     &fp16, &subgroup_size, &subgroup_no_shmem,
+                                     &subgroup_min_size, &subgroup_max_size,
+                                     &wavefronts_per_simd, &arch_name);
+
+    const char *nms[] = {"coopmat_support", "coopmat1_fa_support", "fp16",
+                         "subgroup_size", "subgroup_min_size", "subgroup_max_size",
+                         "subgroup_no_shmem", "wavefronts_per_simd", "arch"};
+    SEXP result = PROTECT(allocVector(VECSXP, 9));
+    SEXP names  = PROTECT(allocVector(STRSXP, 9));
+    SET_VECTOR_ELT(result, 0, ScalarLogical(coopmat_support));
+    SET_VECTOR_ELT(result, 1, ScalarLogical(coopmat1_fa_support));
+    SET_VECTOR_ELT(result, 2, ScalarLogical(fp16));
+    SET_VECTOR_ELT(result, 3, ScalarInteger((int)subgroup_size));
+    SET_VECTOR_ELT(result, 4, ScalarInteger((int)subgroup_min_size));
+    SET_VECTOR_ELT(result, 5, ScalarInteger((int)subgroup_max_size));
+    SET_VECTOR_ELT(result, 6, ScalarLogical(subgroup_no_shmem));
+    SET_VECTOR_ELT(result, 7, ScalarInteger((int)wavefronts_per_simd));
+    SET_VECTOR_ELT(result, 8, mkString(arch_name));
+    for (int i = 0; i < 9; i++) SET_STRING_ELT(names, i, mkChar(nms[i]));
+    setAttrib(result, R_NamesSymbol, names);
+    UNPROTECT(2);
+    return result;
+#else
+    error("Vulkan support not compiled");
+    return R_NilValue;
+#endif
+}

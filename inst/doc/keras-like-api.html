@@ -417,7 +417,7 @@ layers with <code>|&gt;</code>, compile, fit, evaluate, predict.</p>
 <h3>1.4 Evaluate and predict</h3>
 <div class="sourceCode" id="cb7"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb7-1"><a href="#cb7-1" tabindex="-1"></a>score <span class="ot">&lt;-</span> <span class="fu">ggml_evaluate</span>(model, x_val, y_val, <span class="at">batch_size =</span> <span class="dv">16</span><span class="dt">L</span>)</span>
 <span id="cb7-2"><a href="#cb7-2" tabindex="-1"></a><span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">&quot;Val loss: %.4f   Val accuracy: %.4f</span><span class="sc">\n</span><span class="st">&quot;</span>, score<span class="sc">$</span>loss, score<span class="sc">$</span>accuracy))</span></code></pre></div>
-<pre><code>## Val loss: 0.1844   Val accuracy: 0.9333</code></pre>
+<pre><code>## Val loss: 0.1843   Val accuracy: 0.9333</code></pre>
 <div class="sourceCode" id="cb9"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb9-1"><a href="#cb9-1" tabindex="-1"></a>probs   <span class="ot">&lt;-</span> <span class="fu">ggml_predict</span>(model, x_val, <span class="at">batch_size =</span> <span class="dv">16</span><span class="dt">L</span>)</span>
 <span id="cb9-2"><a href="#cb9-2" tabindex="-1"></a>classes <span class="ot">&lt;-</span> <span class="fu">apply</span>(probs, <span class="dv">1</span>, which.max)</span>
 <span id="cb9-3"><a href="#cb9-3" tabindex="-1"></a>true    <span class="ot">&lt;-</span> <span class="fu">apply</span>(y_val, <span class="dv">1</span>, which.max)</span>
@@ -435,7 +435,7 @@ layers with <code>|&gt;</code>, compile, fit, evaluate, predict.</p>
 <div class="sourceCode" id="cb13"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb13-1"><a href="#cb13-1" tabindex="-1"></a>path <span class="ot">&lt;-</span> <span class="fu">tempfile</span>(<span class="at">fileext =</span> <span class="st">&quot;.rds&quot;</span>)</span>
 <span id="cb13-2"><a href="#cb13-2" tabindex="-1"></a><span class="fu">ggml_save_model</span>(model, path)</span>
 <span id="cb13-3"><a href="#cb13-3" tabindex="-1"></a><span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">&quot;Saved: %s (%.1f KB)</span><span class="sc">\n</span><span class="st">&quot;</span>, path, <span class="fu">file.size</span>(path) <span class="sc">/</span> <span class="dv">1024</span>))</span></code></pre></div>
-<pre><code>## Saved: /tmp/Rtmp1rWIre/file33124ca62a01.rds (4.3 KB)</code></pre>
+<pre><code>## Saved: /tmp/Rtmpw5HmxU/file7dcb461d8dd6e.rds (4.3 KB)</code></pre>
 <div class="sourceCode" id="cb15"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb15-1"><a href="#cb15-1" tabindex="-1"></a>model2 <span class="ot">&lt;-</span> <span class="fu">ggml_load_model</span>(path)</span>
 <span id="cb15-2"><a href="#cb15-2" tabindex="-1"></a>score2 <span class="ot">&lt;-</span> <span class="fu">ggml_evaluate</span>(model2, x_val, y_val, <span class="at">batch_size =</span> <span class="dv">16</span><span class="dt">L</span>)</span>
 <span id="cb15-3"><a href="#cb15-3" tabindex="-1"></a><span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">&quot;Reloaded model accuracy: %.4f</span><span class="sc">\n</span><span class="st">&quot;</span>, score2<span class="sc">$</span>accuracy))</span></code></pre></div>
@@ -503,7 +503,7 @@ transmission features.</p>
 <span id="cb21-30"><a href="#cb21-30" tabindex="-1"></a></span>
 <span id="cb21-31"><a href="#cb21-31" tabindex="-1"></a>preds <span class="ot">&lt;-</span> <span class="fu">ggml_predict</span>(model_reg, <span class="at">x =</span> <span class="fu">list</span>(x1, x2), <span class="at">batch_size =</span> <span class="dv">16</span><span class="dt">L</span>)</span>
 <span id="cb21-32"><a href="#cb21-32" tabindex="-1"></a><span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">&quot;Pearson r (scaled mpg): %.4f</span><span class="sc">\n</span><span class="st">&quot;</span>, <span class="fu">cor</span>(preds, y_mpg)))</span></code></pre></div>
-<pre><code>## Pearson r (scaled mpg): 0.9072</code></pre>
+<pre><code>## Pearson r (scaled mpg): 0.9070</code></pre>
 <hr />
 </div>
 </div>
@@ -615,9 +615,9 @@ graphs. Tensors are <strong>column-major</strong>: shape is
 <span id="cb29-22"><a href="#cb29-22" tabindex="-1"></a>  <span class="cf">if</span> (ep <span class="sc">%%</span> <span class="dv">50</span><span class="dt">L</span> <span class="sc">==</span> <span class="dv">0</span><span class="dt">L</span>)</span>
 <span id="cb29-23"><a href="#cb29-23" tabindex="-1"></a>    <span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">&quot;epoch %d  loss %.4f</span><span class="sc">\n</span><span class="st">&quot;</span>, ep, loss<span class="sc">$</span>data[<span class="dv">1</span>]))</span>
 <span id="cb29-24"><a href="#cb29-24" tabindex="-1"></a>}</span></code></pre></div>
-<pre><code>## epoch 50  loss 0.2163
-## epoch 100  loss 0.0584
-## epoch 150  loss 0.0083</code></pre>
+<pre><code>## epoch 50  loss 0.2152
+## epoch 100  loss 0.0587
+## epoch 150  loss 0.0081</code></pre>
 </div>
 <div id="inference-and-accuracy" class="section level3">
 <h3>4.4 Inference and accuracy</h3>

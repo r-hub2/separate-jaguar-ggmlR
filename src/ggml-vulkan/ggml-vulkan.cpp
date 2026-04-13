@@ -271,6 +271,7 @@ enum vk_device_architecture {
     AMD_RDNA1,
     AMD_RDNA2,
     AMD_RDNA3,
+    AMD_RDNA4,
     INTEL_XE2,
     NVIDIA_PRE_TURING,
 };
@@ -314,9 +315,13 @@ static vk_device_architecture get_device_architecture(const vk::PhysicalDevice& 
             return vk_device_architecture::AMD_GCN;
         }
         if (subgroup_size_control_props.maxSubgroupSize == 64 && subgroup_size_control_props.minSubgroupSize == 32) {
-            // RDNA
+            // RDNA1/2/3/4: distinguished by wavefrontsPerSimd
             if (shader_core_props_amd.wavefrontsPerSimd == 20) {
                 return vk_device_architecture::AMD_RDNA1;
+            }
+            if (shader_core_props_amd.wavefrontsPerSimd == 16) {
+                // RDNA4 (GFX12xx): 16 wavefronts per SIMD
+                return vk_device_architecture::AMD_RDNA4;
             }
             if (integer_dot_props.integerDotProduct4x8BitPackedMixedSignednessAccelerated) {
                 return vk_device_architecture::AMD_RDNA3;
@@ -587,6 +592,7 @@ struct vk_device_struct {
     uint32_t subgroup_min_size;
     uint32_t subgroup_max_size;
     bool subgroup_require_full_support;
+    uint32_t wavefronts_per_simd;  // AMD only, from VK_AMD_shader_core_properties
 
     // floor(log2(maxComputeWorkGroupInvocations))
     uint32_t max_workgroup_size_log2 {};
@@ -3096,12 +3102,14 @@ static void ggml_vk_load_shaders(vk_device& device) {
     CREATE_FA(GGML_TYPE_F16, f16, FA_SCALAR, )
     CREATE_FA(GGML_TYPE_Q4_0, q4_0, FA_SCALAR, )
     CREATE_FA(GGML_TYPE_Q8_0, q8_0, FA_SCALAR, )
+    CREATE_FA(GGML_TYPE_Q4_K, q4_k, FA_SCALAR, )
 #if defined(VK_KHR_cooperative_matrix) && defined(GGML_VULKAN_COOPMAT_GLSLC_SUPPORT)
     if (device->coopmat1_fa_support) {
         CREATE_FA(GGML_TYPE_F32, f32, FA_COOPMAT1, _cm1)
         CREATE_FA(GGML_TYPE_F16, f16, FA_COOPMAT1, _cm1)
         CREATE_FA(GGML_TYPE_Q4_0, q4_0, FA_COOPMAT1, _cm1)
         CREATE_FA(GGML_TYPE_Q8_0, q8_0, FA_COOPMAT1, _cm1)
+        CREATE_FA(GGML_TYPE_Q4_K, q4_k, FA_COOPMAT1, _cm1)
     }
 #endif
 #if defined(VK_NV_cooperative_matrix2) && defined(GGML_VULKAN_COOPMAT2_GLSLC_SUPPORT)
@@ -4397,6 +4405,7 @@ static vk_device ggml_vk_get_device(size_t idx) {
         bool fp16_compute = false;
         bool maintenance4_support = false;
         bool sm_builtins = false;
+        bool amd_shader_core_properties = false;
         bool amd_shader_core_properties2 = false;
         bool pipeline_robustness = false;
         bool coopmat2_support = false;
@@ -4415,6 +4424,8 @@ static vk_device ggml_vk_get_device(size_t idx) {
                 fp16_compute = true;
             } else if (strcmp("VK_NV_shader_sm_builtins", properties.extensionName) == 0) {
                 sm_builtins = true;
+            } else if (strcmp("VK_AMD_shader_core_properties", properties.extensionName) == 0) {
+                amd_shader_core_properties = true;
             } else if (strcmp("VK_AMD_shader_core_properties2", properties.extensionName) == 0) {
                 amd_shader_core_properties2 = true;
             } else if (strcmp("VK_EXT_pipeline_robustness", properties.extensionName) == 0) {
@@ -4460,6 +4471,7 @@ static vk_device ggml_vk_get_device(size_t idx) {
         vk::PhysicalDeviceSubgroupProperties subgroup_props;
         vk::PhysicalDeviceDriverProperties driver_props;
         vk::PhysicalDeviceShaderSMBuiltinsPropertiesNV sm_props;
+        vk::PhysicalDeviceShaderCorePropertiesAMD amd_shader_core_props;
         vk::PhysicalDeviceShaderCoreProperties2AMD amd_shader_core_properties2_props;
         vk::PhysicalDeviceVulkan11Properties vk11_props;
         vk::PhysicalDeviceVulkan12Properties vk12_props;
@@ -4481,6 +4493,10 @@ static vk_device ggml_vk_get_device(size_t idx) {
         if (sm_builtins) {
             last_struct->pNext = (VkBaseOutStructure *)&sm_props;
             last_struct = (VkBaseOutStructure *)&sm_props;
+        }
+        if (amd_shader_core_properties) {
+            last_struct->pNext = (VkBaseOutStructure *)&amd_shader_core_props;
+            last_struct = (VkBaseOutStructure *)&amd_shader_core_props;
         }
         if (amd_shader_core_properties2) {
             last_struct->pNext = (VkBaseOutStructure *)&amd_shader_core_properties2_props;
@@ -4514,6 +4530,8 @@ static vk_device ggml_vk_get_device(size_t idx) {
         device->properties = props2.properties;
         device->vendor_id = device->properties.vendorID;
         device->driver_id = driver_props.driverID;
+
+        device->wavefronts_per_simd = amd_shader_core_properties ? amd_shader_core_props.wavefrontsPerSimd : 0;
 
         device->push_descriptors = push_descriptor_ext &&
                                    push_descriptor_props.maxPushDescriptors >= MAX_PARAMETER_COUNT &&
@@ -14072,6 +14090,37 @@ void ggml_backend_vk_get_device_memory(int device, size_t * free, size_t * total
     }
 }
 
+void ggml_backend_vk_get_device_caps(int device_idx, bool * coopmat_support, bool * coopmat1_fa_support,
+                                      bool * fp16, uint32_t * subgroup_size, bool * subgroup_no_shmem,
+                                      uint32_t * subgroup_min_size, uint32_t * subgroup_max_size,
+                                      uint32_t * wavefronts_per_simd, const char ** arch_name) {
+    ggml_vk_instance_init();
+    GGML_ASSERT(device_idx >= 0 && device_idx < (int) vk_instance.device_indices.size());
+    vk_device dev = ggml_vk_get_device((size_t)device_idx);
+    if (coopmat_support)    *coopmat_support    = dev->coopmat_support;
+    if (coopmat1_fa_support)*coopmat1_fa_support = dev->coopmat1_fa_support;
+    if (fp16)               *fp16               = dev->fp16;
+    if (subgroup_size)      *subgroup_size       = dev->subgroup_size;
+    // subgroup_no_shmem is active when subgroup_arithmetic is enabled and not AMD GCN
+    if (subgroup_no_shmem)  *subgroup_no_shmem  = dev->subgroup_arithmetic &&
+                                                   dev->architecture != vk_device_architecture::AMD_GCN;
+    if (subgroup_min_size)    *subgroup_min_size    = dev->subgroup_min_size;
+    if (subgroup_max_size)    *subgroup_max_size    = dev->subgroup_max_size;
+    if (wavefronts_per_simd)  *wavefronts_per_simd  = dev->wavefronts_per_simd;
+    if (arch_name) {
+        switch (dev->architecture) {
+            case vk_device_architecture::AMD_GCN:          *arch_name = "AMD_GCN";          break;
+            case vk_device_architecture::AMD_RDNA1:        *arch_name = "AMD_RDNA1";        break;
+            case vk_device_architecture::AMD_RDNA2:        *arch_name = "AMD_RDNA2";        break;
+            case vk_device_architecture::AMD_RDNA3:        *arch_name = "AMD_RDNA3";        break;
+            case vk_device_architecture::AMD_RDNA4:        *arch_name = "AMD_RDNA4";        break;
+            case vk_device_architecture::INTEL_XE2:        *arch_name = "INTEL_XE2";        break;
+            case vk_device_architecture::NVIDIA_PRE_TURING:*arch_name = "NVIDIA_PRE_TURING";break;
+            default:                                        *arch_name = "OTHER";            break;
+        }
+    }
+}
+
 static vk::PhysicalDeviceType ggml_backend_vk_get_device_type(int device_idx) {
     GGML_ASSERT(device_idx >= 0 && device_idx < (int) vk_instance.device_indices.size());
 
@@ -14326,7 +14375,10 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
                 case GGML_TYPE_F32:
                 case GGML_TYPE_Q4_0:
                 case GGML_TYPE_Q8_0:
-                    // supported in scalar and coopmat2 paths
+                    // supported in scalar and coopmat1/coopmat2 paths
+                    break;
+                case GGML_TYPE_Q4_K:
+                    // supported in scalar and coopmat1 paths; most efficient when HSK is a multiple of 256
                     break;
                 case GGML_TYPE_Q4_1:
                 case GGML_TYPE_Q5_0:
@@ -14334,7 +14386,6 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
                 // K dequants currently disabled because D dimension is rounded up to 256 and runs inefficiently
                 //case GGML_TYPE_Q2_K:
                 //case GGML_TYPE_Q3_K:
-                //case GGML_TYPE_Q4_K:
                 //case GGML_TYPE_Q5_K:
                 //case GGML_TYPE_Q6_K:
                 //case GGML_TYPE_IQ1_S:
@@ -14913,7 +14964,7 @@ static bool ggml_vk_khr_cooperative_matrix_support(const vk::PhysicalDevicePrope
     case VK_VENDOR_ID_AMD:
         if (driver_props.driverID == vk::DriverId::eAmdProprietary || driver_props.driverID == vk::DriverId::eAmdOpenSource) {
             // Workaround for AMD proprietary driver reporting support on all GPUs
-            return arch == vk_device_architecture::AMD_RDNA3;
+            return arch == vk_device_architecture::AMD_RDNA3 || arch == vk_device_architecture::AMD_RDNA4;
         }
         return true;
     default:
