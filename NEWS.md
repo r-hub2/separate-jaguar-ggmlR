@@ -1,25 +1,34 @@
 # ggmlR 0.7.1
 
+## tidymodels / parsnip integration
+
+* **`"ggml"` engine for `parsnip::mlp()`** — registers a `"ggml"` engine for both classification and regression modes. After `library(ggmlR)` (with `parsnip` installed), use:
+  ```r
+  mlp(hidden_units = 64, epochs = 100) |>
+    set_engine("ggml", batch_size = 32, backend = "auto") |>
+    set_mode("classification")
+  ```
+  Engine arguments: `batch_size`, `backend`, `verbose`, `validation_split`, `optimizer`, `callbacks`. All `mlp()` parameters (`hidden_units`, `epochs`, `dropout`, `activation`, `learn_rate`) are mapped through.
+* **`backend = "gpu"` in parsnip** — `"gpu"` is now correctly translated to `"vulkan"` inside `ggmlr_parsnip_fit_classif()` and `ggmlr_parsnip_fit_regr()`. Previously the string was passed through and caused an unknown backend error.
+* **`learn_rate` callback** — the `learn_rate` argument from `mlp()` is applied via an internal `on_epoch_begin` callback that sets the optimizer learning rate at the start of epoch 1. Works for both `"adam"` and `"sgd"` optimizers.
+* **New `Suggests`:** `parsnip`, `tibble`, `rlang`, `dials`.
+* **New example:** `inst/examples/tidymodels_integration.R` — CPU vs GPU comparison for iris classification and mtcars regression using the parsnip engine.
+
 ## mlr3 integration
 
-* **`LearnerClassifGGML` / `LearnerRegrGGML`** — ggmlR sequential and functional networks are now first-class `mlr3` learners. After `library(ggmlR)` (with `mlr3` installed), the learners become available via:
-  ```r
-  lrn("classif.ggml")
-  lrn("regr.ggml")
-  ```
-  `mlr3`, `paradox`, `R6` and related packages are in `Suggests`: ggmlR does not pull them in unless the user has them installed, and the integration is wired up lazily in `.onLoad`.
+* **`LearnerClassifGGML` / `LearnerRegrGGML` always defined** — R6 class definitions are now unconditional (no longer wrapped in `if (requireNamespace("mlr3"))`). This ensures the classes are always present in the ggmlR namespace, so `ggmlR:::.register_mlr3()` can be called reliably from vignettes and tests regardless of package load order.
+* **Registration robustness** — `.onLoad()` no longer uses `mlr3misc::register_namespace_callback()` (which had a bug in v0.21.0 causing `R CMD check` warning `namespace can be unloaded cleanly`). Registration now uses `isNamespaceLoaded()` + `setHook()` directly, covering both "mlr3 already loaded" and "mlr3 loads after ggmlR" scenarios.
+* **`mlr3misc` removed from `Suggests`** — no longer needed.
+* **New example:** `inst/examples/mlr3_integration.R` — CPU vs GPU comparison for iris classification and mtcars regression, plus 3-fold CV.
 
-* **`ggml_default_mlp()`** — exported builder for a configurable MLP. Used as the default `model_fn` by both learners and available directly for manual use or as a template for custom builders. Supports classification (softmax head) and regression (linear head) via `task_type`.
+## Bug fixes
 
-* **User-supplied architectures via `model_fn`** — the learners expose a `model_fn` field on the R6 object. The function receives `(task, n_features, n_out, pars)` and must return an uncompiled `ggml_sequential_model` or `ggml_functional_model`; the learner then calls `ggml_compile()` with the correct loss. Both the sequential and functional ggmlR APIs are supported, so any network you can build with ggmlR layers can be used as an `mlr3` learner.
+* `marshal_model.*` / `unmarshal_model.*` S3 methods no longer appear in `NAMESPACE` as `S3method(mlr3::marshal_model, ...)` — this caused `Error: namespace 'marshal_model' not found` on package load. Methods are now registered exclusively via `registerS3method()` in `.onLoad()`.
 
-* **Parallel tuning via in-memory marshalling** — the learners declare the `"marshal"` property and implement `marshal_model` / `unmarshal_model` S3 methods for `mlr3`'s marshal generics. Trained models are serialized into a self-describing container (`format`, `version`, `ggmlR_version`, `R_version`, SHA-256 checksum, payload) that can be transported to parallel workers by `future` / `callr` without file-system round-trips. Two new helpers, **`ggml_marshal_model()`** and **`ggml_unmarshal_model()`**, expose the same machinery outside of `mlr3`.
+## Tests
 
-* **Observation weights** — `LearnerClassifGGML` declares `properties = "weights"` and reads `task$weights_learner` (with a fallback to the legacy `task$weights`), passing them to `ggml_fit()` as `sample_weight`. Row alignment follows `task$row_ids`, so arbitrary internal task ordering is handled correctly. Regression weights are not yet enabled pending a semantic fix to weighted MSE in `ggml_fit_sequential()`.
-
-* **Callbacks** — both learners expose a `callbacks` parameter (`p_uty`) that is forwarded to `ggml_fit()`, enabling early stopping, LR schedules, and reduce-on-plateau during `mlr3` tuning. Only honoured for sequential models; functional-API fit currently ignores callbacks.
-
-* **New Suggests:** `mlr3 (>= 0.21.0)`, `paradox`, `R6`, `checkmate`, `digest`, `mlr3pipelines`.
+* `test-parsnip.R` — new tests: `learn_rate` applied without error; `backend="gpu"` accepted and converted to `"vulkan"` (skipped when Vulkan unavailable).
+* `test-mlr3-learner.R` — explicit `ggmlR:::.register_mlr3()` call at top of file for reliable registration in `R CMD check` test process.
 
 # ggmlR 0.7.0
 

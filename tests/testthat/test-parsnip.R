@@ -138,6 +138,39 @@ test_that("parsnip passes hidden_units as hidden_layers to ggmlR", {
     parsnip::set_mode("classification")
 
   fit_obj <- parsnip::fit(spec, Species ~ ., data = iris)
-  # Model should have trained successfully with the specified architecture
+  expect_s3_class(fit_obj$fit, "ggmlr_parsnip_model")
+})
+
+test_that("parsnip ggml learn_rate is applied without error", {
+  skip_if_no_parsnip()
+  set.seed(42)
+
+  spec <- parsnip::mlp(
+    hidden_units = 16L,
+    epochs       = 5L,
+    learn_rate   = 0.005
+  ) |>
+    parsnip::set_engine("ggml", batch_size = 10L) |>
+    parsnip::set_mode("classification")
+
+  fit_obj <- parsnip::fit(spec, Species ~ ., data = iris)
+  expect_s3_class(fit_obj$fit, "ggmlr_parsnip_model")
+
+  preds <- predict(fit_obj, new_data = iris)
+  expect_equal(nrow(preds), nrow(iris))
+})
+
+test_that("parsnip ggml backend='gpu' is accepted (converted to vulkan)", {
+  skip_if_no_parsnip()
+  skip_if_not(ggml_vulkan_available(), "Vulkan not available")
+  set.seed(42)
+
+  spec <- parsnip::mlp(hidden_units = 16L, epochs = 3L) |>
+    parsnip::set_engine("ggml", batch_size = 10L, backend = "gpu") |>
+    parsnip::set_mode("classification")
+
+  expect_no_error(
+    fit_obj <- parsnip::fit(spec, Species ~ ., data = iris)
+  )
   expect_s3_class(fit_obj$fit, "ggmlr_parsnip_model")
 })

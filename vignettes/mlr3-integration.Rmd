@@ -93,7 +93,7 @@ learner$param_set$values$backend       <- "gpu"
 
 Set `backend = "gpu"` (or leave `"auto"` if a Vulkan GPU is available):
 
-```{r}
+```{r, eval=ggml_vulkan_available()}
 learner <- lrn("classif.ggml",
                backend = "gpu",
                epochs  = 100L)

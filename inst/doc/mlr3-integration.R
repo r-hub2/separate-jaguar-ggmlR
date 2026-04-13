@@ -43,7 +43,7 @@ learner$param_set$values$hidden_layers <- c(256L, 128L, 64L)
 learner$param_set$values$dropout       <- 0.3
 learner$param_set$values$backend       <- "gpu"
 
-## -----------------------------------------------------------------------------
+## ----eval=ggml_vulkan_available()---------------------------------------------
 learner <- lrn("classif.ggml",
                backend = "gpu",
                epochs  = 100L)
