@@ -435,7 +435,7 @@ layers with <code>|&gt;</code>, compile, fit, evaluate, predict.</p>
 <div class="sourceCode" id="cb13"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb13-1"><a href="#cb13-1" tabindex="-1"></a>path <span class="ot">&lt;-</span> <span class="fu">tempfile</span>(<span class="at">fileext =</span> <span class="st">&quot;.rds&quot;</span>)</span>
 <span id="cb13-2"><a href="#cb13-2" tabindex="-1"></a><span class="fu">ggml_save_model</span>(model, path)</span>
 <span id="cb13-3"><a href="#cb13-3" tabindex="-1"></a><span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">&quot;Saved: %s (%.1f KB)</span><span class="sc">\n</span><span class="st">&quot;</span>, path, <span class="fu">file.size</span>(path) <span class="sc">/</span> <span class="dv">1024</span>))</span></code></pre></div>
-<pre><code>## Saved: /tmp/RtmpctMsg8/file2ade82fbeabea.rds (4.3 KB)</code></pre>
+<pre><code>## Saved: /tmp/Rtmp1rWIre/file33124ca62a01.rds (4.3 KB)</code></pre>
 <div class="sourceCode" id="cb15"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb15-1"><a href="#cb15-1" tabindex="-1"></a>model2 <span class="ot">&lt;-</span> <span class="fu">ggml_load_model</span>(path)</span>
 <span id="cb15-2"><a href="#cb15-2" tabindex="-1"></a>score2 <span class="ot">&lt;-</span> <span class="fu">ggml_evaluate</span>(model2, x_val, y_val, <span class="at">batch_size =</span> <span class="dv">16</span><span class="dt">L</span>)</span>
 <span id="cb15-3"><a href="#cb15-3" tabindex="-1"></a><span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">&quot;Reloaded model accuracy: %.4f</span><span class="sc">\n</span><span class="st">&quot;</span>, score2<span class="sc">$</span>accuracy))</span></code></pre></div>

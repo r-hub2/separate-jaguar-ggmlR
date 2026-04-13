@@ -8,7 +8,8 @@ vignette: >
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(eval = FALSE)
+knitr::opts_chunk$set(eval = FALSE, collapse = TRUE, comment = "#>")
+library(ggmlR)
 ```
 
 ggmlR includes a built-in zero-dependency ONNX loader (hand-written protobuf
@@ -18,7 +19,7 @@ Vulkan GPU — no Python, no TensorFlow, no ONNX Runtime required.
 > **Note:** The examples below require a valid `.onnx` model file.
 > Replace `"path/to/model.onnx"` with the actual path on your system.
 
-```{r}
+```{r, eval=FALSE}
 library(ggmlR)
 ```
 
@@ -26,7 +27,7 @@ library(ggmlR)
 
 ## 1. Load and inspect a model
 
-```{r}
+```{r, eval=FALSE}
 model <- onnx_load("path/to/model.onnx")
 
 # Model summary (layers, ops, parameters)
@@ -43,7 +44,7 @@ onnx_inputs(model)
 Inputs are named R arrays in NCHW order (matching the ONNX model's expected
 layout).
 
-```{r}
+```{r, eval=FALSE}
 # Random image batch — replace with real data
 input <- array(runif(1 * 3 * 224 * 224), dim = c(1L, 3L, 224L, 224L))
 
@@ -54,7 +55,7 @@ cat("Output shape:", paste(dim(result[[1]]), collapse = " x "), "\n")
 
 For models with multiple inputs, pass a named list:
 
-```{r}
+```{r, eval=FALSE}
 result <- onnx_run(model, list(
   input_ids      = array(as.integer(tokens), dim = c(1L, length(tokens))),
   attention_mask = array(1L, dim = c(1L, length(tokens)))
@@ -68,7 +69,7 @@ result <- onnx_run(model, list(
 By default ggmlR tries Vulkan first and falls back to CPU automatically.
 To force a specific backend:
 
-```{r}
+```{r, eval=FALSE}
 # Check what's available
 if (ggml_vulkan_available()) {
   cat("Vulkan GPU ready\n")
@@ -89,7 +90,7 @@ Weights are transferred to the GPU once at load time. Repeated calls to
 
 Some models accept variable-length inputs. Override shapes at load time:
 
-```{r}
+```{r, eval=FALSE}
 model <- onnx_load("path/to/bert.onnx",
                     input_shapes = list(input_ids = c(1L, 128L)))
 ```
@@ -100,7 +101,7 @@ model <- onnx_load("path/to/bert.onnx",
 
 Run in half-precision for faster GPU inference:
 
-```{r}
+```{r, eval=FALSE}
 model_fp16 <- onnx_load("path/to/model.onnx", dtype = "f16")
 result <- onnx_run(model_fp16, list(input = input))
 ```
@@ -130,7 +131,7 @@ Custom fused ops: **RelPosBias2D** (BoTNet).
 
 For full working examples with real ONNX Zoo models see:
 
-```{r}
+```{r, eval=FALSE}
 # GPU vs CPU benchmark across multiple models
 # inst/examples/benchmark_onnx.R
 
