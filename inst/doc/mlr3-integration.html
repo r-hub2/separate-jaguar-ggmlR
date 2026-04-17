@@ -507,19 +507,17 @@ ensures models survive serialization across parallel workers.</p>
 <span id="cb6-13"><a href="#cb6-13" tabindex="-1"></a>rr<span class="sc">$</span><span class="fu">aggregate</span>(<span class="fu">msr</span>(<span class="st">&quot;classif.acc&quot;</span>))</span>
 <span id="cb6-14"><a href="#cb6-14" tabindex="-1"></a><span class="co">#&gt; classif.acc </span></span>
 <span id="cb6-15"><a href="#cb6-15" tabindex="-1"></a><span class="co">#&gt;   0.9533333</span></span></code></pre></div>
-<p>Benchmarking against other learners:</p>
-<div class="sourceCode" id="cb7"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb7-1"><a href="#cb7-1" tabindex="-1"></a>future<span class="sc">::</span><span class="fu">plan</span>(<span class="st">&quot;sequential&quot;</span>)  <span class="co"># ensure rpart is visible in all workers</span></span>
-<span id="cb7-2"><a href="#cb7-2" tabindex="-1"></a></span>
-<span id="cb7-3"><a href="#cb7-3" tabindex="-1"></a>design <span class="ot">&lt;-</span> <span class="fu">benchmark_grid</span>(</span>
-<span id="cb7-4"><a href="#cb7-4" tabindex="-1"></a>  <span class="at">tasks    =</span> <span class="fu">tsk</span>(<span class="st">&quot;iris&quot;</span>),</span>
-<span id="cb7-5"><a href="#cb7-5" tabindex="-1"></a>  <span class="at">learners =</span> <span class="fu">list</span>(</span>
-<span id="cb7-6"><a href="#cb7-6" tabindex="-1"></a>    <span class="fu">lrn</span>(<span class="st">&quot;classif.ggml&quot;</span>, <span class="at">epochs =</span> <span class="dv">20</span><span class="dt">L</span>, <span class="at">batch_size =</span> <span class="dv">16</span><span class="dt">L</span>),</span>
-<span id="cb7-7"><a href="#cb7-7" tabindex="-1"></a>    <span class="fu">lrn</span>(<span class="st">&quot;classif.rpart&quot;</span>)</span>
-<span id="cb7-8"><a href="#cb7-8" tabindex="-1"></a>  ),</span>
-<span id="cb7-9"><a href="#cb7-9" tabindex="-1"></a>  <span class="at">resamplings =</span> <span class="fu">rsmp</span>(<span class="st">&quot;cv&quot;</span>, <span class="at">folds =</span> <span class="dv">5</span><span class="dt">L</span>)</span>
-<span id="cb7-10"><a href="#cb7-10" tabindex="-1"></a>)</span>
-<span id="cb7-11"><a href="#cb7-11" tabindex="-1"></a>bmr <span class="ot">&lt;-</span> <span class="fu">benchmark</span>(design)</span>
-<span id="cb7-12"><a href="#cb7-12" tabindex="-1"></a>bmr<span class="sc">$</span><span class="fu">aggregate</span>(<span class="fu">msr</span>(<span class="st">&quot;classif.acc&quot;</span>))</span></code></pre></div>
+<p>Benchmarking multiple ggmlR configurations:</p>
+<div class="sourceCode" id="cb7"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb7-1"><a href="#cb7-1" tabindex="-1"></a>design <span class="ot">&lt;-</span> <span class="fu">benchmark_grid</span>(</span>
+<span id="cb7-2"><a href="#cb7-2" tabindex="-1"></a>  <span class="at">tasks    =</span> <span class="fu">tsk</span>(<span class="st">&quot;iris&quot;</span>),</span>
+<span id="cb7-3"><a href="#cb7-3" tabindex="-1"></a>  <span class="at">learners =</span> <span class="fu">list</span>(</span>
+<span id="cb7-4"><a href="#cb7-4" tabindex="-1"></a>    <span class="fu">lrn</span>(<span class="st">&quot;classif.ggml&quot;</span>, <span class="at">epochs =</span> <span class="dv">20</span><span class="dt">L</span>, <span class="at">batch_size =</span> <span class="dv">16</span><span class="dt">L</span>, <span class="at">backend =</span> <span class="st">&quot;cpu&quot;</span>),</span>
+<span id="cb7-5"><a href="#cb7-5" tabindex="-1"></a>    <span class="fu">lrn</span>(<span class="st">&quot;classif.ggml&quot;</span>, <span class="at">epochs =</span> <span class="dv">20</span><span class="dt">L</span>, <span class="at">batch_size =</span> <span class="dv">16</span><span class="dt">L</span>, <span class="at">backend =</span> <span class="st">&quot;gpu&quot;</span>)</span>
+<span id="cb7-6"><a href="#cb7-6" tabindex="-1"></a>  ),</span>
+<span id="cb7-7"><a href="#cb7-7" tabindex="-1"></a>  <span class="at">resamplings =</span> <span class="fu">rsmp</span>(<span class="st">&quot;cv&quot;</span>, <span class="at">folds =</span> <span class="dv">5</span><span class="dt">L</span>)</span>
+<span id="cb7-8"><a href="#cb7-8" tabindex="-1"></a>)</span>
+<span id="cb7-9"><a href="#cb7-9" tabindex="-1"></a>bmr <span class="ot">&lt;-</span> <span class="fu">benchmark</span>(design)</span>
+<span id="cb7-10"><a href="#cb7-10" tabindex="-1"></a>bmr<span class="sc">$</span><span class="fu">aggregate</span>(<span class="fu">msr</span>(<span class="st">&quot;classif.acc&quot;</span>))</span></code></pre></div>
 <hr />
 </div>
 <div id="hyperparameter-tuning" class="section level2">
@@ -549,49 +547,23 @@ ensures models survive serialization across parallel workers.</p>
 <span id="cb8-22"><a href="#cb8-22" tabindex="-1"></a>instance<span class="sc">$</span>result</span></code></pre></div>
 <hr />
 </div>
-<div id="pipelines-with-mlr3pipelines" class="section level2">
-<h2>Pipelines with mlr3pipelines</h2>
-<p>ggmlR learners accept only numeric features. Use
-<code>mlr3pipelines</code> to encode factors automatically:</p>
-<div class="sourceCode" id="cb9"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb9-1"><a href="#cb9-1" tabindex="-1"></a><span class="fu">library</span>(mlr3pipelines)</span>
-<span id="cb9-2"><a href="#cb9-2" tabindex="-1"></a></span>
-<span id="cb9-3"><a href="#cb9-3" tabindex="-1"></a>graph <span class="ot">&lt;-</span> <span class="fu">po</span>(<span class="st">&quot;encode&quot;</span>) <span class="sc">%&gt;&gt;%</span> <span class="fu">lrn</span>(<span class="st">&quot;classif.ggml&quot;</span>, <span class="at">epochs =</span> <span class="dv">20</span><span class="dt">L</span>)</span>
-<span id="cb9-4"><a href="#cb9-4" tabindex="-1"></a>glrn  <span class="ot">&lt;-</span> <span class="fu">as_learner</span>(graph)</span>
-<span id="cb9-5"><a href="#cb9-5" tabindex="-1"></a></span>
-<span id="cb9-6"><a href="#cb9-6" tabindex="-1"></a>task <span class="ot">&lt;-</span> <span class="fu">tsk</span>(<span class="st">&quot;penguins&quot;</span>)</span>
-<span id="cb9-7"><a href="#cb9-7" tabindex="-1"></a>glrn<span class="sc">$</span><span class="fu">train</span>(task)</span>
-<span id="cb9-8"><a href="#cb9-8" tabindex="-1"></a>glrn<span class="sc">$</span><span class="fu">predict</span>(task)</span></code></pre></div>
-<p>For tasks that need imputation and scaling:</p>
-<div class="sourceCode" id="cb10"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb10-1"><a href="#cb10-1" tabindex="-1"></a>graph <span class="ot">&lt;-</span></span>
-<span id="cb10-2"><a href="#cb10-2" tabindex="-1"></a>  <span class="fu">po</span>(<span class="st">&quot;imputemedian&quot;</span>) <span class="sc">%&gt;&gt;%</span></span>
-<span id="cb10-3"><a href="#cb10-3" tabindex="-1"></a>  <span class="fu">po</span>(<span class="st">&quot;encode&quot;</span>) <span class="sc">%&gt;&gt;%</span></span>
-<span id="cb10-4"><a href="#cb10-4" tabindex="-1"></a>  <span class="fu">po</span>(<span class="st">&quot;scale&quot;</span>) <span class="sc">%&gt;&gt;%</span></span>
-<span id="cb10-5"><a href="#cb10-5" tabindex="-1"></a>  <span class="fu">lrn</span>(<span class="st">&quot;classif.ggml&quot;</span>,</span>
-<span id="cb10-6"><a href="#cb10-6" tabindex="-1"></a>      <span class="at">epochs        =</span> <span class="dv">30</span><span class="dt">L</span>,</span>
-<span id="cb10-7"><a href="#cb10-7" tabindex="-1"></a>      <span class="at">batch_size    =</span> <span class="dv">16</span><span class="dt">L</span>,</span>
-<span id="cb10-8"><a href="#cb10-8" tabindex="-1"></a>      <span class="at">hidden_layers =</span> <span class="fu">c</span>(<span class="dv">64</span><span class="dt">L</span>, <span class="dv">32</span><span class="dt">L</span>))</span>
-<span id="cb10-9"><a href="#cb10-9" tabindex="-1"></a></span>
-<span id="cb10-10"><a href="#cb10-10" tabindex="-1"></a>glrn <span class="ot">&lt;-</span> <span class="fu">as_learner</span>(graph)</span>
-<span id="cb10-11"><a href="#cb10-11" tabindex="-1"></a>glrn<span class="sc">$</span><span class="fu">train</span>(<span class="fu">tsk</span>(<span class="st">&quot;penguins&quot;</span>))</span></code></pre></div>
-<hr />
-</div>
 <div id="callbacks" class="section level2">
 <h2>Callbacks</h2>
 <p>Pass ggmlR callbacks through the <code>callbacks</code>
 parameter:</p>
-<div class="sourceCode" id="cb11"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb11-1"><a href="#cb11-1" tabindex="-1"></a>learner <span class="ot">&lt;-</span> <span class="fu">lrn</span>(<span class="st">&quot;classif.ggml&quot;</span>,</span>
-<span id="cb11-2"><a href="#cb11-2" tabindex="-1"></a>               <span class="at">epochs     =</span> <span class="dv">200</span><span class="dt">L</span>,</span>
-<span id="cb11-3"><a href="#cb11-3" tabindex="-1"></a>               <span class="at">batch_size =</span> <span class="dv">16</span><span class="dt">L</span>,</span>
-<span id="cb11-4"><a href="#cb11-4" tabindex="-1"></a>               <span class="at">callbacks  =</span> <span class="fu">list</span>(</span>
-<span id="cb11-5"><a href="#cb11-5" tabindex="-1"></a>                 <span class="fu">ggml_callback_early_stopping</span>(</span>
-<span id="cb11-6"><a href="#cb11-6" tabindex="-1"></a>                   <span class="at">monitor  =</span> <span class="st">&quot;val_loss&quot;</span>,</span>
-<span id="cb11-7"><a href="#cb11-7" tabindex="-1"></a>                   <span class="at">patience =</span> <span class="dv">10</span><span class="dt">L</span></span>
-<span id="cb11-8"><a href="#cb11-8" tabindex="-1"></a>                 )</span>
-<span id="cb11-9"><a href="#cb11-9" tabindex="-1"></a>               ),</span>
-<span id="cb11-10"><a href="#cb11-10" tabindex="-1"></a>               <span class="at">validation_split =</span> <span class="fl">0.2</span>)</span>
-<span id="cb11-11"><a href="#cb11-11" tabindex="-1"></a></span>
-<span id="cb11-12"><a href="#cb11-12" tabindex="-1"></a>learner<span class="sc">$</span><span class="fu">train</span>(<span class="fu">tsk</span>(<span class="st">&quot;iris&quot;</span>))</span>
-<span id="cb11-13"><a href="#cb11-13" tabindex="-1"></a><span class="co">#&gt; Note: dropping last 6 sample(s) (150 -&gt; 144) because batch_size=16 must divide evenly. Training metrics are computed on 144 samples only.</span></span></code></pre></div>
+<div class="sourceCode" id="cb9"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb9-1"><a href="#cb9-1" tabindex="-1"></a>learner <span class="ot">&lt;-</span> <span class="fu">lrn</span>(<span class="st">&quot;classif.ggml&quot;</span>,</span>
+<span id="cb9-2"><a href="#cb9-2" tabindex="-1"></a>               <span class="at">epochs     =</span> <span class="dv">200</span><span class="dt">L</span>,</span>
+<span id="cb9-3"><a href="#cb9-3" tabindex="-1"></a>               <span class="at">batch_size =</span> <span class="dv">16</span><span class="dt">L</span>,</span>
+<span id="cb9-4"><a href="#cb9-4" tabindex="-1"></a>               <span class="at">callbacks  =</span> <span class="fu">list</span>(</span>
+<span id="cb9-5"><a href="#cb9-5" tabindex="-1"></a>                 <span class="fu">ggml_callback_early_stopping</span>(</span>
+<span id="cb9-6"><a href="#cb9-6" tabindex="-1"></a>                   <span class="at">monitor  =</span> <span class="st">&quot;val_loss&quot;</span>,</span>
+<span id="cb9-7"><a href="#cb9-7" tabindex="-1"></a>                   <span class="at">patience =</span> <span class="dv">10</span><span class="dt">L</span></span>
+<span id="cb9-8"><a href="#cb9-8" tabindex="-1"></a>                 )</span>
+<span id="cb9-9"><a href="#cb9-9" tabindex="-1"></a>               ),</span>
+<span id="cb9-10"><a href="#cb9-10" tabindex="-1"></a>               <span class="at">validation_split =</span> <span class="fl">0.2</span>)</span>
+<span id="cb9-11"><a href="#cb9-11" tabindex="-1"></a></span>
+<span id="cb9-12"><a href="#cb9-12" tabindex="-1"></a>learner<span class="sc">$</span><span class="fu">train</span>(<span class="fu">tsk</span>(<span class="st">&quot;iris&quot;</span>))</span>
+<span id="cb9-13"><a href="#cb9-13" tabindex="-1"></a><span class="co">#&gt; Note: dropping last 6 sample(s) (150 -&gt; 144) because batch_size=16 must divide evenly. Training metrics are computed on 144 samples only.</span></span></code></pre></div>
 <hr />
 </div>
 <div id="observation-weights" class="section level2">
@@ -599,76 +571,62 @@ parameter:</p>
 <p>The classification learner honours task weights. Assign a
 <code>weights_learner</code> column to upweight or downweight specific
 observations:</p>
-<div class="sourceCode" id="cb12"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb12-1"><a href="#cb12-1" tabindex="-1"></a>d <span class="ot">&lt;-</span> <span class="fu">data.frame</span>(</span>
-<span id="cb12-2"><a href="#cb12-2" tabindex="-1"></a>  <span class="at">x1 =</span> <span class="fu">rnorm</span>(<span class="dv">100</span>),</span>
-<span id="cb12-3"><a href="#cb12-3" tabindex="-1"></a>  <span class="at">x2 =</span> <span class="fu">rnorm</span>(<span class="dv">100</span>),</span>
-<span id="cb12-4"><a href="#cb12-4" tabindex="-1"></a>  <span class="at">y  =</span> <span class="fu">factor</span>(<span class="fu">rep</span>(<span class="fu">c</span>(<span class="st">&quot;a&quot;</span>, <span class="st">&quot;b&quot;</span>), <span class="at">each =</span> <span class="dv">50</span>)),</span>
-<span id="cb12-5"><a href="#cb12-5" tabindex="-1"></a>  <span class="at">w  =</span> <span class="fu">c</span>(<span class="fu">rep</span>(<span class="fl">2.0</span>, <span class="dv">50</span>), <span class="fu">rep</span>(<span class="fl">0.5</span>, <span class="dv">50</span>))</span>
-<span id="cb12-6"><a href="#cb12-6" tabindex="-1"></a>)</span>
-<span id="cb12-7"><a href="#cb12-7" tabindex="-1"></a>task <span class="ot">&lt;-</span> <span class="fu">as_task_classif</span>(d, <span class="at">target =</span> <span class="st">&quot;y&quot;</span>)</span>
-<span id="cb12-8"><a href="#cb12-8" tabindex="-1"></a>task<span class="sc">$</span><span class="fu">set_col_roles</span>(<span class="st">&quot;w&quot;</span>, <span class="at">roles =</span> <span class="st">&quot;weights_learner&quot;</span>)</span>
-<span id="cb12-9"><a href="#cb12-9" tabindex="-1"></a></span>
-<span id="cb12-10"><a href="#cb12-10" tabindex="-1"></a>learner <span class="ot">&lt;-</span> <span class="fu">lrn</span>(<span class="st">&quot;classif.ggml&quot;</span>, <span class="at">epochs =</span> <span class="dv">20</span><span class="dt">L</span>)</span>
-<span id="cb12-11"><a href="#cb12-11" tabindex="-1"></a>learner<span class="sc">$</span><span class="fu">train</span>(task)</span>
-<span id="cb12-12"><a href="#cb12-12" tabindex="-1"></a><span class="co">#&gt; Note: dropping last 4 sample(s) (100 -&gt; 96) because batch_size=32 must divide evenly. Training metrics are computed on 96 samples only.</span></span></code></pre></div>
+<div class="sourceCode" id="cb10"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb10-1"><a href="#cb10-1" tabindex="-1"></a>d <span class="ot">&lt;-</span> <span class="fu">data.frame</span>(</span>
+<span id="cb10-2"><a href="#cb10-2" tabindex="-1"></a>  <span class="at">x1 =</span> <span class="fu">rnorm</span>(<span class="dv">100</span>),</span>
+<span id="cb10-3"><a href="#cb10-3" tabindex="-1"></a>  <span class="at">x2 =</span> <span class="fu">rnorm</span>(<span class="dv">100</span>),</span>
+<span id="cb10-4"><a href="#cb10-4" tabindex="-1"></a>  <span class="at">y  =</span> <span class="fu">factor</span>(<span class="fu">rep</span>(<span class="fu">c</span>(<span class="st">&quot;a&quot;</span>, <span class="st">&quot;b&quot;</span>), <span class="at">each =</span> <span class="dv">50</span>)),</span>
+<span id="cb10-5"><a href="#cb10-5" tabindex="-1"></a>  <span class="at">w  =</span> <span class="fu">c</span>(<span class="fu">rep</span>(<span class="fl">2.0</span>, <span class="dv">50</span>), <span class="fu">rep</span>(<span class="fl">0.5</span>, <span class="dv">50</span>))</span>
+<span id="cb10-6"><a href="#cb10-6" tabindex="-1"></a>)</span>
+<span id="cb10-7"><a href="#cb10-7" tabindex="-1"></a>task <span class="ot">&lt;-</span> <span class="fu">as_task_classif</span>(d, <span class="at">target =</span> <span class="st">&quot;y&quot;</span>)</span>
+<span id="cb10-8"><a href="#cb10-8" tabindex="-1"></a>task<span class="sc">$</span><span class="fu">set_col_roles</span>(<span class="st">&quot;w&quot;</span>, <span class="at">roles =</span> <span class="st">&quot;weights_learner&quot;</span>)</span>
+<span id="cb10-9"><a href="#cb10-9" tabindex="-1"></a></span>
+<span id="cb10-10"><a href="#cb10-10" tabindex="-1"></a>learner <span class="ot">&lt;-</span> <span class="fu">lrn</span>(<span class="st">&quot;classif.ggml&quot;</span>, <span class="at">epochs =</span> <span class="dv">20</span><span class="dt">L</span>)</span>
+<span id="cb10-11"><a href="#cb10-11" tabindex="-1"></a>learner<span class="sc">$</span><span class="fu">train</span>(task)</span>
+<span id="cb10-12"><a href="#cb10-12" tabindex="-1"></a><span class="co">#&gt; Note: dropping last 4 sample(s) (100 -&gt; 96) because batch_size=32 must divide evenly. Training metrics are computed on 96 samples only.</span></span></code></pre></div>
 <hr />
 </div>
 <div id="marshal-and-parallel-execution" class="section level2">
 <h2>Marshal and parallel execution</h2>
 <p>The learners implement mlr3’s marshal protocol. This means models can
-be serialized and deserialized for parallel execution (e.g. via
-<code>future</code>). Marshal uses <code>ggml_save_model()</code> /
-<code>ggml_load_model()</code> internally and preserves the original
-backend.</p>
-<div class="sourceCode" id="cb13"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb13-1"><a href="#cb13-1" tabindex="-1"></a>learner <span class="ot">&lt;-</span> <span class="fu">lrn</span>(<span class="st">&quot;classif.ggml&quot;</span>, <span class="at">epochs =</span> <span class="dv">10</span><span class="dt">L</span>, <span class="at">backend =</span> <span class="st">&quot;cpu&quot;</span>)</span>
-<span id="cb13-2"><a href="#cb13-2" tabindex="-1"></a>learner<span class="sc">$</span><span class="fu">train</span>(<span class="fu">tsk</span>(<span class="st">&quot;iris&quot;</span>))</span>
-<span id="cb13-3"><a href="#cb13-3" tabindex="-1"></a><span class="co">#&gt; Note: dropping last 22 sample(s) (150 -&gt; 128) because batch_size=32 must divide evenly. Training metrics are computed on 128 samples only.</span></span>
-<span id="cb13-4"><a href="#cb13-4" tabindex="-1"></a></span>
-<span id="cb13-5"><a href="#cb13-5" tabindex="-1"></a>learner<span class="sc">$</span><span class="fu">marshal</span>()</span>
-<span id="cb13-6"><a href="#cb13-6" tabindex="-1"></a>learner<span class="sc">$</span>marshaled</span>
-<span id="cb13-7"><a href="#cb13-7" tabindex="-1"></a><span class="co">#&gt; [1] TRUE</span></span>
-<span id="cb13-8"><a href="#cb13-8" tabindex="-1"></a><span class="co">#&gt; [1] TRUE</span></span>
-<span id="cb13-9"><a href="#cb13-9" tabindex="-1"></a></span>
-<span id="cb13-10"><a href="#cb13-10" tabindex="-1"></a>learner<span class="sc">$</span><span class="fu">unmarshal</span>()</span>
-<span id="cb13-11"><a href="#cb13-11" tabindex="-1"></a>learner<span class="sc">$</span>marshaled</span>
-<span id="cb13-12"><a href="#cb13-12" tabindex="-1"></a><span class="co">#&gt; [1] FALSE</span></span>
-<span id="cb13-13"><a href="#cb13-13" tabindex="-1"></a><span class="co">#&gt; [1] FALSE</span></span>
-<span id="cb13-14"><a href="#cb13-14" tabindex="-1"></a></span>
-<span id="cb13-15"><a href="#cb13-15" tabindex="-1"></a><span class="co"># Predictions are identical after roundtrip</span></span>
-<span id="cb13-16"><a href="#cb13-16" tabindex="-1"></a>pred <span class="ot">&lt;-</span> learner<span class="sc">$</span><span class="fu">predict</span>(<span class="fu">tsk</span>(<span class="st">&quot;iris&quot;</span>))</span></code></pre></div>
+be serialized and deserialized for parallel execution. Marshal uses
+<code>ggml_save_model()</code> / <code>ggml_load_model()</code>
+internally and preserves the original backend.</p>
+<div class="sourceCode" id="cb11"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb11-1"><a href="#cb11-1" tabindex="-1"></a>learner <span class="ot">&lt;-</span> <span class="fu">lrn</span>(<span class="st">&quot;classif.ggml&quot;</span>, <span class="at">epochs =</span> <span class="dv">10</span><span class="dt">L</span>, <span class="at">backend =</span> <span class="st">&quot;cpu&quot;</span>)</span>
+<span id="cb11-2"><a href="#cb11-2" tabindex="-1"></a>learner<span class="sc">$</span><span class="fu">train</span>(<span class="fu">tsk</span>(<span class="st">&quot;iris&quot;</span>))</span>
+<span id="cb11-3"><a href="#cb11-3" tabindex="-1"></a><span class="co">#&gt; Note: dropping last 22 sample(s) (150 -&gt; 128) because batch_size=32 must divide evenly. Training metrics are computed on 128 samples only.</span></span>
+<span id="cb11-4"><a href="#cb11-4" tabindex="-1"></a></span>
+<span id="cb11-5"><a href="#cb11-5" tabindex="-1"></a>learner<span class="sc">$</span><span class="fu">marshal</span>()</span>
+<span id="cb11-6"><a href="#cb11-6" tabindex="-1"></a>learner<span class="sc">$</span>marshaled</span>
+<span id="cb11-7"><a href="#cb11-7" tabindex="-1"></a><span class="co">#&gt; [1] TRUE</span></span>
+<span id="cb11-8"><a href="#cb11-8" tabindex="-1"></a><span class="co">#&gt; [1] TRUE</span></span>
+<span id="cb11-9"><a href="#cb11-9" tabindex="-1"></a></span>
+<span id="cb11-10"><a href="#cb11-10" tabindex="-1"></a>learner<span class="sc">$</span><span class="fu">unmarshal</span>()</span>
+<span id="cb11-11"><a href="#cb11-11" tabindex="-1"></a>learner<span class="sc">$</span>marshaled</span>
+<span id="cb11-12"><a href="#cb11-12" tabindex="-1"></a><span class="co">#&gt; [1] FALSE</span></span>
+<span id="cb11-13"><a href="#cb11-13" tabindex="-1"></a><span class="co">#&gt; [1] FALSE</span></span>
+<span id="cb11-14"><a href="#cb11-14" tabindex="-1"></a></span>
+<span id="cb11-15"><a href="#cb11-15" tabindex="-1"></a><span class="co"># Predictions are identical after roundtrip</span></span>
+<span id="cb11-16"><a href="#cb11-16" tabindex="-1"></a>pred <span class="ot">&lt;-</span> learner<span class="sc">$</span><span class="fu">predict</span>(<span class="fu">tsk</span>(<span class="st">&quot;iris&quot;</span>))</span></code></pre></div>
 <p>You can also use the lower-level helpers directly:</p>
-<div class="sourceCode" id="cb14"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb14-1"><a href="#cb14-1" tabindex="-1"></a>model <span class="ot">&lt;-</span> <span class="fu">ggml_model_sequential</span>() <span class="sc">|&gt;</span></span>
-<span id="cb14-2"><a href="#cb14-2" tabindex="-1"></a>  <span class="fu">ggml_layer_dense</span>(<span class="dv">16</span><span class="dt">L</span>, <span class="at">activation =</span> <span class="st">&quot;relu&quot;</span>, <span class="at">input_shape =</span> <span class="dv">4</span><span class="dt">L</span>) <span class="sc">|&gt;</span></span>
-<span id="cb14-3"><a href="#cb14-3" tabindex="-1"></a>  <span class="fu">ggml_layer_dense</span>(<span class="dv">3</span><span class="dt">L</span>,  <span class="at">activation =</span> <span class="st">&quot;softmax&quot;</span>)</span>
-<span id="cb14-4"><a href="#cb14-4" tabindex="-1"></a>model <span class="ot">&lt;-</span> <span class="fu">ggml_compile</span>(model, <span class="at">optimizer =</span> <span class="st">&quot;adam&quot;</span>,</span>
-<span id="cb14-5"><a href="#cb14-5" tabindex="-1"></a>                      <span class="at">loss =</span> <span class="st">&quot;categorical_crossentropy&quot;</span>)</span>
-<span id="cb14-6"><a href="#cb14-6" tabindex="-1"></a></span>
-<span id="cb14-7"><a href="#cb14-7" tabindex="-1"></a>blob <span class="ot">&lt;-</span> <span class="fu">ggml_marshal_model</span>(model)</span>
-<span id="cb14-8"><a href="#cb14-8" tabindex="-1"></a>blob</span>
-<span id="cb14-9"><a href="#cb14-9" tabindex="-1"></a><span class="co">#&gt; &lt;ggmlR marshaled model&gt;</span></span>
-<span id="cb14-10"><a href="#cb14-10" tabindex="-1"></a><span class="co">#&gt;   api:           sequential</span></span>
-<span id="cb14-11"><a href="#cb14-11" tabindex="-1"></a><span class="co">#&gt;   backend:       gpu</span></span>
-<span id="cb14-12"><a href="#cb14-12" tabindex="-1"></a><span class="co">#&gt;   format:        ggmlR.marshal v1</span></span>
-<span id="cb14-13"><a href="#cb14-13" tabindex="-1"></a><span class="co">#&gt;   ggmlR version: 0.7.4</span></span>
-<span id="cb14-14"><a href="#cb14-14" tabindex="-1"></a><span class="co">#&gt;   R version:     4.3.3</span></span>
-<span id="cb14-15"><a href="#cb14-15" tabindex="-1"></a><span class="co">#&gt;   created:       2026-04-15 21:46:45</span></span>
-<span id="cb14-16"><a href="#cb14-16" tabindex="-1"></a><span class="co">#&gt;   payload size:  349 bytes</span></span>
-<span id="cb14-17"><a href="#cb14-17" tabindex="-1"></a><span class="co">#&gt;   sha256:        e2a069a601f97004...</span></span>
-<span id="cb14-18"><a href="#cb14-18" tabindex="-1"></a></span>
-<span id="cb14-19"><a href="#cb14-19" tabindex="-1"></a>model2 <span class="ot">&lt;-</span> <span class="fu">ggml_unmarshal_model</span>(blob)</span></code></pre></div>
-<hr />
-</div>
-<div id="feature-types" class="section level2">
-<h2>Feature types</h2>
-<p>Only <code>numeric</code> features are supported natively. Use
-<code>mlr3pipelines</code> to handle factors, characters, dates,
-etc.</p>
-<div class="sourceCode" id="cb15"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb15-1"><a href="#cb15-1" tabindex="-1"></a><span class="co"># This will error:</span></span>
-<span id="cb15-2"><a href="#cb15-2" tabindex="-1"></a><span class="co"># lrn(&quot;classif.ggml&quot;)$train(tsk(&quot;german_credit&quot;))</span></span>
-<span id="cb15-3"><a href="#cb15-3" tabindex="-1"></a></span>
-<span id="cb15-4"><a href="#cb15-4" tabindex="-1"></a><span class="co"># This works:</span></span>
-<span id="cb15-5"><a href="#cb15-5" tabindex="-1"></a>graph <span class="ot">&lt;-</span> <span class="fu">po</span>(<span class="st">&quot;encode&quot;</span>) <span class="sc">%&gt;&gt;%</span> <span class="fu">lrn</span>(<span class="st">&quot;classif.ggml&quot;</span>, <span class="at">epochs =</span> <span class="dv">20</span><span class="dt">L</span>)</span>
-<span id="cb15-6"><a href="#cb15-6" tabindex="-1"></a><span class="fu">as_learner</span>(graph)<span class="sc">$</span><span class="fu">train</span>(<span class="fu">tsk</span>(<span class="st">&quot;german_credit&quot;</span>))</span></code></pre></div>
+<div class="sourceCode" id="cb12"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb12-1"><a href="#cb12-1" tabindex="-1"></a>model <span class="ot">&lt;-</span> <span class="fu">ggml_model_sequential</span>() <span class="sc">|&gt;</span></span>
+<span id="cb12-2"><a href="#cb12-2" tabindex="-1"></a>  <span class="fu">ggml_layer_dense</span>(<span class="dv">16</span><span class="dt">L</span>, <span class="at">activation =</span> <span class="st">&quot;relu&quot;</span>, <span class="at">input_shape =</span> <span class="dv">4</span><span class="dt">L</span>) <span class="sc">|&gt;</span></span>
+<span id="cb12-3"><a href="#cb12-3" tabindex="-1"></a>  <span class="fu">ggml_layer_dense</span>(<span class="dv">3</span><span class="dt">L</span>,  <span class="at">activation =</span> <span class="st">&quot;softmax&quot;</span>)</span>
+<span id="cb12-4"><a href="#cb12-4" tabindex="-1"></a>model <span class="ot">&lt;-</span> <span class="fu">ggml_compile</span>(model, <span class="at">optimizer =</span> <span class="st">&quot;adam&quot;</span>,</span>
+<span id="cb12-5"><a href="#cb12-5" tabindex="-1"></a>                      <span class="at">loss =</span> <span class="st">&quot;categorical_crossentropy&quot;</span>)</span>
+<span id="cb12-6"><a href="#cb12-6" tabindex="-1"></a></span>
+<span id="cb12-7"><a href="#cb12-7" tabindex="-1"></a>blob <span class="ot">&lt;-</span> <span class="fu">ggml_marshal_model</span>(model)</span>
+<span id="cb12-8"><a href="#cb12-8" tabindex="-1"></a>blob</span>
+<span id="cb12-9"><a href="#cb12-9" tabindex="-1"></a><span class="co">#&gt; &lt;ggmlR marshaled model&gt;</span></span>
+<span id="cb12-10"><a href="#cb12-10" tabindex="-1"></a><span class="co">#&gt;   api:           sequential</span></span>
+<span id="cb12-11"><a href="#cb12-11" tabindex="-1"></a><span class="co">#&gt;   backend:       gpu</span></span>
+<span id="cb12-12"><a href="#cb12-12" tabindex="-1"></a><span class="co">#&gt;   format:        ggmlR.marshal v1</span></span>
+<span id="cb12-13"><a href="#cb12-13" tabindex="-1"></a><span class="co">#&gt;   ggmlR version: 0.7.4</span></span>
+<span id="cb12-14"><a href="#cb12-14" tabindex="-1"></a><span class="co">#&gt;   R version:     4.3.3</span></span>
+<span id="cb12-15"><a href="#cb12-15" tabindex="-1"></a><span class="co">#&gt;   created:       2026-04-17 09:25:08</span></span>
+<span id="cb12-16"><a href="#cb12-16" tabindex="-1"></a><span class="co">#&gt;   payload size:  349 bytes</span></span>
+<span id="cb12-17"><a href="#cb12-17" tabindex="-1"></a><span class="co">#&gt;   sha256:        e2a069a601f97004...</span></span>
+<span id="cb12-18"><a href="#cb12-18" tabindex="-1"></a></span>
+<span id="cb12-19"><a href="#cb12-19" tabindex="-1"></a>model2 <span class="ot">&lt;-</span> <span class="fu">ggml_unmarshal_model</span>(blob)</span></code></pre></div>
 <hr />
 </div>
 <div id="summary" class="section level2">

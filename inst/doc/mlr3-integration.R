@@ -2,9 +2,8 @@
 knitr::opts_chunk$set(
   collapse = TRUE,
   comment  = "#>",
-  eval     = requireNamespace("mlr3",          quietly = TRUE) &&
-             requireNamespace("mlr3pipelines", quietly = TRUE) &&
-             requireNamespace("paradox",       quietly = TRUE)
+  eval     = requireNamespace("mlr3", quietly = TRUE) &&
+             requireNamespace("paradox", quietly = TRUE)
 )
 library(ggmlR)
 if (requireNamespace("mlr3", quietly = TRUE)) {
@@ -75,13 +74,11 @@ rr <- resample(task, learner, rsmp("cv", folds = 5L))
 rr$aggregate(msr("classif.acc"))
 
 ## ----eval=FALSE---------------------------------------------------------------
-# future::plan("sequential")  # ensure rpart is visible in all workers
-# 
 # design <- benchmark_grid(
 #   tasks    = tsk("iris"),
 #   learners = list(
-#     lrn("classif.ggml", epochs = 20L, batch_size = 16L),
-#     lrn("classif.rpart")
+#     lrn("classif.ggml", epochs = 20L, batch_size = 16L, backend = "cpu"),
+#     lrn("classif.ggml", epochs = 20L, batch_size = 16L, backend = "gpu")
 #   ),
 #   resamplings = rsmp("cv", folds = 5L)
 # )
@@ -111,29 +108,6 @@ rr$aggregate(msr("classif.acc"))
 # tuner$optimize(instance)
 # 
 # instance$result
-
-## ----eval=FALSE---------------------------------------------------------------
-# library(mlr3pipelines)
-# 
-# graph <- po("encode") %>>% lrn("classif.ggml", epochs = 20L)
-# glrn  <- as_learner(graph)
-# 
-# task <- tsk("penguins")
-# glrn$train(task)
-# glrn$predict(task)
-
-## ----eval=FALSE---------------------------------------------------------------
-# graph <-
-#   po("imputemedian") %>>%
-#   po("encode") %>>%
-#   po("scale") %>>%
-#   lrn("classif.ggml",
-#       epochs        = 30L,
-#       batch_size    = 16L,
-#       hidden_layers = c(64L, 32L))
-# 
-# glrn <- as_learner(graph)
-# glrn$train(tsk("penguins"))
 
 ## -----------------------------------------------------------------------------
 learner <- lrn("classif.ggml",
@@ -188,12 +162,4 @@ blob <- ggml_marshal_model(model)
 blob
 
 model2 <- ggml_unmarshal_model(blob)
-
-## ----eval=FALSE---------------------------------------------------------------
-# # This will error:
-# # lrn("classif.ggml")$train(tsk("german_credit"))
-# 
-# # This works:
-# graph <- po("encode") %>>% lrn("classif.ggml", epochs = 20L)
-# as_learner(graph)$train(tsk("german_credit"))
 
