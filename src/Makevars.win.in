@@ -48,11 +48,14 @@ PKG_LIBS = $(SHLIB_OPENMP_CXXFLAGS) $(VULKAN_LIBS)
 # GGML library objects (for static library export)
 GGML_OBJECTS = \
   r_ggml_io.o \
-  ggml.o ggml-alloc.o ggml-quants.o ggml-opt.o gguf.o \
+  ggml-private.o \
+  ggml-alloc.o \
+  ggml-quants-legacy.o ggml-quants-iq.o ggml-quants-validate.o \
+  ggml-opt.o gguf.o \
   ggml-backend.o ggml-backend-reg.o ggml-threading.o \
   ggml-cpu/traits.o \
   ggml-cpu/ggml-cpu-backend.o ggml-cpu/ggml-cpu.o \
-  ggml-cpu/ops.o ggml-cpu/vec.o \
+  ggml-cpu/ops-private.o ggml-cpu/vec.o \
   ggml-cpu/binary-ops.o ggml-cpu/unary-ops.o ggml-cpu/repack.o \
   ggml-cpu/quants.o ggml-cpu/hbm.o \
   ggml-cpu/arch/x86/cpu-feats.o ggml-cpu/arch/x86/quants.o ggml-cpu/arch/x86/repack.o
