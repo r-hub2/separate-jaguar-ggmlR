@@ -93,6 +93,7 @@ $(SHLIB): $(OBJECTS) staticlib
 
 staticlib: $(GGML_OBJECTS)
 	mkdir -p ../inst/lib
+	rm -f ../inst/lib/$(STATICLIB)
 	$(AR) rcs ../inst/lib/$(STATICLIB) $(GGML_OBJECTS)
 	strip --strip-debug ../inst/lib/$(STATICLIB) 2>/dev/null || true
 
