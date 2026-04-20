@@ -2,7 +2,7 @@
 .ggmlr_state <- new.env(parent = emptyenv())
 
 # Silence R CMD check NOTEs about rlang::expr() placeholders in parsnip::set_pred() args
-utils::globalVariables(c("object", "new_data"))
+utils::globalVariables(c("object", "new_data", "self", "super", "private"))
 
 .register_mlr3 <- function(...) {
   # Ignore arguments: when invoked via setHook(packageEvent(..., "onLoad")),
