@@ -1,7 +1,7 @@
 Package: ggmlR
 Type: Package
 Title: 'GGML' Tensor Operations for Machine Learning
-Version: 0.7.4
+Version: 0.7.5
 Authors@R: c(
     person("Yuri", "Baramykov",
         email = "lbsbmsu@mail.ru",
@@ -48,7 +48,7 @@ RoxygenNote: 7.3.3
 Config/testthat/edition: 3
 Config/build/clean-inst-doc: false
 NeedsCompilation: yes
-Packaged: 2026-04-19 20:46:09 UTC; yuri
+Packaged: 2026-04-20 05:09:42 UTC; yuri
 Author: Yuri Baramykov [aut, cre],
   Georgi Gerganov [ctb, cph] (Author of the GGML library),
   Jeffrey Quesnelle [ctb, cph] (Contributor to ops.cpp),

@@ -41,7 +41,7 @@ OPENMP_CXXFLAGS = @OPENMP_CXXFLAGS@
 # Generic CPU fallback (set by configure: -DGGML_CPU_GENERIC on non-x86, empty on x86)
 GENERIC_CPPFLAGS = @GENERIC_CPPFLAGS@
 
-PKG_CPPFLAGS = $(GGML_CPPFLAGS) $(OPENMP_CPPFLAGS) $(VULKAN_CPPFLAGS) $(GENERIC_CPPFLAGS) -DGGML_R_PACKAGE -DONNX_NAN_DEBUG -include r_ggml_compat.h
+PKG_CPPFLAGS = $(GGML_CPPFLAGS) $(OPENMP_CPPFLAGS) $(VULKAN_CPPFLAGS) $(GENERIC_CPPFLAGS) -DGGML_R_PACKAGE -include r_ggml_compat.h
 
 # CPU SIMD flags (set by configure: individual -msse4.2 -mavx2 etc. or empty)
 SIMD_CFLAGS = @SIMD_CFLAGS@
@@ -118,4 +118,4 @@ r_interface_gguf.o: PKG_CPPFLAGS += -DR_GGML_IO_IMPL
 # All other onnx files use plain C stdio — the -include r_ggml_compat.h flag
 # redirects their fprintf/stderr to REprintf automatically.
 onnx/r_onnx.o: PKG_CPPFLAGS += -DR_GGML_IO_IMPL
-onnx/onnx_ggml.o: PKG_CPPFLAGS += -DONNX_DIFF_DEBUG -DONNX_NAN_DEBUG
+

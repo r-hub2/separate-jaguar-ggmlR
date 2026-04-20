@@ -358,7 +358,7 @@ ONNX) fall back to CPU transparently when no GPU is present.</p>
 ## Vulkan: AVAILABLE
 ##   Devices: 1 
 ##   [0] AMD Radeon RX 9070 (RADV GFX1201)
-##       Memory: 16.73 GB free / 17.18 GB total</code></pre>
+##       Memory: 16.64 GB free / 17.18 GB total</code></pre>
 <div class="sourceCode" id="cb4"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb4-1"><a href="#cb4-1" tabindex="-1"></a>n <span class="ot">&lt;-</span> <span class="fu">ggml_vulkan_device_count</span>()</span>
 <span id="cb4-2"><a href="#cb4-2" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">&quot;Vulkan device count:&quot;</span>, n, <span class="st">&quot;</span><span class="sc">\n</span><span class="st">&quot;</span>)</span></code></pre></div>
 <pre><code>## Vulkan device count: 1</code></pre>
@@ -380,7 +380,7 @@ ONNX) fall back to CPU transparently when no GPU is present.</p>
 <span id="cb6-12"><a href="#cb6-12" tabindex="-1"></a>              mem[<span class="st">&quot;free&quot;</span>] <span class="sc">/</span> <span class="fl">1e9</span>, mem[<span class="st">&quot;total&quot;</span>] <span class="sc">/</span> <span class="fl">1e9</span>))</span>
 <span id="cb6-13"><a href="#cb6-13" tabindex="-1"></a>}</span></code></pre></div>
 <pre><code>## [1] Vulkan0 — AMD Radeon RX 9070 (RADV GFX1201)
-##     16.7 GB free / 17.2 GB total
+##     16.6 GB free / 17.2 GB total
 ## [2] CPU — AMD Ryzen 5 5600 6-Core Processor
 ##     33.6 GB free / 33.6 GB total</code></pre>
 <p>Full example: <code>inst/examples/device_discovery.R</code></p>
@@ -426,7 +426,7 @@ is not natively supported in GLSL shaders.</p>
 <span id="cb12-3"><a href="#cb12-3" tabindex="-1"></a>  <span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">&quot;GPU memory: %.1f MB free / %.1f MB total</span><span class="sc">\n</span><span class="st">&quot;</span>,</span>
 <span id="cb12-4"><a href="#cb12-4" tabindex="-1"></a>              mem<span class="sc">$</span>free <span class="sc">/</span> <span class="fl">1e6</span>, mem<span class="sc">$</span>total <span class="sc">/</span> <span class="fl">1e6</span>))</span>
 <span id="cb12-5"><a href="#cb12-5" tabindex="-1"></a>}</span></code></pre></div>
-<pre><code>## GPU memory: 16730.7 MB free / 17179.9 MB total</code></pre>
+<pre><code>## GPU memory: 16636.7 MB free / 17179.9 MB total</code></pre>
 <hr />
 </div>
 <div id="multi-gpu" class="section level2">
@@ -490,7 +490,7 @@ explicit flag:</p>
 <pre><code>## Vulkan: AVAILABLE
 ##   Devices: 1 
 ##   [0] AMD Radeon RX 9070 (RADV GFX1201)
-##       Memory: 16.73 GB free / 17.18 GB total</code></pre>
+##       Memory: 16.64 GB free / 17.18 GB total</code></pre>
 </div>
 
 

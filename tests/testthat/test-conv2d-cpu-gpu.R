@@ -38,8 +38,6 @@ check_conv2d <- function(W, H, Cin, N, KW, KH, Cout,
   gpu <- run_conv2d(TRUE,  inp_data, ker_data, W, H, Cin, N, KW, KH, Cout, s0, s1, p0, p1, d0, d1)
 
   diff_max <- max(abs(cpu - gpu))
-  if (nzchar(label))
-    cat(sprintf("  [%s] diff_max=%.6f  (n=%d)\n", label, diff_max, length(cpu)))
   expect_lt(diff_max, tol)
 }
 
