@@ -1,11 +1,12 @@
 Package: ggmlR
 Type: Package
 Title: 'GGML' Tensor Operations for Machine Learning
-Version: 0.7.6
+Version: 0.7.7
 Authors@R: c(
     person("Yuri", "Baramykov",
         email = "lbsbmsu@mail.ru",
-        role = c("aut", "cre")),
+        role = c("aut", "cre"),
+        comment = c(ORCID = "0009-0000-7627-4217")),
     person("Georgi", "Gerganov",
         role = c("ctb", "cph"),
         comment = "Author of the GGML library"),
@@ -48,8 +49,8 @@ RoxygenNote: 7.3.3
 Config/testthat/edition: 3
 Config/build/clean-inst-doc: false
 NeedsCompilation: yes
-Packaged: 2026-04-21 07:03:34 UTC; yuri
-Author: Yuri Baramykov [aut, cre],
+Packaged: 2026-05-18 09:05:37 UTC; yuri
+Author: Yuri Baramykov [aut, cre] (<https://orcid.org/0009-0000-7627-4217>),
   Georgi Gerganov [ctb, cph] (Author of the GGML library),
   Jeffrey Quesnelle [ctb, cph] (Contributor to ops.cpp),
   Bowen Peng [ctb, cph] (Contributor to ops.cpp),
