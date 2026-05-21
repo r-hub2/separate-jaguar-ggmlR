@@ -2148,26 +2148,15 @@ static void ggml_vk_wait_for_fence(ggml_backend_vk_context * ctx) {
         ctx->almost_ready_fence_pending = false;
     }
 
-    // Spin (w/pause) waiting for the graph to finish executing.
-    vk::Result result;
-    while ((result = ctx->device->device.getFenceStatus(ctx->fence)) != vk::Result::eSuccess) {
-        if (result != vk::Result::eNotReady) {
-            fprintf(stderr, "ggml_vulkan: error %s at %s:%d\n", to_string(result).c_str(), __FILE__, __LINE__);
-            exit(1);
-        }
-        for (uint32_t i = 0; i < 100; ++i) {
-            YIELD();
-            YIELD();
-            YIELD();
-            YIELD();
-            YIELD();
-            YIELD();
-            YIELD();
-            YIELD();
-            YIELD();
-            YIELD();
-        }
-    }
+    // Block until the graph finishes executing. A blocking waitForFences lets
+    // the CPU sleep instead of burning a core spinning on getFenceStatus. This
+    // matters for short decode graphs: the almost_ready_fence fast-path above is
+    // often not armed (few submits), so the entire wait would otherwise be spin,
+    // pinning a core ~60+ ms/step and preventing CPU/GPU overlap. Same fence,
+    // same readiness condition, same resetFences as before — matches the
+    // waitForFences(UINT64_MAX) pattern already used elsewhere in this file.
+    VK_CHECK(ctx->device->device.waitForFences({ ctx->fence }, true, UINT64_MAX),
+             "ggml_vk_wait_for_fence");
     ctx->device->device.resetFences({ ctx->fence });
 }
 
