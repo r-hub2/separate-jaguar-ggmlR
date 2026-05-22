@@ -1569,11 +1569,6 @@ static ggml_status ggml_backend_vk_graph_compute(ggml_backend_t backend, ggml_cg
     VK_LOG_DEBUG("ggml_backend_vk_graph_compute(" << cgraph->n_nodes << " nodes)");
     ggml_backend_vk_context * ctx = (ggml_backend_vk_context *)backend->context;
 
-    static const bool vkg_dbg = getenv("GGML_VKG_PROF") != nullptr;
-    static int     vkg_calls = 0;
-    static int64_t vkg_total_us = 0, vkg_loop_us = 0, vkg_build_us = 0, vkg_submit_us = 0;
-    int64_t vkg_t_fn0 = vkg_dbg ? ggml_time_us() : 0;
-
     if (vk_instance.debug_utils_support) {
         vk::DebugUtilsLabelEXT dul = {};
         dul.pLabelName = "ggml_backend_vk_graph_compute";
@@ -1652,7 +1647,6 @@ static ggml_status ggml_backend_vk_graph_compute(ggml_backend_t backend, ggml_cg
     uint64_t mul_mat_bytes = 0;
     uint64_t total_mul_mat_bytes = 0;
     uint64_t mul_mat_bytes_per_submit = std::min(uint64_t(100*1000*1000), ctx->last_total_mul_mat_bytes / 40u);
-    int64_t vkg_t_loop0 = vkg_dbg ? ggml_time_us() : 0;
     for (int i = 0; i < cgraph->n_nodes; i++) {
         if (first_node_in_batch) {
             submit_node_idx = i;
@@ -1857,9 +1851,7 @@ static ggml_status ggml_backend_vk_graph_compute(ggml_backend_t backend, ggml_cg
                       (i + ctx->num_additional_fused_ops >= last_node) ||
                       (almost_ready && !ctx->almost_ready_fence_pending);
 
-        int64_t vkg_t_b0 = vkg_dbg ? ggml_time_us() : 0;
         bool enqueued = ggml_vk_build_graph(ctx, cgraph, i, cgraph->nodes[submit_node_idx], submit_node_idx, i + ctx->num_additional_fused_ops >= last_node, almost_ready, submit);
-        if (vkg_dbg) vkg_build_us += ggml_time_us() - vkg_t_b0;
 
         if (vk_perf_logger_enabled && enqueued) {
             compute_ctx = ggml_vk_get_compute_ctx(ctx);
@@ -1897,8 +1889,6 @@ static ggml_status ggml_backend_vk_graph_compute(ggml_backend_t backend, ggml_cg
         ctx->num_additional_fused_ops = 0;
         ctx->fused_ops_write_mask = 0;
     }
-
-    if (vkg_dbg) vkg_loop_us += ggml_time_us() - vkg_t_loop0;
 
     ctx->last_total_mul_mat_bytes = total_mul_mat_bytes;
 
@@ -1949,20 +1939,9 @@ static ggml_status ggml_backend_vk_graph_compute(ggml_backend_t backend, ggml_cg
         ggml_vk_synchronize(ctx);
     }
 
-    if (vkg_dbg) {
-        vkg_total_us += ggml_time_us() - vkg_t_fn0;
-        if (++vkg_calls % 50 == 0) {
-            // NOTE: call r_ggml_fprintf directly. The -include r_ggml_compat.h
-            // remaps `stderr` to a (FILE*)1 sentinel, but in this single-unit
-            // Vulkan TU the `fprintf` -> r_ggml_fprintf macro does not apply
-            // symmetrically, so a bare fprintf(stderr,...) reaches glibc with
-            // stream==0x1 and segfaults. r_ggml_fprintf ignores the stream.
-            r_ggml_fprintf(stderr, "[VKG_PROF] calls=%d n_nodes=%d | total=%.1fms loop=%.1fms build_graph=%.1fms (avg/call total=%.3f loop=%.3f build=%.3f ms) support_async=%d\n",
-                    vkg_calls, cgraph->n_nodes,
-                    vkg_total_us/1000.0, vkg_loop_us/1000.0, vkg_build_us/1000.0,
-                    (vkg_total_us/1000.0)/vkg_calls, (vkg_loop_us/1000.0)/vkg_calls, (vkg_build_us/1000.0)/vkg_calls,
-                    (int) ctx->device->support_async);
-        }
+    if (getenv("GGML_VKG_SUBMITS")) {
+        r_ggml_fprintf(stderr, "[VKG_SUBMITS] n_nodes=%d submit_count=%d support_async=%d\n",
+                       cgraph->n_nodes, submit_count, (int) ctx->device->support_async);
     }
 
     return GGML_STATUS_SUCCESS;

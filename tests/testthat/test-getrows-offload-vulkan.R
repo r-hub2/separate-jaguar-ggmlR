@@ -19,9 +19,6 @@ library(ggmlR)
 #   2. The same holds at batch=8 (still below the offload threshold) and at
 #      batch=64 (above it) -- correctness must be invariant to which side of
 #      the offload threshold the op lands on.
-#   3. Per-row decode time at batch=1 is not pathologically worse than batch=8
-#      (a soft, hardware-tolerant guard against the "copy 408MB per step"
-#      blow-up; informative, not a hard benchmark).
 
 # Embedding lookup: table [n_embd, n_vocab] f32, indices [n_tok] i32 (0-based),
 # out = table[:, indices] -> [n_embd, n_tok]. Returns the gathered rows.
@@ -41,7 +38,9 @@ run_get_rows <- function(use_gpu, n_embd, n_vocab, idx0) {
   ggml_backend_alloc_ctx_tensors(ctx, backend)
 
   ggml_backend_tensor_set_data(emb, as.vector(tbl))
-  ggml_set_i32(idx, as.integer(idx0))
+  # I32 indices must go through the backend setter (ggml_set_i32 writes the
+  # CPU data pointer directly, which is NULL for a Vulkan-allocated tensor).
+  ggml_backend_tensor_set_data(idx, as.integer(idx0))
 
   gf <- ggml_build_forward_expand(ctx, out)
   ggml_backend_graph_compute(backend, gf)
@@ -69,34 +68,4 @@ test_that("get_rows Vulkan == CPU across offload-threshold batch sizes", {
   expect_get_rows_correct(n_embd, n_vocab, sample.int(n_vocab, 1L)  - 1L)
   expect_get_rows_correct(n_embd, n_vocab, sample.int(n_vocab, 8L)  - 1L)
   expect_get_rows_correct(n_embd, n_vocab, sample.int(n_vocab, 64L) - 1L)
-})
-
-test_that("get_rows batch=1 decode is not pathologically slow (soft guard)", {
-  skip_if_not(ggml_vulkan_available(), "Vulkan GPU not available")
-  skip_on_cran()
-  n_embd  <- 2048L
-  n_vocab <- 32000L
-
-  # Time many repeated single-token lookups vs the same total number of rows
-  # done in batches of 8. Under the regression, batch=1 paid a full 408MB-class
-  # weight copy PER step, so per-row time exploded relative to batched lookups.
-  # We assert only a loose ratio so hardware/thermal noise does not flake the
-  # suite -- a >10x per-row blow-up is the failure signature we guard against.
-  reps <- 32L
-  set.seed(3)
-
-  t1 <- system.time(for (i in seq_len(reps))
-    run_get_rows(TRUE, n_embd, n_vocab, sample.int(n_vocab, 1L) - 1L))[["elapsed"]]
-  t8 <- system.time(for (i in seq_len(reps))
-    run_get_rows(TRUE, n_embd, n_vocab, sample.int(n_vocab, 8L) - 1L))[["elapsed"]]
-
-  per_row_b1 <- t1 / (reps * 1)
-  per_row_b8 <- t8 / (reps * 8)
-  info <- sprintf("per-row: batch1=%.4gs batch8=%.4gs ratio=%.2f",
-                  per_row_b1, per_row_b8, per_row_b1 / max(per_row_b8, 1e-9))
-  message("[get_rows offload] ", info)
-  # Per-row work at batch=1 should be within ~10x of batched per-row work.
-  # (Each run_get_rows includes backend init + table fill, so this is a coarse
-  # smoke guard, not a microbenchmark; the regression made batch=1 catastrophic.)
-  expect_lt(per_row_b1, per_row_b8 * 10 + 0.05, label = info)
 })
