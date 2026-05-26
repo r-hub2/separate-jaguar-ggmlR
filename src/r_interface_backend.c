@@ -43,6 +43,13 @@ SEXP R_ggml_backend_buffer_usage_compute(void) {
     return ScalarInteger(GGML_BACKEND_BUFFER_USAGE_COMPUTE);
 }
 
+// Free the process-lifetime meta buffer-type cache. Called from .onUnload so
+// valgrind doesn't report the cached buft contexts as leaked at exit.
+SEXP R_ggml_backend_meta_free_cached_bufts(void) {
+    ggml_backend_meta_free_cached_bufts();
+    return R_NilValue;
+}
+
 // ============================================================================
 // Device Enumeration
 // ============================================================================
