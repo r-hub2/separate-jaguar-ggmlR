@@ -72,6 +72,23 @@ heavy <- c(
   "getrows-offload-vulkan"
 )
 
+# Tests that allocate large ggml contexts/tensors. They pass fine on a normal
+# CRAN machine but blow the memory limit under the valgrind memtest (valgrind's
+# shadow memory roughly doubles every allocation), causing a SIGKILL. Skip them
+# only when running under valgrind; ordinary CRAN runs are unaffected.
+valgrind_skip <- c(
+  "q4k-matmul-vulkan",  # ggml_init(1 GiB) context
+  "flash-attn-q4k",
+  "flash-attn-quants"
+)
+
+# Detect valgrind: it injects vgpreload_*.so into the process, visible in
+# /proc/self/maps. Fall back to FALSE on platforms without /proc.
+under_valgrind <- tryCatch({
+  maps <- readLines("/proc/self/maps", warn = FALSE)
+  any(grepl("valgrind|vgpreload", maps, ignore.case = TRUE))
+}, error = function(e) FALSE)
+
 on_cran <- !identical(Sys.getenv("NOT_CRAN"), "true")
 
 test_dir <- if (dir.exists("testthat")) "testthat" else "tests/testthat"
@@ -82,7 +99,13 @@ if (on_cran) {
   all_tests <- list.files(test_dir, pattern = "^test-.*\\.R$")
   all_names <- sub("^test-(.*)\\.R$", "\\1", all_tests)
 
-  light_tests <- setdiff(all_names, heavy)
+  skip_set <- heavy
+  if (under_valgrind) {
+    message("--- VALGRIND DETECTED: skipping memory-heavy tests ---")
+    skip_set <- union(heavy, valgrind_skip)
+  }
+
+  light_tests <- setdiff(all_names, skip_set)
   message("Tests to run: ", paste(light_tests, collapse = ", "))
 
   if (length(light_tests) == 0) {
