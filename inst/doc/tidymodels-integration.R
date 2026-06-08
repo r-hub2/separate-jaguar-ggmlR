@@ -2,58 +2,61 @@
 knitr::opts_chunk$set(
   collapse = TRUE,
   comment  = "#>",
-  eval     = requireNamespace("parsnip", quietly = TRUE)
+  # Executed locally (NOT_CRAN=true); skipped on CRAN to avoid the
+  # "CPU time > elapsed" vignette NOTE from the CPU fallback.
+  eval     = identical(Sys.getenv("NOT_CRAN"), "true") &&
+             requireNamespace("parsnip", quietly = TRUE)
 )
 
 ## -----------------------------------------------------------------------------
-library(ggmlR)
-library(parsnip)
+# library(ggmlR)
+# library(parsnip)
 
 ## -----------------------------------------------------------------------------
-spec <- mlp(
-  hidden_units = c(64L, 32L),
-  epochs       = 20L,
-  dropout      = 0.1
-) |>
-  set_engine("ggml") |>
-  set_mode("classification")
-
-fit_obj <- fit(spec, Species ~ ., data = iris)
-
-# Class predictions
-preds <- predict(fit_obj, new_data = iris)
-head(preds)
-
-# Probability predictions
-probs <- predict(fit_obj, new_data = iris, type = "prob")
-head(probs)
-
-# Accuracy
-cat(sprintf("Accuracy: %.4f\n", mean(preds$.pred_class == iris$Species)))
-
-## -----------------------------------------------------------------------------
-spec_reg <- mlp(
-  hidden_units = c(64L, 32L),
-  epochs       = 50L
-) |>
-  set_engine("ggml") |>
-  set_mode("regression")
-
-fit_reg <- fit(spec_reg, mpg ~ ., data = mtcars)
-
-preds_reg <- predict(fit_reg, new_data = mtcars)
-head(preds_reg)
+# spec <- mlp(
+#   hidden_units = c(64L, 32L),
+#   epochs       = 20L,
+#   dropout      = 0.1
+# ) |>
+#   set_engine("ggml") |>
+#   set_mode("classification")
+# 
+# fit_obj <- fit(spec, Species ~ ., data = iris)
+# 
+# # Class predictions
+# preds <- predict(fit_obj, new_data = iris)
+# head(preds)
+# 
+# # Probability predictions
+# probs <- predict(fit_obj, new_data = iris, type = "prob")
+# head(probs)
+# 
+# # Accuracy
+# cat(sprintf("Accuracy: %.4f\n", mean(preds$.pred_class == iris$Species)))
 
 ## -----------------------------------------------------------------------------
-# Customize architecture
-spec_custom <- mlp(
-  hidden_units = c(128L, 64L, 32L),
-  epochs       = 30L,
-  dropout      = 0.3,
-  activation   = "relu"
-) |>
-  set_engine("ggml") |>
-  set_mode("classification")
+# spec_reg <- mlp(
+#   hidden_units = c(64L, 32L),
+#   epochs       = 50L
+# ) |>
+#   set_engine("ggml") |>
+#   set_mode("regression")
+# 
+# fit_reg <- fit(spec_reg, mpg ~ ., data = mtcars)
+# 
+# preds_reg <- predict(fit_reg, new_data = mtcars)
+# head(preds_reg)
+
+## -----------------------------------------------------------------------------
+# # Customize architecture
+# spec_custom <- mlp(
+#   hidden_units = c(128L, 64L, 32L),
+#   epochs       = 30L,
+#   dropout      = 0.3,
+#   activation   = "relu"
+# ) |>
+#   set_engine("ggml") |>
+#   set_mode("classification")
 
 ## ----eval=FALSE---------------------------------------------------------------
 # library(rsample)
@@ -141,4 +144,25 @@ spec_custom <- mlp(
 #                resamples = vfold_cv(iris, v = 5L))
 # 
 # rank_results(specs, rank_metric = "accuracy")
+
+## -----------------------------------------------------------------------------
+# spec <- mlp(hidden_units = c(16L), epochs = 10L) |>
+#   set_engine("ggml") |>
+#   set_mode("classification")
+# 
+# fit_obj <- fit(spec, Species ~ ., data = iris)
+# 
+# # The native ggmlR engine object (class "ggmlr_parsnip_model").
+# # extract_fit_*() are re-exported by parsnip (originally from hardhat).
+# eng <- parsnip::extract_fit_engine(fit_obj)
+# class(eng)
+# 
+# # Training time parsnip recorded for the fit (one-row tibble: stage_id, elapsed).
+# parsnip::extract_fit_time(fit_obj)
+
+## -----------------------------------------------------------------------------
+# ggml_model_backend(eng)            # "vulkan" or "cpu" (actual backend used)
+# head(ggml_training_history(eng))   # per-epoch loss / accuracy curve
+# generics::glance(eng)              # one-row model summary
+# generics::tidy(eng)                # one row per layer
 
