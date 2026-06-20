@@ -45,13 +45,14 @@ SystemRequirements: C++17, GNU make, libvulkan-dev, glslc (optional,
 Suggests: testthat (>= 3.0.0), mlr3 (>= 0.21.0), paradox, digest,
         parsnip, tibble, rlang, dials, lgr, knitr, rmarkdown, Matrix,
         Seurat, SeuratObject, RSpectra, irlba, uwot, FNN,
-        SingleCellExperiment, SummarizedExperiment, S4Vectors
+        SingleCellExperiment, SummarizedExperiment, S4Vectors, withr,
+        hardhat, rsample, tune, workflows
 VignetteBuilder: knitr, rmarkdown
 RoxygenNote: 7.3.3
 Config/testthat/edition: 3
 Config/build/clean-inst-doc: false
 NeedsCompilation: yes
-Packaged: 2026-06-20 16:07:17 UTC; yuri
+Packaged: 2026-06-20 16:48:19 UTC; yuri
 Author: Yuri Baramykov [aut, cre] (<https://orcid.org/0009-0000-7627-4217>),
   Georgi Gerganov [ctb, cph] (Author of the GGML library),
   Jeffrey Quesnelle [ctb, cph] (Contributor to ops.cpp),

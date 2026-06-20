@@ -86,6 +86,13 @@ returns a \code{\link{ggml_result}} instead of an object).}
 
 \item{genes, cells}{Optional feature/cell subsets passed to extraction.}
 
+\item{reduction}{Optional name of an existing reduction to use as the input
+feature space (e.g. \code{"pca"} for \code{"umap"} / \code{"neighbors"}),
+instead of an assay layer. Seurat: \code{Embeddings()}; SCE:
+\code{reducedDim()}.}
+
+\item{dims}{Optional integer vector selecting columns of \code{reduction}.}
+
 \item{...}{Additional parameters forwarded to the engine.}
 }
 \value{

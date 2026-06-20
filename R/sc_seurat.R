@@ -31,6 +31,11 @@
 #'   \code{"ggml"}.
 #' @param device \code{"auto"} (default), \code{"vulkan"} or \code{"cpu"}.
 #' @param genes,cells Optional feature/cell subsets passed to extraction.
+#' @param reduction Optional name of an existing reduction to use as the input
+#'   feature space (e.g. \code{"pca"} for \code{"umap"} / \code{"neighbors"}),
+#'   instead of an assay layer. Seurat: \code{Embeddings()}; SCE:
+#'   \code{reducedDim()}.
+#' @param dims Optional integer vector selecting columns of \code{reduction}.
 #' @param ... Additional parameters forwarded to the engine.
 #'
 #' @return For a Seurat object, the updated object with a new reduction. For a
