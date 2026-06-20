@@ -1,3 +1,4 @@
+
 static void ggml_vk_print_gpu_info(size_t idx) {
     GGML_ASSERT(idx < vk_instance.device_indices.size());
     size_t dev_num = vk_instance.device_indices[idx];
@@ -455,6 +456,29 @@ static void ggml_vk_init(ggml_backend_vk_context * ctx, size_t idx) {
         ctx->perf_logger = std::unique_ptr<vk_perf_logger>(new vk_perf_logger());
     }
 
+    // Industrial telemetry: report the selected device and the capabilities that
+    // determine the performance regime (fp16/bf16/coopmat acceleration, BDA,
+    // sysmem fallback). Previously this was only visible via VK_LOG_DEBUG.
+    // Gated behind GGMLR_LOG_DEVICE so it stays available for production
+    // diagnostics but does not flood test output (where many Vulkan contexts
+    // are created). Set GGMLR_LOG_DEVICE=1 to enable.
+    {
+        const char * log_dev = getenv("GGMLR_LOG_DEVICE");
+        if (log_dev != nullptr && log_dev[0] != '\0' && log_dev[0] != '0') {
+            GGML_LOG_INFO("ggml_vulkan: device #%zu '%s' selected | fp16=%d bf16=%d coopmat=%d coopmat2=%d bda=%d "
+                          "max_buffer=%llu MB suballoc_block=%llu MB sysmem_fallback=%d\n",
+                          idx,
+                          ctx->device->name.c_str(),
+                          (int)ctx->device->fp16,
+                          (int)ctx->device->bf16,
+                          (int)ctx->device->coopmat_support,
+                          (int)ctx->device->coopmat2,
+                          (int)ctx->device->buffer_device_address,
+                          (unsigned long long)(ctx->device->max_buffer_size / (1024ull * 1024ull)),
+                          (unsigned long long)(ctx->device->suballocation_block_size / (1024ull * 1024ull)),
+                          (int)ctx->device->allow_sysmem_fallback);
+        }
+    }
 }
 
 static vk_pipeline ggml_vk_get_to_fp16(ggml_backend_vk_context * ctx, ggml_type type) {

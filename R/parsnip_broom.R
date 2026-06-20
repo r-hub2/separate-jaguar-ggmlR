@@ -140,7 +140,7 @@ glance.ggmlr_parsnip_model <- function(x, ...) {
 #' Adds prediction columns to `new_data`, broom style. For classification this
 #' appends `.pred_class` plus one `.pred_<level>` probability column per class;
 #' for regression it appends `.pred`. Predictions are produced by the existing
-#' [predict.ggmlr_parsnip_model] path (no duplicate inference logic).
+#' `predict()` method for ggml parsnip models (no duplicate inference logic).
 #'
 #' @inheritParams tidy.ggmlr_parsnip_model
 #' @param new_data A data frame of predictors (same columns used for fitting).
@@ -155,6 +155,7 @@ glance.ggmlr_parsnip_model <- function(x, ...) {
 #' generics::augment(parsnip::extract_fit_engine(fit_obj), mtcars)
 #'
 #' @importFrom generics augment
+#' @importFrom stats predict
 #' @method augment ggmlr_parsnip_model
 #' @export
 augment.ggmlr_parsnip_model <- function(x, new_data, ...) {

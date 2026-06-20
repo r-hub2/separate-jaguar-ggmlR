@@ -48,6 +48,96 @@ Options can be combined:
 install.packages("ggmlR", configure.args = "--with-vulkan --with-simd")
 ```
 
+#### Windows build options
+
+> **Important:** on Windows, R **ignores** `configure.args` / `--configure-args`
+> (they are only honoured by the Unix `./configure` path). Use **environment
+> variables** instead, set in the same R session *before* installing:
+
+```r
+Sys.setenv(GGML_USE_SIMD = "1")    # enable CPU SIMD (AVX2/SSE4/FMA/F16C)
+Sys.setenv(GGML_USE_VULKAN = "1")  # force-enable Vulkan  (or "0" to disable)
+```
+
+The flags are read by `configure.win`, which only runs when the package is
+**built from source**. The CRAN binary for Windows is pre-built without them,
+so pass `type = "source"` to force a source build:
+
+```r
+# From CRAN (force a source build so the flags take effect):
+install.packages("ggmlR", type = "source")
+
+# From GitHub (always builds from source):
+remotes::install_github("Zabis13/ggmlR", force = TRUE)
+```
+
+Vulkan is still auto-detected when the Vulkan SDK is present, so
+`GGML_USE_VULKAN` is only needed to force it on/off. Accepted values:
+`1` / `yes` / `true` / `on` (and `0` / `no` / `false` / `off` for Vulkan).
+OpenMP (multi-threaded CPU executor) is detected automatically on Rtools.
+
+### Diagnostics
+
+`GGMLR_LOG_DEVICE` — when set to a non-empty value other than `0`, enables
+Vulkan telemetry logging. Two messages are emitted:
+
+1. The selected device and its capabilities, once a backend context is created:
+
+   ```
+   ggml_vulkan: device #0 'Vulkan0' selected | fp16=1 bf16=1 coopmat=1 coopmat2=0 bda=1 max_buffer=4095 MB suballoc_block=1024 MB sysmem_fallback=0
+   ```
+
+2. A per-graph summary of any ops the Vulkan backend could not run and fell back
+   to CPU (e.g. `OUT_PROD`, `CROSS_ENTROPY_LOSS_BACK` during training):
+
+   ```
+   ggml_vulkan: 12 op(s) not supported on GPU during graph compute, ran on CPU (per-type: OUT_PROD=12)
+   ```
+
+Both are **off by default** so they do not clutter output (notably during
+tests, where many contexts and training graphs are created). Enable them to
+diagnose which GPU was picked, which acceleration paths (fp16 / bf16 / coopmat)
+are active, and which ops are silently running on CPU:
+
+```r
+Sys.setenv(GGMLR_LOG_DEVICE = "1")
+```
+
+### CPU performance: multithreaded BLAS/LAPACK
+
+ggmlR runs the heavy linear algebra on the GPU, but some steps stay on the CPU
+through R's BLAS/LAPACK — most notably the eigendecomposition in PCA
+(`RunGGML(op = "embed")`) and any `eigen()` / `prcomp()` fallback. R ships with
+the **reference** BLAS/LAPACK, which is single-threaded: on a multi-core machine
+those CPU phases use just one core. Switching to **OpenBLAS** parallelises them
+(e.g. PCA on a 3000-gene object dropped from ~24 s to ~1.6 s here).
+
+This is a system-level change (outside the package, needs `sudo`). On
+Debian/Ubuntu:
+
+```bash
+# 1. Install OpenBLAS. Often this alone flips the alternatives to OpenBLAS —
+#    check with step 4; if R still shows reference BLAS, do steps 2-3.
+sudo apt update
+sudo apt install libopenblas-dev
+
+# 2. Point BLAS at OpenBLAS (pick the openblas entry from the list):
+sudo update-alternatives --config libblas.so.3-x86_64-linux-gnu
+
+# 3. Point LAPACK at OpenBLAS too — eigen() goes through LAPACK, not BLAS:
+sudo update-alternatives --config liblapack.so.3-x86_64-linux-gnu
+```
+
+```r
+# 4. Confirm R picked it up — both lines should name openblas, not
+#    /usr/lib/.../blas/libblas.so or /usr/lib/.../lapack/liblapack.so:
+si <- sessionInfo(); cat("BLAS:  ", si$BLAS, "\nLAPACK:", si$LAPACK, "\n")
+```
+
+OpenBLAS grabs all cores by default. If that oversubscribes alongside parallel
+resampling (tidymodels / mlr3) or trips CRAN's 2-thread limit in checks, cap it:
+`Sys.setenv(OPENBLAS_NUM_THREADS = 2)`.
+
 ## Sequential API
 
 The fastest way to get a model running — stack layers with the pipe, compile, train.
@@ -429,6 +519,112 @@ predict(fit_reg, new_data = mtcars)
 ```
 
 `parsnip`, `tibble`, `rlang`, and `dials` are in `Suggests` — ggmlR only wires up the engine when they are installed.
+
+## Single-cell GPU Acceleration (Seurat)
+
+Run GPU-accelerated operations directly on `Seurat` objects — no conversion on your side, and no hard dependency: `Seurat`/`SeuratObject` stay in `Suggests`, so ggmlR installs fine without them and the adapter activates only when they are present.
+
+**Setup.** The adapter needs two packages installed alongside ggmlR — `Seurat` (the object model and its pipeline) and a couple of light helpers it leans on for speed (`Matrix` for the sparse graphs, `FNN` for the kd-tree kNN). They are all `Suggests`, so install them yourself:
+
+```r
+install.packages(c("Seurat", "Matrix", "FNN"))   # ggmlR is already installed
+
+library(ggmlR)
+library(Seurat)        # ggmlR's S3 methods (RunGGML, ggml_extract, ...) activate
+                       # automatically once SeuratObject is on the search path
+```
+
+If `FNN` is absent the kNN falls back to the GPU/CPU distance matrix; if `Matrix` is absent the `"neighbors"` op is unavailable (the graphs are sparse). The rest works with `Seurat` alone.
+
+`RunGGML()` is the one-call, Seurat-style entry point (object in, object out — pipe-friendly, mirrors `RunPCA()`). Vulkan is used automatically when a GPU is present, with a transparent CPU fallback. The supported operations are the heavy matrix steps of a standard pipeline:
+
+| `op` | Replaces | What runs on the GPU |
+|------|----------|----------------------|
+| `"normalize"` | `NormalizeData()` (LogNormalize) | per-cell library-size scaling + `log1p`, elementwise |
+| `"scale"` | `ScaleData()` | per-gene z-score `(x − mean) / sd` + clamp over the full dense matrix |
+| `"embed"` | `RunPCA()` | gene-by-gene covariance multiply (eigendecomposition stays on the CPU — ggml has no eigensolver) |
+| `"umap"` | `RunUMAP()` | **two** custom compute shaders: `pairwise_dist.comp` (kNN distances, honest f32) and `umap_sgd.comp` (SGD layout) |
+| `"neighbors"` | `FindNeighbors()` | kNN distances (`pairwise_dist.comp`) feeding the SNN/Jaccard graph; matches Seurat bit-for-bit on exact kNN |
+
+`"normalize"` and `"scale"` write the transformed matrix back into the assay (the `data` and `scale.data` layers), so the rest of the Seurat pipeline picks them up unchanged. `"embed"` and `"umap"` add a dimensionality reduction; `"neighbors"` writes the `<assay>_nn` and `<assay>_snn` graphs into `@graphs`, exactly where `FindClusters()` looks.
+
+### What runs where
+
+A standard Seurat workflow maps onto the adapter like this — five of the heavy
+steps move to the GPU, and only the final community detection stays on the CPU:
+
+| Standard step | ggmlR | Runs on |
+|---------------|-------|---------|
+| `NormalizeData()` | `RunGGML(op = "normalize")` | **GPU** |
+| `ScaleData()` | `RunGGML(op = "scale")` | **GPU** |
+| `RunPCA()` | `RunGGML(op = "embed")` | **GPU** matrix multiply (eigensolve on CPU — ggml has none) |
+| `RunUMAP()` | `RunGGML(op = "umap")` | **GPU** (distance + SGD shaders) |
+| `FindNeighbors()` | `RunGGML(op = "neighbors")` | **GPU** distances → CPU sparse SNN |
+| `FindClusters()` | — (use Seurat's) | CPU — iterative graph Louvain/Leiden, a poor GPU fit and already fast on the CPU |
+
+On a Vulkan GPU (AMD RADV) the GPU steps are markedly faster than a naive
+reference. Indicative numbers at 2000 cells:
+
+| Step | What was sped up | Speed-up |
+|------|------------------|----------|
+| `neighbors` distance kernel | tiled f32 vs `stats::dist` | up to ~4× |
+| `umap` pipeline | kd-tree kNN + sparse fuzzy graph + GPU SGD | ~13× (≈1.45 s → 0.11 s) |
+| `umap` SGD shader alone | one GPU dispatch per epoch | ~10⁹ edge-updates/s |
+
+(Numbers are hardware-dependent; reproduce them with
+`inst/examples/umap_shaders_bench.R`.)
+
+```r
+library(Seurat)
+
+# A whole standard pipeline, GPU-accelerated end to end — every heavy step is a
+# RunGGML() call; only FindClusters (graph Louvain) stays on Seurat's side:
+pbmc <- RunGGML(pbmc, op = "normalize")                       # -> "data" layer
+pbmc <- RunGGML(pbmc, op = "scale")                           # -> "scale.data" layer
+pbmc <- RunGGML(pbmc, op = "embed", n_components = 30,
+                reduction_name = "pca")                       # -> reduction "pca"
+
+# UMAP on the PC coordinates — both phases on the GPU (distance + SGD shaders):
+pbmc <- RunGGML(pbmc, op = "umap", reduction = "pca", dims = 1:30,
+                reduction_name = "umap")                      # -> reduction "umap"
+
+# Neighbour graphs on the PC coordinates -> @graphs, then cluster as usual:
+pbmc <- RunGGML(pbmc, op = "neighbors", reduction = "pca", dims = 1:30)
+pbmc <- FindClusters(pbmc, graph.name = paste0(DefaultAssay(pbmc), "_snn"))
+
+DimPlot(pbmc, reduction = "umap", group.by = "seurat_clusters")
+```
+
+The `"umap"` op runs **two purpose-built Vulkan compute shaders** — a tiled f32
+pairwise-distance kernel for the kNN graph and an SGD layout kernel (one dispatch
+per epoch, Hogwild updates). The distance kernel sidesteps `mul_mat`, whose f16
+accumulation reorders nearest neighbours and corrupts the graph. With the kNN
+search on a kd-tree, a sparse fuzzy graph, and the SGD on the GPU, the UMAP
+pipeline runs ~13× faster than the initial reference (≈1.45 s → 0.11 s for 2000
+cells / 200 epochs). Layout numerics match the CPU reference to float32 precision;
+the SNN graph matches `FindNeighbors()` bit-for-bit on identical exact kNN.
+
+The adapter is layered, and each layer is a public generic you can call on its own:
+
+| Function | Layer | Responsibility |
+|----------|-------|----------------|
+| `ggml_extract()` | Extraction | Pull a feature × cell matrix out of a `Seurat`/`dgCMatrix`/`matrix`; handles Seurat v4 (`GetAssayData`) vs v5 (`LayerData`) and sparse → dense |
+| `ggml_run()` | Dispatch | Validate against `ggml_ops_registry()`, route to Vulkan GPU or CPU (auto, with fallback) |
+| `ggml_inject()` | Injection | Write the result back into the object — a reduction (`CreateDimReducObject()`) for `"embed"`/`"umap"`, an assay layer for the `"normalize"`/`"scale"` transforms, or `<assay>_nn`/`<assay>_snn` `Graph` objects in `@graphs` for `"neighbors"` |
+
+```r
+# Compose the layers manually (e.g. on a bare matrix, no Seurat needed):
+mat  <- ggml_extract(expr_matrix)               # genes × cells, dense
+task <- ggml_task("embed", mat, params = list(n_components = 30))
+res  <- ggml_run(task)                           # ggml_result: cells × components
+res$embedding
+
+# Check capabilities before dispatch:
+ggml_ops_registry()        # all supported operations
+ggml_ops_registry("embed") # required params + description
+```
+
+A `SingleCellExperiment` (Bioconductor) path with an S4 `runGGML()` generic is planned next.
 
 ## ONNX Model Import
 

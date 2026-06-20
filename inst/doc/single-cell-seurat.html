@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+
+<html>
+
+<head>
+
+<meta charset="utf-8" />
+<meta name="generator" content="pandoc" />
+<meta http-equiv="X-UA-Compatible" content="IE=EDGE" />
+
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+
+
+
+<title>Single-cell GPU Acceleration with Seurat</title>
+
+<script>// Pandoc 2.9 adds attributes on both header and div. We remove the former (to
+// be compatible with the behavior of Pandoc < 2.8).
+document.addEventListener('DOMContentLoaded', function(e) {
+  var hs = document.querySelectorAll("div.section[class*='level'] > :first-child");
+  var i, h, a;
+  for (i = 0; i < hs.length; i++) {
+    h = hs[i];
+    if (!/^h[1-6]$/i.test(h.tagName)) continue;  // it should be a header h1-h6
+    a = h.attributes;
+    while (a.length > 0) h.removeAttribute(a[0].name);
+  }
+});
+</script>
+
+<style type="text/css">
+code{white-space: pre-wrap;}
+span.smallcaps{font-variant: small-caps;}
+span.underline{text-decoration: underline;}
+div.column{display: inline-block; vertical-align: top; width: 50%;}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+ul.task-list{list-style: none;}
+</style>
+
+
+
+<style type="text/css">
+code {
+white-space: pre;
+}
+.sourceCode {
+overflow: visible;
+}
+</style>
+<style type="text/css" data-origin="pandoc">
+html { -webkit-text-size-adjust: 100%; }
+pre > code.sourceCode { white-space: pre; position: relative; }
+pre > code.sourceCode > span { display: inline-block; line-height: 1.25; }
+pre > code.sourceCode > span:empty { height: 1.2em; }
+.sourceCode { overflow: visible; }
+code.sourceCode > span { color: inherit; text-decoration: inherit; }
+div.sourceCode { margin: 1em 0; }
+pre.sourceCode { margin: 0; }
+@media screen {
+div.sourceCode { overflow: auto; }
+}
+@media print {
+pre > code.sourceCode { white-space: pre-wrap; }
+pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+}
+pre.numberSource code
+{ counter-reset: source-line 0; }
+pre.numberSource code > span
+{ position: relative; left: -4em; counter-increment: source-line; }
+pre.numberSource code > span > a:first-child::before
+{ content: counter(source-line);
+position: relative; left: -1em; text-align: right; vertical-align: baseline;
+border: none; display: inline-block;
+-webkit-touch-callout: none; -webkit-user-select: none;
+-khtml-user-select: none; -moz-user-select: none;
+-ms-user-select: none; user-select: none;
+padding: 0 4px; width: 4em;
+color: #aaaaaa;
+}
+pre.numberSource { margin-left: 3em; border-left: 1px solid #aaaaaa; padding-left: 4px; }
+div.sourceCode
+{ }
+@media screen {
+pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+}
+code span.al { color: #ff0000; font-weight: bold; } 
+code span.an { color: #60a0b0; font-weight: bold; font-style: italic; } 
+code span.at { color: #7d9029; } 
+code span.bn { color: #40a070; } 
+code span.bu { color: #008000; } 
+code span.cf { color: #007020; font-weight: bold; } 
+code span.ch { color: #4070a0; } 
+code span.cn { color: #880000; } 
+code span.co { color: #60a0b0; font-style: italic; } 
+code span.cv { color: #60a0b0; font-weight: bold; font-style: italic; } 
+code span.do { color: #ba2121; font-style: italic; } 
+code span.dt { color: #902000; } 
+code span.dv { color: #40a070; } 
+code span.er { color: #ff0000; font-weight: bold; } 
+code span.ex { } 
+code span.fl { color: #40a070; } 
+code span.fu { color: #06287e; } 
+code span.im { color: #008000; font-weight: bold; } 
+code span.in { color: #60a0b0; font-weight: bold; font-style: italic; } 
+code span.kw { color: #007020; font-weight: bold; } 
+code span.op { color: #666666; } 
+code span.ot { color: #007020; } 
+code span.pp { color: #bc7a00; } 
+code span.sc { color: #4070a0; } 
+code span.ss { color: #bb6688; } 
+code span.st { color: #4070a0; } 
+code span.va { color: #19177c; } 
+code span.vs { color: #4070a0; } 
+code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } 
+</style>
+<script>
+// apply pandoc div.sourceCode style to pre.sourceCode instead
+(function() {
+  var sheets = document.styleSheets;
+  for (var i = 0; i < sheets.length; i++) {
+    if (sheets[i].ownerNode.dataset["origin"] !== "pandoc") continue;
+    try { var rules = sheets[i].cssRules; } catch (e) { continue; }
+    var j = 0;
+    while (j < rules.length) {
+      var rule = rules[j];
+      // check if there is a div.sourceCode rule
+      if (rule.type !== rule.STYLE_RULE || rule.selectorText !== "div.sourceCode") {
+        j++;
+        continue;
+      }
+      var style = rule.style.cssText;
+      // check if color or background-color is set
+      if (rule.style.color === '' && rule.style.backgroundColor === '') {
+        j++;
+        continue;
+      }
+      // replace div.sourceCode by a pre.sourceCode rule
+      sheets[i].deleteRule(j);
+      sheets[i].insertRule('pre.sourceCode{' + style + '}', j);
+    }
+  }
+})();
+</script>
+
+
+
+
+<style type="text/css">body {
+background-color: #fff;
+margin: 1em auto;
+max-width: 700px;
+overflow: visible;
+padding-left: 2em;
+padding-right: 2em;
+font-family: "Open Sans", "Helvetica Neue", Helvetica, Arial, sans-serif;
+font-size: 14px;
+line-height: 1.35;
+}
+#TOC {
+clear: both;
+margin: 0 0 10px 10px;
+padding: 4px;
+width: 400px;
+border: 1px solid #CCCCCC;
+border-radius: 5px;
+background-color: #f6f6f6;
+font-size: 13px;
+line-height: 1.3;
+}
+#TOC .toctitle {
+font-weight: bold;
+font-size: 15px;
+margin-left: 5px;
+}
+#TOC ul {
+padding-left: 40px;
+margin-left: -1.5em;
+margin-top: 5px;
+margin-bottom: 5px;
+}
+#TOC ul ul {
+margin-left: -2em;
+}
+#TOC li {
+line-height: 16px;
+}
+table {
+margin: 1em auto;
+border-width: 1px;
+border-color: #DDDDDD;
+border-style: outset;
+border-collapse: collapse;
+}
+table th {
+border-width: 2px;
+padding: 5px;
+border-style: inset;
+}
+table td {
+border-width: 1px;
+border-style: inset;
+line-height: 18px;
+padding: 5px 5px;
+}
+table, table th, table td {
+border-left-style: none;
+border-right-style: none;
+}
+table thead, table tr.even {
+background-color: #f7f7f7;
+}
+p {
+margin: 0.5em 0;
+}
+blockquote {
+background-color: #f6f6f6;
+padding: 0.25em 0.75em;
+}
+hr {
+border-style: solid;
+border: none;
+border-top: 1px solid #777;
+margin: 28px 0;
+}
+dl {
+margin-left: 0;
+}
+dl dd {
+margin-bottom: 13px;
+margin-left: 13px;
+}
+dl dt {
+font-weight: bold;
+}
+ul {
+margin-top: 0;
+}
+ul li {
+list-style: circle outside;
+}
+ul ul {
+margin-bottom: 0;
+}
+pre, code {
+background-color: #f7f7f7;
+border-radius: 3px;
+color: #333;
+white-space: pre-wrap; 
+}
+pre {
+border-radius: 3px;
+margin: 5px 0px 10px 0px;
+padding: 10px;
+}
+pre:not([class]) {
+background-color: #f7f7f7;
+}
+code {
+font-family: Consolas, Monaco, 'Courier New', monospace;
+font-size: 85%;
+}
+p > code, li > code {
+padding: 2px 0px;
+}
+div.figure {
+text-align: center;
+}
+img {
+background-color: #FFFFFF;
+padding: 2px;
+border: 1px solid #DDDDDD;
+border-radius: 3px;
+border: 1px solid #CCCCCC;
+margin: 0 5px;
+}
+h1 {
+margin-top: 0;
+font-size: 35px;
+line-height: 40px;
+}
+h2 {
+border-bottom: 4px solid #f7f7f7;
+padding-top: 10px;
+padding-bottom: 2px;
+font-size: 145%;
+}
+h3 {
+border-bottom: 2px solid #f7f7f7;
+padding-top: 10px;
+font-size: 120%;
+}
+h4 {
+border-bottom: 1px solid #f7f7f7;
+margin-left: 8px;
+font-size: 105%;
+}
+h5, h6 {
+border-bottom: 1px solid #ccc;
+font-size: 105%;
+}
+a {
+color: #0033dd;
+text-decoration: none;
+}
+a:hover {
+color: #6666ff; }
+a:visited {
+color: #800080; }
+a:visited:hover {
+color: #BB00BB; }
+a[href^="http:"] {
+text-decoration: underline; }
+a[href^="https:"] {
+text-decoration: underline; }
+
+code > span.kw { color: #555; font-weight: bold; } 
+code > span.dt { color: #902000; } 
+code > span.dv { color: #40a070; } 
+code > span.bn { color: #d14; } 
+code > span.fl { color: #d14; } 
+code > span.ch { color: #d14; } 
+code > span.st { color: #d14; } 
+code > span.co { color: #888888; font-style: italic; } 
+code > span.ot { color: #007020; } 
+code > span.al { color: #ff0000; font-weight: bold; } 
+code > span.fu { color: #900; font-weight: bold; } 
+code > span.er { color: #a61717; background-color: #e3d2d2; } 
+</style>
+
+
+
+
+</head>
+
+<body>
+
+
+
+
+<h1 class="title toc-ignore">Single-cell GPU Acceleration with
+Seurat</h1>
+
+
+
+<p>ggmlR can accelerate the heavy steps of a single-cell RNA-seq
+pipeline on the GPU, working <strong>directly on <code>Seurat</code>
+objects</strong>. There is no conversion on your side and no hard
+dependency: <code>Seurat</code> / <code>SeuratObject</code> live in
+<code>Suggests</code>, so ggmlR installs fine without them and the
+adapter only activates when they are present. Vulkan is used
+automatically when a GPU is available, with a transparent CPU
+fallback.</p>
+<p>The adapter leans on two more <code>Suggests</code> packages for the
+neighbour-graph path: <code>Matrix</code> (the sparse graphs) and
+<code>FNN</code> (kd-tree kNN search). Install everything once alongside
+ggmlR, then just load <code>Seurat</code> — the S3 methods activate on
+their own:</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb1-1"><a href="#cb1-1" tabindex="-1"></a><span class="fu">install.packages</span>(<span class="fu">c</span>(<span class="st">&quot;Seurat&quot;</span>, <span class="st">&quot;Matrix&quot;</span>, <span class="st">&quot;FNN&quot;</span>))</span>
+<span id="cb1-2"><a href="#cb1-2" tabindex="-1"></a><span class="fu">library</span>(ggmlR)</span>
+<span id="cb1-3"><a href="#cb1-3" tabindex="-1"></a><span class="fu">library</span>(Seurat)</span></code></pre></div>
+<div id="the-one-call-runggml" class="section level2">
+<h2>The one call: <code>RunGGML()</code></h2>
+<p><code>RunGGML()</code> mirrors Seurat’s own <code>RunPCA()</code> /
+<code>NormalizeData()</code> style — object in, object out,
+pipe-friendly. The supported operations map onto the expensive matrix
+steps of a standard workflow:</p>
+<table>
+<colgroup>
+<col width="15%" />
+<col width="26%" />
+<col width="57%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th><code>op</code></th>
+<th>Replaces</th>
+<th>What runs on the GPU</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>&quot;normalize&quot;</code></td>
+<td><code>NormalizeData()</code> (LogNormalize)</td>
+<td>per-cell library-size scaling + <code>log1p</code>, elementwise</td>
+</tr>
+<tr class="even">
+<td><code>&quot;scale&quot;</code></td>
+<td><code>ScaleData()</code></td>
+<td>per-gene z-score <code>(x − mean) / sd</code> + clamp, over the full
+dense matrix</td>
+</tr>
+<tr class="odd">
+<td><code>&quot;embed&quot;</code></td>
+<td><code>RunPCA()</code></td>
+<td>gene-by-gene covariance multiply (the eigendecomposition stays on
+the CPU — ggml has no eigensolver)</td>
+</tr>
+<tr class="even">
+<td><code>&quot;umap&quot;</code></td>
+<td><code>RunUMAP()</code></td>
+<td>two custom compute shaders — a tiled f32 pairwise-distance kernel
+and an SGD layout kernel</td>
+</tr>
+<tr class="odd">
+<td><code>&quot;neighbors&quot;</code></td>
+<td><code>FindNeighbors()</code></td>
+<td>kNN distances on the GPU feeding a shared-nearest-neighbour
+(SNN/Jaccard) graph</td>
+</tr>
+</tbody>
+</table>
+<p><code>&quot;normalize&quot;</code> and <code>&quot;scale&quot;</code> are
+<strong>transforms</strong>: they write the result back into the assay
+(the <code>data</code> and <code>scale.data</code> layers), so the rest
+of the Seurat pipeline picks them up unchanged. <code>&quot;embed&quot;</code> and
+<code>&quot;umap&quot;</code> add a dimensionality reduction.
+<code>&quot;neighbors&quot;</code> writes the <code>&lt;assay&gt;_nn</code> /
+<code>&lt;assay&gt;_snn</code> graphs into <code>@graphs</code>, exactly
+where <code>FindClusters()</code> looks.</p>
+</div>
+<div id="a-worked-example" class="section level2">
+<h2>A worked example</h2>
+<p>We build a small synthetic object here so the vignette is
+self-contained; in practice you would load your own data with
+<code>Read10X()</code>.</p>
+<div class="sourceCode" id="cb2"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb2-1"><a href="#cb2-1" tabindex="-1"></a><span class="fu">set.seed</span>(<span class="dv">1</span>)</span>
+<span id="cb2-2"><a href="#cb2-2" tabindex="-1"></a>ng <span class="ot">&lt;-</span> <span class="dv">400</span><span class="dt">L</span>; nc <span class="ot">&lt;-</span> <span class="dv">200</span><span class="dt">L</span></span>
+<span id="cb2-3"><a href="#cb2-3" tabindex="-1"></a>counts <span class="ot">&lt;-</span> <span class="fu">matrix</span>(<span class="fu">rpois</span>(ng <span class="sc">*</span> nc, <span class="at">lambda =</span> <span class="dv">5</span>), <span class="at">nrow =</span> ng, <span class="at">ncol =</span> nc)</span>
+<span id="cb2-4"><a href="#cb2-4" tabindex="-1"></a><span class="fu">rownames</span>(counts) <span class="ot">&lt;-</span> <span class="fu">paste0</span>(<span class="st">&quot;gene&quot;</span>, <span class="fu">seq_len</span>(ng))</span>
+<span id="cb2-5"><a href="#cb2-5" tabindex="-1"></a><span class="fu">colnames</span>(counts) <span class="ot">&lt;-</span> <span class="fu">paste0</span>(<span class="st">&quot;cell&quot;</span>, <span class="fu">seq_len</span>(nc))</span>
+<span id="cb2-6"><a href="#cb2-6" tabindex="-1"></a>counts <span class="ot">&lt;-</span> methods<span class="sc">::</span><span class="fu">as</span>(counts, <span class="st">&quot;dgCMatrix&quot;</span>)</span>
+<span id="cb2-7"><a href="#cb2-7" tabindex="-1"></a></span>
+<span id="cb2-8"><a href="#cb2-8" tabindex="-1"></a>pbmc <span class="ot">&lt;-</span> <span class="fu">CreateSeuratObject</span>(<span class="at">counts =</span> counts)</span>
+<span id="cb2-9"><a href="#cb2-9" tabindex="-1"></a>pbmc</span></code></pre></div>
+<div id="normalize-and-scale-on-the-gpu" class="section level3">
+<h3>Normalize and scale on the GPU</h3>
+<div class="sourceCode" id="cb3"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb3-1"><a href="#cb3-1" tabindex="-1"></a>pbmc <span class="ot">&lt;-</span> <span class="fu">RunGGML</span>(pbmc, <span class="at">op =</span> <span class="st">&quot;normalize&quot;</span>)   <span class="co"># -&gt; assay &quot;data&quot; layer</span></span>
+<span id="cb3-2"><a href="#cb3-2" tabindex="-1"></a>pbmc <span class="ot">&lt;-</span> <span class="fu">RunGGML</span>(pbmc, <span class="at">op =</span> <span class="st">&quot;scale&quot;</span>)       <span class="co"># -&gt; assay &quot;scale.data&quot; layer</span></span></code></pre></div>
+<p>These behave like <code>NormalizeData()</code> and
+<code>ScaleData()</code> — the transformed matrices now live in the
+standard assay layers:</p>
+<div class="sourceCode" id="cb4"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb4-1"><a href="#cb4-1" tabindex="-1"></a><span class="fu">dim</span>(<span class="fu">LayerData</span>(pbmc, <span class="at">layer =</span> <span class="st">&quot;data&quot;</span>))</span>
+<span id="cb4-2"><a href="#cb4-2" tabindex="-1"></a><span class="fu">dim</span>(<span class="fu">LayerData</span>(pbmc, <span class="at">layer =</span> <span class="st">&quot;scale.data&quot;</span>))</span></code></pre></div>
+<p>The GPU <code>&quot;normalize&quot;</code> result matches Seurat’s
+<code>NormalizeData()</code> to floating-point tolerance:</p>
+<div class="sourceCode" id="cb5"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb5-1"><a href="#cb5-1" tabindex="-1"></a>gpu_data <span class="ot">&lt;-</span> <span class="fu">as.matrix</span>(<span class="fu">LayerData</span>(pbmc, <span class="at">layer =</span> <span class="st">&quot;data&quot;</span>))</span>
+<span id="cb5-2"><a href="#cb5-2" tabindex="-1"></a>ref_data <span class="ot">&lt;-</span> <span class="fu">as.matrix</span>(<span class="fu">LayerData</span>(</span>
+<span id="cb5-3"><a href="#cb5-3" tabindex="-1"></a>  <span class="fu">NormalizeData</span>(pbmc, <span class="at">verbose =</span> <span class="cn">FALSE</span>), <span class="at">layer =</span> <span class="st">&quot;data&quot;</span>))</span>
+<span id="cb5-4"><a href="#cb5-4" tabindex="-1"></a><span class="fu">max</span>(<span class="fu">abs</span>(gpu_data <span class="sc">-</span> ref_data))</span></code></pre></div>
+</div>
+<div id="pca-embed" class="section level3">
+<h3>PCA (embed)</h3>
+<div class="sourceCode" id="cb6"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb6-1"><a href="#cb6-1" tabindex="-1"></a>pbmc <span class="ot">&lt;-</span> <span class="fu">RunGGML</span>(pbmc, <span class="at">op =</span> <span class="st">&quot;embed&quot;</span>, <span class="at">n_components =</span> <span class="dv">20</span>, <span class="at">reduction_name =</span> <span class="st">&quot;ggml&quot;</span>)</span>
+<span id="cb6-2"><a href="#cb6-2" tabindex="-1"></a><span class="fu">Embeddings</span>(pbmc, <span class="st">&quot;ggml&quot;</span>)[<span class="dv">1</span><span class="sc">:</span><span class="dv">3</span>, <span class="dv">1</span><span class="sc">:</span><span class="dv">4</span>]</span></code></pre></div>
+<p>The reduction is an ordinary <code>DimReduc</code>, so every
+downstream step — Seurat’s own or ggmlR’s — uses it directly.</p>
+</div>
+<div id="umap-umap" class="section level3">
+<h3>UMAP (umap)</h3>
+<p><code>op = &quot;umap&quot;</code> lays the cells out in 2-D on the GPU. Both
+heavy phases are custom Vulkan compute shaders: a tiled f32
+<strong>pairwise-distance</strong> kernel that builds the kNN graph (it
+sidesteps <code>mul_mat</code>, whose f16 accumulation would reorder
+nearest neighbours and corrupt the graph), and an <strong>SGD
+layout</strong> kernel that runs one dispatch per epoch with lock-free
+Hogwild updates. With a kd-tree kNN search and a sparse fuzzy graph in
+between, the whole UMAP runs an order of magnitude faster than a naive
+reference while matching its layout to float32 precision.</p>
+<div class="sourceCode" id="cb7"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb7-1"><a href="#cb7-1" tabindex="-1"></a>pbmc <span class="ot">&lt;-</span> <span class="fu">RunGGML</span>(pbmc, <span class="at">op =</span> <span class="st">&quot;umap&quot;</span>, <span class="at">reduction =</span> <span class="st">&quot;ggml&quot;</span>, <span class="at">dims =</span> <span class="dv">1</span><span class="sc">:</span><span class="dv">20</span>,</span>
+<span id="cb7-2"><a href="#cb7-2" tabindex="-1"></a>                <span class="at">reduction_name =</span> <span class="st">&quot;umap&quot;</span>)</span>
+<span id="cb7-3"><a href="#cb7-3" tabindex="-1"></a><span class="fu">Embeddings</span>(pbmc, <span class="st">&quot;umap&quot;</span>)[<span class="dv">1</span><span class="sc">:</span><span class="dv">3</span>, ]</span></code></pre></div>
+</div>
+<div id="neighbour-graphs-neighbors" class="section level3">
+<h3>Neighbour graphs (neighbors)</h3>
+<p><code>op = &quot;neighbors&quot;</code> is the GPU equivalent of
+<code>FindNeighbors()</code>: it builds the binary kNN graph and the
+shared-nearest-neighbour (SNN) graph whose weights are the Jaccard
+overlap of each pair’s neighbourhoods. The graphs land in
+<code>@graphs</code> under Seurat’s naming convention, so
+<code>FindClusters()</code> consumes them unchanged.</p>
+<div class="sourceCode" id="cb8"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb8-1"><a href="#cb8-1" tabindex="-1"></a>pbmc <span class="ot">&lt;-</span> <span class="fu">RunGGML</span>(pbmc, <span class="at">op =</span> <span class="st">&quot;neighbors&quot;</span>, <span class="at">reduction =</span> <span class="st">&quot;ggml&quot;</span>, <span class="at">dims =</span> <span class="dv">1</span><span class="sc">:</span><span class="dv">20</span>)</span>
+<span id="cb8-2"><a href="#cb8-2" tabindex="-1"></a><span class="fu">Graphs</span>(pbmc)                                   <span class="co"># &lt;assay&gt;_nn and &lt;assay&gt;_snn</span></span>
+<span id="cb8-3"><a href="#cb8-3" tabindex="-1"></a></span>
+<span id="cb8-4"><a href="#cb8-4" tabindex="-1"></a>pbmc <span class="ot">&lt;-</span> <span class="fu">FindClusters</span>(pbmc, <span class="at">graph.name =</span> <span class="fu">paste0</span>(<span class="fu">DefaultAssay</span>(pbmc), <span class="st">&quot;_snn&quot;</span>),</span>
+<span id="cb8-5"><a href="#cb8-5" tabindex="-1"></a>                     <span class="at">verbose =</span> <span class="cn">FALSE</span>)</span>
+<span id="cb8-6"><a href="#cb8-6" tabindex="-1"></a><span class="fu">table</span>(pbmc<span class="sc">$</span>seurat_clusters)</span></code></pre></div>
+<div class="sourceCode" id="cb9"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb9-1"><a href="#cb9-1" tabindex="-1"></a><span class="fu">DimPlot</span>(pbmc, <span class="at">reduction =</span> <span class="st">&quot;umap&quot;</span>, <span class="at">group.by =</span> <span class="st">&quot;seurat_clusters&quot;</span>, <span class="at">label =</span> <span class="cn">TRUE</span>)</span></code></pre></div>
+<p>The SNN weights are numerically identical to
+<code>FindNeighbors()</code> when both use the same exact kNN (Seurat’s
+default <code>Annoy</code> is approximate, so an exact match needs
+<code>nn.method = &quot;rann&quot;</code>).</p>
+</div>
+</div>
+<div id="provenance" class="section level2">
+<h2>Provenance</h2>
+<p>Each operation records which backend it used (and timings) in the
+object’s <code>Misc</code> slot, keyed by the layer / reduction it
+produced:</p>
+<div class="sourceCode" id="cb10"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb10-1"><a href="#cb10-1" tabindex="-1"></a><span class="fu">Misc</span>(pbmc, <span class="st">&quot;data_ggml&quot;</span>)<span class="sc">$</span>backend          <span class="co"># normalize</span></span>
+<span id="cb10-2"><a href="#cb10-2" tabindex="-1"></a><span class="fu">Misc</span>(pbmc, <span class="st">&quot;scale.data_ggml&quot;</span>)<span class="sc">$</span>backend    <span class="co"># scale</span></span>
+<span id="cb10-3"><a href="#cb10-3" tabindex="-1"></a><span class="fu">Misc</span>(pbmc, <span class="st">&quot;ggml_ggml&quot;</span>)<span class="sc">$</span>backend          <span class="co"># embed (and neighbors)</span></span>
+<span id="cb10-4"><a href="#cb10-4" tabindex="-1"></a><span class="fu">Misc</span>(pbmc, <span class="st">&quot;umap_ggml&quot;</span>)<span class="sc">$</span>backend_sgd      <span class="co"># umap: layout phase backend</span></span></code></pre></div>
+<p>For <code>&quot;umap&quot;</code> the per-phase backends are reported
+separately (<code>backend_dist</code> for the kNN distances,
+<code>backend_sgd</code> for the layout), since each falls back to the
+CPU independently; the summary <code>backend</code> is
+<code>&quot;vulkan&quot;</code> only when both ran on the GPU.</p>
+</div>
+<div id="the-layers-underneath" class="section level2">
+<h2>The layers underneath</h2>
+<p><code>RunGGML()</code> is a thin wrapper over three public generics
+you can also call on their own — handy for a bare matrix with no Seurat
+object, or to inspect capabilities before dispatch:</p>
+<div class="sourceCode" id="cb11"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb11-1"><a href="#cb11-1" tabindex="-1"></a><span class="co"># What can the adapter do?</span></span>
+<span id="cb11-2"><a href="#cb11-2" tabindex="-1"></a><span class="fu">names</span>(<span class="fu">ggml_ops_registry</span>())</span>
+<span id="cb11-3"><a href="#cb11-3" tabindex="-1"></a><span class="fu">ggml_ops_registry</span>(<span class="st">&quot;embed&quot;</span>)</span>
+<span id="cb11-4"><a href="#cb11-4" tabindex="-1"></a></span>
+<span id="cb11-5"><a href="#cb11-5" tabindex="-1"></a><span class="co"># Compose the layers manually on a plain matrix:</span></span>
+<span id="cb11-6"><a href="#cb11-6" tabindex="-1"></a>mat  <span class="ot">&lt;-</span> <span class="fu">ggml_extract</span>(gpu_data)                       <span class="co"># genes x cells, dense</span></span>
+<span id="cb11-7"><a href="#cb11-7" tabindex="-1"></a>task <span class="ot">&lt;-</span> <span class="fu">ggml_task</span>(<span class="st">&quot;embed&quot;</span>, mat, <span class="at">params =</span> <span class="fu">list</span>(<span class="at">n_components =</span> <span class="dv">10</span>))</span>
+<span id="cb11-8"><a href="#cb11-8" tabindex="-1"></a>res  <span class="ot">&lt;-</span> <span class="fu">ggml_run</span>(task)                               <span class="co"># ggml_result</span></span>
+<span id="cb11-9"><a href="#cb11-9" tabindex="-1"></a><span class="fu">dim</span>(res<span class="sc">$</span>embedding)                                   <span class="co"># cells x components</span></span></code></pre></div>
+<ul>
+<li><code>ggml_extract()</code> pulls a feature × cell matrix out of a
+<code>Seurat</code> / <code>dgCMatrix</code> / <code>matrix</code>,
+handling Seurat v4 (<code>GetAssayData</code>) vs v5
+(<code>LayerData</code>) and sparse → dense.</li>
+<li><code>ggml_run()</code> validates against
+<code>ggml_ops_registry()</code> and routes to the Vulkan GPU or the CPU
+(<code>device = &quot;auto&quot;</code>, with fallback).</li>
+<li><code>ggml_inject()</code> writes the result back — a reduction for
+<code>&quot;embed&quot;</code> / <code>&quot;umap&quot;</code>, an assay layer for the
+<code>&quot;normalize&quot;</code> / <code>&quot;scale&quot;</code> transforms, or the
+<code>&lt;assay&gt;_nn</code> / <code>&lt;assay&gt;_snn</code> graphs
+for <code>&quot;neighbors&quot;</code>.</li>
+</ul>
+</div>
+<div id="bioconductor-singlecellexperiment" class="section level2">
+<h2>Bioconductor: <code>SingleCellExperiment</code></h2>
+<p>The same <code>RunGGML()</code> works on a
+<code>SingleCellExperiment</code> (SCE) — the adapter has methods for
+both object models. On an SCE the default assay read is
+<code>logcounts</code>, results land in <code>reducedDim()</code>,
+transforms overwrite the named assay, and the neighbour graphs and
+provenance go into <code>metadata()</code>.</p>
+<div class="sourceCode" id="cb12"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb12-1"><a href="#cb12-1" tabindex="-1"></a><span class="fu">library</span>(SingleCellExperiment)</span>
+<span id="cb12-2"><a href="#cb12-2" tabindex="-1"></a></span>
+<span id="cb12-3"><a href="#cb12-3" tabindex="-1"></a><span class="co"># a self-contained SCE (genes x cells), so this section does not depend on the</span></span>
+<span id="cb12-4"><a href="#cb12-4" tabindex="-1"></a><span class="co"># Seurat object built earlier</span></span>
+<span id="cb12-5"><a href="#cb12-5" tabindex="-1"></a><span class="fu">set.seed</span>(<span class="dv">1</span>)</span>
+<span id="cb12-6"><a href="#cb12-6" tabindex="-1"></a>ng <span class="ot">&lt;-</span> <span class="dv">200</span><span class="dt">L</span>; nc <span class="ot">&lt;-</span> <span class="dv">120</span><span class="dt">L</span></span>
+<span id="cb12-7"><a href="#cb12-7" tabindex="-1"></a>sce_counts <span class="ot">&lt;-</span> <span class="fu">matrix</span>(stats<span class="sc">::</span><span class="fu">rpois</span>(ng <span class="sc">*</span> nc, <span class="at">lambda =</span> <span class="dv">5</span>), ng, nc)</span>
+<span id="cb12-8"><a href="#cb12-8" tabindex="-1"></a><span class="fu">rownames</span>(sce_counts) <span class="ot">&lt;-</span> <span class="fu">paste0</span>(<span class="st">&quot;gene&quot;</span>, <span class="fu">seq_len</span>(ng))</span>
+<span id="cb12-9"><a href="#cb12-9" tabindex="-1"></a><span class="fu">colnames</span>(sce_counts) <span class="ot">&lt;-</span> <span class="fu">paste0</span>(<span class="st">&quot;cell&quot;</span>, <span class="fu">seq_len</span>(nc))</span>
+<span id="cb12-10"><a href="#cb12-10" tabindex="-1"></a>sce <span class="ot">&lt;-</span> <span class="fu">SingleCellExperiment</span>(<span class="at">assays =</span> <span class="fu">list</span>(</span>
+<span id="cb12-11"><a href="#cb12-11" tabindex="-1"></a>  <span class="at">counts    =</span> sce_counts,</span>
+<span id="cb12-12"><a href="#cb12-12" tabindex="-1"></a>  <span class="at">logcounts =</span> <span class="fu">log1p</span>(sce_counts)))</span>
+<span id="cb12-13"><a href="#cb12-13" tabindex="-1"></a></span>
+<span id="cb12-14"><a href="#cb12-14" tabindex="-1"></a>sce <span class="ot">&lt;-</span> <span class="fu">RunGGML</span>(sce, <span class="at">op =</span> <span class="st">&quot;embed&quot;</span>, <span class="at">n_components =</span> <span class="dv">20</span>)         <span class="co"># -&gt; reducedDim &quot;ggml&quot;</span></span>
+<span id="cb12-15"><a href="#cb12-15" tabindex="-1"></a>sce <span class="ot">&lt;-</span> <span class="fu">RunGGML</span>(sce, <span class="at">op =</span> <span class="st">&quot;neighbors&quot;</span>, <span class="at">reduction =</span> <span class="st">&quot;ggml&quot;</span>, <span class="at">dims =</span> <span class="dv">1</span><span class="sc">:</span><span class="dv">20</span>)</span>
+<span id="cb12-16"><a href="#cb12-16" tabindex="-1"></a></span>
+<span id="cb12-17"><a href="#cb12-17" tabindex="-1"></a><span class="fu">reducedDimNames</span>(sce)                                         <span class="co"># &quot;ggml&quot;</span></span>
+<span id="cb12-18"><a href="#cb12-18" tabindex="-1"></a><span class="fu">names</span>(S4Vectors<span class="sc">::</span><span class="fu">metadata</span>(sce))                              <span class="co"># ggml_nn / ggml_snn / ggml_ggml</span></span></code></pre></div>
+<p>Install the Bioconductor pieces alongside ggmlR if you work with SCE
+objects:</p>
+<div class="sourceCode" id="cb13"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb13-1"><a href="#cb13-1" tabindex="-1"></a>BiocManager<span class="sc">::</span><span class="fu">install</span>(<span class="fu">c</span>(<span class="st">&quot;SingleCellExperiment&quot;</span>, <span class="st">&quot;SummarizedExperiment&quot;</span>, <span class="st">&quot;S4Vectors&quot;</span>))</span></code></pre></div>
+</div>
+<div id="what-is-and-isnt-accelerated" class="section level2">
+<h2>What is and isn’t accelerated</h2>
+<p>Five steps of a standard workflow move to the GPU; only the final
+community detection stays on the CPU:</p>
+<table>
+<colgroup>
+<col width="48%" />
+<col width="22%" />
+<col width="29%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Standard step</th>
+<th>ggmlR</th>
+<th>Runs on</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>NormalizeData()</code></td>
+<td><code>RunGGML(op = &quot;normalize&quot;)</code></td>
+<td><strong>GPU</strong></td>
+</tr>
+<tr class="even">
+<td><code>ScaleData()</code></td>
+<td><code>RunGGML(op = &quot;scale&quot;)</code></td>
+<td><strong>GPU</strong></td>
+</tr>
+<tr class="odd">
+<td><code>RunPCA()</code></td>
+<td><code>RunGGML(op = &quot;embed&quot;)</code></td>
+<td><strong>GPU</strong> matrix multiply (eigensolve on CPU)</td>
+</tr>
+<tr class="even">
+<td><code>RunUMAP()</code></td>
+<td><code>RunGGML(op = &quot;umap&quot;)</code></td>
+<td><strong>GPU</strong> (distance + SGD shaders)</td>
+</tr>
+<tr class="odd">
+<td><code>FindNeighbors()</code></td>
+<td><code>RunGGML(op = &quot;neighbors&quot;)</code></td>
+<td><strong>GPU</strong> distances → CPU sparse SNN</td>
+</tr>
+<tr class="even">
+<td><code>FindClusters()</code></td>
+<td>— (use Seurat’s)</td>
+<td>CPU — iterative graph Louvain/Leiden</td>
+</tr>
+</tbody>
+</table>
+<p>So a typical run is <code>normalize → scale → embed → umap</code> for
+visualisation and <code>embed → neighbors → FindClusters</code> for
+clustering. <code>FindClusters</code> is left to Seurat because
+community detection is iterative and graph-structured — a poor fit for
+the GPU and already well optimised on the CPU. The PCA
+eigendecomposition likewise stays on the CPU, as ggml has no
+eigensolver. The same operations are available on
+<code>SingleCellExperiment</code> objects (see above), so the adapter
+covers both the Seurat and Bioconductor ecosystems.</p>
+</div>
+
+
+
+<!-- code folding -->
+
+
+<!-- dynamically load mathjax for compatibility with self-contained -->
+<script>
+  (function () {
+    var script = document.createElement("script");
+    script.type = "text/javascript";
+    script.src  = "https://mathjax.rstudio.com/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML";
+    document.getElementsByTagName("head")[0].appendChild(script);
+  })();
+</script>
+
+</body>
+</html>

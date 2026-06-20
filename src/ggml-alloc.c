@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
 #define MAX_FREE_BLOCKS 256
 
@@ -1244,5 +1245,7 @@ ggml_backend_buffer_t ggml_backend_alloc_ctx_tensors_from_buft(struct ggml_conte
 }
 
 ggml_backend_buffer_t ggml_backend_alloc_ctx_tensors(struct ggml_context * ctx, ggml_backend_t backend) {
-    return ggml_backend_alloc_ctx_tensors_from_buft(ctx, ggml_backend_get_default_buffer_type(backend));
+    ggml_backend_buffer_type_t buft = ggml_backend_get_default_buffer_type(backend);
+    ggml_backend_buffer_t ret = ggml_backend_alloc_ctx_tensors_from_buft(ctx, buft);
+    return ret;
 }

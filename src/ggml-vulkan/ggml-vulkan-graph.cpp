@@ -1,3 +1,5 @@
+#include "../r_dbg_filelog.h" /* opt-in trace via GGMLR_DBG_LOG env (no-op when unset) */
+
 static void ggml_vk_preallocate_buffers(ggml_backend_vk_context * ctx, vk_context subctx) {
 
     if (subctx) {
@@ -57,6 +59,12 @@ static bool ggml_vk_build_graph(ggml_backend_vk_context * ctx, ggml_cgraph * cgr
     }
 
     VK_LOG_DEBUG("ggml_vk_build_graph(" << node << ", " << ggml_op_name(node->op) << ")");
+    r_dbg_logf("vk_node[%d] op=%s name='%s' ne=[%lld,%lld,%lld,%lld] type=%s",
+               node_idx, ggml_op_name(node->op),
+               node->name[0] ? node->name : "<unnamed>",
+               (long long)node->ne[0], (long long)node->ne[1],
+               (long long)node->ne[2], (long long)node->ne[3],
+               ggml_type_name(node->type));
     ctx->semaphore_idx = 0;
 
     ggml_tensor * src0 = node->src[0];
@@ -705,11 +713,36 @@ static bool ggml_backend_buffer_is_vk(ggml_backend_buffer_t buffer) {
     return buffer->buft->iface.get_name == ggml_backend_vk_buffer_type_name;
 }
 
+// Industrial telemetry: live Vulkan device-buffer VRAM footprint (defined with
+// the alloc path below; forward-declared here so free can decrement them).
+static uint64_t g_vk_live_buffer_bytes;
+static uint64_t g_vk_buffer_alloc_count;
+
+// Forward declaration: defined near supports_op (further down) but called from
+// graph_compute (above its definition) to summarize CPU-fallback ops.
+static void ggml_vk_log_unsupported_op_summary(const char * phase);
+
 static void ggml_backend_vk_buffer_free_buffer(ggml_backend_buffer_t buffer) {
     VK_LOG_MEMORY("ggml_backend_vk_buffer_free_buffer()");
     ggml_backend_vk_buffer_context * ctx = (ggml_backend_vk_buffer_context *)buffer->context;
-    ggml_vk_destroy_buffer(ctx->dev_buffer);
+    size_t freed = buffer->size;
+    // dev_buffer is destroyed by ~ggml_backend_vk_buffer_context (called from
+    // delete ctx). Calling ggml_vk_destroy_buffer here as well was a redundant
+    // double-destroy of the same shared vk_buffer; matches upstream which only
+    // does `delete ctx`.
     delete ctx;
+    if (g_vk_live_buffer_bytes >= freed) {
+        g_vk_live_buffer_bytes -= freed;
+    } else {
+        g_vk_live_buffer_bytes = 0;
+    }
+    if (g_vk_buffer_alloc_count > 0) {
+        g_vk_buffer_alloc_count--;
+    }
+    GGML_LOG_DEBUG("ggml_vulkan: VRAM free %.2f MB | live=%.2f MB in %llu buffers\n",
+                   freed / (1024.0 * 1024.0),
+                   g_vk_live_buffer_bytes / (1024.0 * 1024.0),
+                   (unsigned long long)g_vk_buffer_alloc_count);
 }
 
 static void * ggml_backend_vk_buffer_get_base(ggml_backend_buffer_t buffer) {
@@ -735,8 +768,17 @@ static void ggml_backend_vk_buffer_memset_tensor(ggml_backend_buffer_t buffer, g
     ggml_vk_buffer_memset(buf, vk_tensor_offset(tensor) + tensor->view_offs + offset, val32, size);
 }
 
+static unsigned long long g_vk_set_tensor_calls = 0;
+static unsigned long long g_vk_set_tensor_bytes = 0;
+
 static void ggml_backend_vk_buffer_set_tensor(ggml_backend_buffer_t buffer, ggml_tensor * tensor, const void * data, size_t offset, size_t size) {
     VK_LOG_DEBUG("ggml_backend_vk_buffer_set_tensor(" << buffer << ", " << tensor << ", " << data << ", " << offset << ", " << size << ")");
+    g_vk_set_tensor_calls++;
+    g_vk_set_tensor_bytes += size;
+    r_dbg_logf("vk_set_tensor: #%llu name='%s' type=%s size=%zu off=%zu cum=%llu",
+               g_vk_set_tensor_calls,
+               tensor->name[0] ? tensor->name : "<unnamed>",
+               ggml_type_name(tensor->type), size, offset, g_vk_set_tensor_bytes);
     ggml_backend_vk_buffer_context * buf_ctx = (ggml_backend_vk_buffer_context *)buffer->context;
     vk_buffer buf = buf_ctx->dev_buffer;
 
@@ -820,6 +862,9 @@ static const char * ggml_backend_vk_buffer_type_name(ggml_backend_buffer_type_t 
     return ctx->name.c_str();
 }
 
+// g_vk_live_buffer_bytes / g_vk_buffer_alloc_count are forward-declared above
+// (near free_buffer). Updated on alloc/free to track live VRAM footprint.
+
 static ggml_backend_buffer_t ggml_backend_vk_buffer_type_alloc_buffer(ggml_backend_buffer_type_t buft, size_t size) {
     VK_LOG_MEMORY("ggml_backend_vk_buffer_type_alloc_buffer(" << size << ")");
     ggml_backend_vk_buffer_type_context * ctx = (ggml_backend_vk_buffer_type_context *) buft->context;
@@ -828,26 +873,53 @@ static ggml_backend_buffer_t ggml_backend_vk_buffer_type_alloc_buffer(ggml_backe
     try {
         dev_buffer = ggml_vk_create_buffer_device(ctx->device, size);
     } catch (const vk::SystemError& e) {
+        GGML_LOG_WARN("ggml_vulkan: VRAM alloc FAILED for %.2f MB (live=%.2f MB in %llu buffers): %s\n",
+                      size / (1024.0 * 1024.0),
+                      g_vk_live_buffer_bytes / (1024.0 * 1024.0),
+                      (unsigned long long)g_vk_buffer_alloc_count,
+                      e.what());
+        return nullptr;
+    } catch (const std::exception& e) {
+        GGML_LOG_WARN("ggml_vulkan: VRAM alloc FAILED for %.2f MB (live=%.2f MB in %llu buffers): %s\n",
+                      size / (1024.0 * 1024.0),
+                      g_vk_live_buffer_bytes / (1024.0 * 1024.0),
+                      (unsigned long long)g_vk_buffer_alloc_count,
+                      e.what());
+        return nullptr;
+    }
+    g_vk_live_buffer_bytes += size;
+    g_vk_buffer_alloc_count++;
+    GGML_LOG_DEBUG("ggml_vulkan: VRAM alloc %.2f MB | live=%.2f MB in %llu buffers\n",
+                   size / (1024.0 * 1024.0),
+                   g_vk_live_buffer_bytes / (1024.0 * 1024.0),
+                   (unsigned long long)g_vk_buffer_alloc_count);
+
+    ggml_backend_vk_buffer_context * bufctx = nullptr;
+    try {
+        bufctx = new ggml_backend_vk_buffer_context(ctx->device, std::move(dev_buffer), ctx->name);
+    } catch (const std::exception& e) {
         return nullptr;
     }
 
-    ggml_backend_vk_buffer_context * bufctx = new ggml_backend_vk_buffer_context(ctx->device, std::move(dev_buffer), ctx->name);
-
-    return ggml_backend_buffer_init(buft, ggml_backend_vk_buffer_interface, bufctx, size);
+    ggml_backend_buffer_t buf = ggml_backend_buffer_init(buft, &ggml_backend_vk_buffer_interface, bufctx, size);
+    return buf;
 }
 
 static size_t ggml_backend_vk_buffer_type_get_alignment(ggml_backend_buffer_type_t buft) {
     ggml_backend_vk_buffer_type_context * ctx = (ggml_backend_vk_buffer_type_context *) buft->context;
-    return ctx->device->properties.limits.minStorageBufferOffsetAlignment;
+    size_t a = ctx->device->properties.limits.minStorageBufferOffsetAlignment;
+    return a;
 }
 
 static size_t ggml_backend_vk_buffer_type_get_max_size(ggml_backend_buffer_type_t buft) {
     ggml_backend_vk_buffer_type_context * ctx = (ggml_backend_vk_buffer_type_context *) buft->context;
-    return ctx->device->suballocation_block_size;
+    size_t m = ctx->device->suballocation_block_size;
+    return m;
 }
 
 static size_t ggml_backend_vk_buffer_type_get_alloc_size(ggml_backend_buffer_type_t buft, const ggml_tensor * tensor) {
-    return ggml_nbytes(tensor);
+    size_t n = ggml_nbytes(tensor);
+    return n;
 
     UNUSED(buft);
 }
@@ -1567,6 +1639,8 @@ static uint32_t ggml_vk_fuse_multi_add(ggml_backend_vk_context * ctx, const stru
 
 static ggml_status ggml_backend_vk_graph_compute(ggml_backend_t backend, ggml_cgraph * cgraph) {
     VK_LOG_DEBUG("ggml_backend_vk_graph_compute(" << cgraph->n_nodes << " nodes)");
+    r_dbg_logf("vk_graph_compute: ENTER n_nodes=%d (set_tensor so far=%llu, %.1f MB)",
+               cgraph->n_nodes, g_vk_set_tensor_calls, g_vk_set_tensor_bytes / (1024.0 * 1024.0));
     ggml_backend_vk_context * ctx = (ggml_backend_vk_context *)backend->context;
 
     if (vk_instance.debug_utils_support) {
@@ -1939,11 +2013,16 @@ static ggml_status ggml_backend_vk_graph_compute(ggml_backend_t backend, ggml_cg
         ggml_vk_synchronize(ctx);
     }
 
+    // Industrial telemetry: report any ops that the scheduler ran on CPU because
+    // the Vulkan backend rejected them (silent perf cost via GPU<->CPU copies).
+    ggml_vk_log_unsupported_op_summary("graph compute");
+
     if (getenv("GGML_VKG_SUBMITS")) {
         r_ggml_fprintf(stderr, "[VKG_SUBMITS] n_nodes=%d submit_count=%d support_async=%d\n",
                        cgraph->n_nodes, submit_count, (int) ctx->device->support_async);
     }
 
+    r_dbg_logf("vk_graph_compute: DONE n_nodes=%d", cgraph->n_nodes);
     return GGML_STATUS_SUCCESS;
 
     UNUSED(backend);
@@ -2481,7 +2560,7 @@ static ggml_backend_t ggml_backend_vk_device_init(ggml_backend_dev_t dev, const 
     return ggml_backend_vk_init(ctx->device);
 }
 
-static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggml_tensor * op) {
+static bool ggml_backend_vk_device_supports_op_impl(ggml_backend_dev_t dev, const ggml_tensor * op) {
     switch (op->op) {
         case GGML_OP_UNARY:
             switch (ggml_get_unary_op(op)) {
@@ -3033,6 +3112,51 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
     }
 
     UNUSED(dev);
+}
+
+// Industrial telemetry: ops the Vulkan backend cannot run fall back to CPU,
+// which forces GPU<->CPU copies around each such node and silently slows graphs.
+// supports_op is on a hot path (called per node at graph build), so we never log
+// per-call — instead we tally rejected op types and expose them on demand via
+// ggml_vk_log_unsupported_op_summary() (called after graph build / compute).
+static std::map<ggml_op, uint64_t> g_vk_unsupported_op_counts;
+static uint64_t                    g_vk_unsupported_op_total = 0;
+
+static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggml_tensor * op) {
+    bool ok = ggml_backend_vk_device_supports_op_impl(dev, op);
+    if (!ok) {
+        g_vk_unsupported_op_counts[op->op]++;
+        g_vk_unsupported_op_total++;
+    }
+    return ok;
+}
+
+// Emit a one-line summary of ops that were rejected by the Vulkan backend (and
+// therefore ran on CPU), then reset the tally. No-op when everything ran on GPU.
+static void ggml_vk_log_unsupported_op_summary(const char * phase) {
+    if (g_vk_unsupported_op_total == 0) {
+        return;
+    }
+    // Gated behind GGMLR_LOG_DEVICE (same switch as the device-caps line) so it
+    // stays available for production diagnostics but does not flood test output,
+    // where training graphs routinely fall back ops like OUT_PROD /
+    // CROSS_ENTROPY_LOSS_BACK to CPU. Still reset the tally either way.
+    const char * log_dev = getenv("GGMLR_LOG_DEVICE");
+    if (log_dev != nullptr && log_dev[0] != '\0' && log_dev[0] != '0') {
+        std::string detail;
+        for (const auto & kv : g_vk_unsupported_op_counts) {
+            if (!detail.empty()) {
+                detail += ", ";
+            }
+            detail += std::string(ggml_op_name(kv.first)) + "=" + std::to_string(kv.second);
+        }
+        GGML_LOG_INFO("ggml_vulkan: %llu op(s) not supported on GPU during %s, ran on CPU (per-type: %s)\n",
+                      (unsigned long long)g_vk_unsupported_op_total,
+                      phase ? phase : "graph",
+                      detail.c_str());
+    }
+    g_vk_unsupported_op_counts.clear();
+    g_vk_unsupported_op_total = 0;
 }
 
 static bool ggml_backend_vk_device_supports_buft(ggml_backend_dev_t dev, ggml_backend_buffer_type_t buft) {

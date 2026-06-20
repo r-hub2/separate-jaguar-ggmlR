@@ -80,6 +80,7 @@ namespace std {
 #include "ggml-impl.h"
 #include "ggml-backend-impl.h"
 
+
 #include "ggml-vulkan-shaders.hpp"
 
 // R package: re-redirect exit() after <cstdlib> undoes the r_ggml_compat.h macro
@@ -851,6 +852,9 @@ struct vk_device_struct {
 
     vk_pipeline pipeline_rel_pos_bias_f32;
 
+    vk_pipeline pipeline_umap_sgd;
+    vk_pipeline pipeline_pairwise_dist;
+
     vk_pipeline pipeline_fill_f32;
     vk_pipeline pipeline_fill_f16;
 
@@ -1348,6 +1352,28 @@ struct vk_op_rel_pos_bias_push_constants {
     uint32_t rel_w;
 };
 static_assert(sizeof(vk_op_rel_pos_bias_push_constants) <= 256, "sizeof(vk_op_rel_pos_bias_push_constants) must be <= 256");
+
+// UMAP SGD layout step push constants. Layout MUST match the `parameter` block
+// in vulkan-shaders/umap_sgd.comp exactly (4 uints then 4 floats).
+struct vk_op_umap_sgd_push_constants {
+    uint32_t n;
+    uint32_t ne;
+    uint32_t n_neg;
+    uint32_t seed;
+    float    alpha;
+    float    a;
+    float    b;
+    float    gamma;
+};
+static_assert(sizeof(vk_op_umap_sgd_push_constants) <= 256, "sizeof(vk_op_umap_sgd_push_constants) must be <= 256");
+
+// Pairwise squared-distance push constants. Must match the `parameter` block in
+// vulkan-shaders/pairwise_dist.comp exactly (two uints).
+struct vk_op_pairwise_dist_push_constants {
+    uint32_t n;
+    uint32_t dims;
+};
+static_assert(sizeof(vk_op_pairwise_dist_push_constants) <= 256, "sizeof(vk_op_pairwise_dist_push_constants) must be <= 256");
 
 static vk_op_binary_push_constants vk_op_binary_push_constants_init(
     const ggml_tensor * src0, const ggml_tensor * src1, const ggml_tensor * dst,
@@ -2191,6 +2217,7 @@ static void ggml_vk_create_pipeline_func(vk_device& device, vk_pipeline& pipelin
     GGML_ASSERT(parameter_count <= MAX_PARAMETER_COUNT);
     GGML_ASSERT(wg_denoms[0] > 0 && wg_denoms[1] > 0 && wg_denoms[2] > 0); // NOLINT
 
+
     vk::ShaderModuleCreateInfo shader_module_create_info({}, spv_size, reinterpret_cast<const uint32_t *>(spv_data));
     pipeline->shader_module = device->device.createShaderModule(shader_module_create_info);
 
@@ -2298,6 +2325,7 @@ static void ggml_vk_create_pipeline_func(vk_device& device, vk_pipeline& pipelin
     }
 
     device->all_pipelines.push_back(pipeline);
+
 
     {
         std::lock_guard<std::mutex> guard(compile_count_mutex);
@@ -2765,8 +2793,8 @@ static vk_buffer ggml_vk_create_buffer(vk_device& device, size_t size, const std
     if (device->buffer_device_address) {
         const vk::BufferDeviceAddressInfo addressInfo(buf->buffer);
         buf->bda_addr = device->device.getBufferAddress(addressInfo);
+    } else {
     }
-
 
     return buf;
 }
