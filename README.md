@@ -116,10 +116,11 @@ This is a system-level change (outside the package, needs `sudo`). On
 Debian/Ubuntu:
 
 ```bash
-# 1. Install OpenBLAS. Often this alone flips the alternatives to OpenBLAS —
-#    check with step 4; if R still shows reference BLAS, do steps 2-3.
+# 1. Install OpenBLAS. Prefer the OpenMP variant over the default pthreads one
+#    (the R-admin manual recommends the openmp build): its threads are governed
+#    by OMP_NUM_THREADS and it is better behaved under tools like valgrind.
 sudo apt update
-sudo apt install libopenblas-dev
+sudo apt install libopenblas-openmp-dev   # or libopenblas-dev for the pthreads build
 
 # 2. Point BLAS at OpenBLAS (pick the openblas entry from the list):
 sudo update-alternatives --config libblas.so.3-x86_64-linux-gnu
@@ -137,6 +138,13 @@ si <- sessionInfo(); cat("BLAS:  ", si$BLAS, "\nLAPACK:", si$LAPACK, "\n")
 OpenBLAS grabs all cores by default. If that oversubscribes alongside parallel
 resampling (tidymodels / mlr3) or trips CRAN's 2-thread limit in checks, cap it:
 `Sys.setenv(OPENBLAS_NUM_THREADS = 2)`.
+
+> **Note (valgrind).** A multithreaded OpenBLAS spawns worker threads, and
+> valgrind reports each worker's thread-local storage as a one-off
+> "possibly lost" block (`definitely lost: 0`). This is a known false positive,
+> not a leak. Run checks with `OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1` for a
+> clean valgrind report; CRAN's own machines use single-threaded reference BLAS,
+> so it does not appear there.
 
 ## Sequential API
 
