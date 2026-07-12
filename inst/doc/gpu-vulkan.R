@@ -93,4 +93,5 @@ knitr::opts_chunk$set(eval = identical(Sys.getenv("NOT_CRAN"), "true"))
 ## -----------------------------------------------------------------------------
 # cat(ggml_version(), "\n")
 # ggml_vulkan_status()   # shows "Vulkan not available" if not compiled in
+# ggml_vulkan_hard_exit_available()   # TRUE only with --enable-hard-exit
 

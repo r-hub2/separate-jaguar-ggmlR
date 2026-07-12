@@ -1,4 +1,7 @@
 #include "../r_dbg_filelog.h" /* opt-in trace via GGMLR_DBG_LOG env (no-op when unset) */
+#ifdef GGML_VK_HARD_EXIT
+#include <unistd.h>           /* _exit() for ggml_backend_vk_shutdown(hard=1, status) */
+#endif
 
 static void ggml_vk_preallocate_buffers(ggml_backend_vk_context * ctx, vk_context subctx) {
 
@@ -2373,6 +2376,106 @@ void ggml_backend_vk_get_device_description(int device, char * description, size
     ggml_vk_get_device_description(dev_idx, description, description_size);
 }
 
+// ggmlR Tensor Parallelism (P2P), not upstream ggml.
+// Enumerate Vulkan device groups (VK_KHR_device_group / LDA) and probe whether
+// the driver reports direct peer memory access between the physical devices in
+// each group. A group with >1 device AND peer Copy/Generic features is the
+// prerequisite for NVLink-routed (or PCIe-P2P) transfers via a device-group
+// logical device — as opposed to opaque-fd between independent VkDevices, which
+// the driver may route through host. Writes a human-readable report into
+// `report` (truncated to report_size) and returns the number of device groups.
+int ggml_backend_vk_get_device_groups(char * report, size_t report_size) {
+    // Ensure the Vulkan instance (and dynamic dispatcher) is initialized before
+    // touching vk_instance.instance — otherwise enumeratePhysicalDeviceGroups()
+    // dereferences a null handle. Mirrors the other entry points here.
+    ggml_vk_instance_init();
+
+    size_t off = 0;
+    auto emit = [&](const char * fmt, ...) {
+        if (!report || off + 1 >= report_size) return;
+        va_list ap;
+        va_start(ap, fmt);
+        int n = vsnprintf(report + off, report_size - off, fmt, ap);
+        va_end(ap);
+        if (n > 0) off += (size_t) n;
+    };
+
+    std::vector<vk::PhysicalDeviceGroupProperties> groups;
+    try {
+        groups = vk_instance.instance.enumeratePhysicalDeviceGroups();
+    } catch (const vk::SystemError& e) {
+        emit("device-group enumeration failed: %s\n", e.what());
+        return 0;
+    }
+
+    emit("Vulkan device groups: %zu\n", groups.size());
+    for (size_t g = 0; g < groups.size(); g++) {
+        const auto & grp = groups[g];
+        emit("  group %zu: %u device(s), subsetAllocation=%d\n",
+             g, grp.physicalDeviceCount, (int) grp.subsetAllocation);
+        for (uint32_t d = 0; d < grp.physicalDeviceCount; d++) {
+            vk::PhysicalDeviceProperties props = grp.physicalDevices[d].getProperties();
+            emit("    dev[%u]: %s\n", d, props.deviceName.data());
+        }
+
+        // A single-device group cannot do peer transfer; skip the probe.
+        if (grp.physicalDeviceCount < 2) {
+            emit("    peer: n/a (single-device group — no NVLink/P2P path)\n");
+            continue;
+        }
+
+        // Build a temporary logical device over the group to query peer memory
+        // features. Heap 0 is used as a representative device-local heap.
+        vk::DeviceGroupDeviceCreateInfo grp_ci;
+        grp_ci.physicalDeviceCount = grp.physicalDeviceCount;
+        grp_ci.pPhysicalDevices    = grp.physicalDevices.data();
+
+        // Minimal queue on device 0 of the group.
+        float prio = 1.0f;
+        vk::DeviceQueueCreateInfo qci({}, 0, 1, &prio);
+        vk::DeviceCreateInfo dci({}, 1, &qci);
+        dci.setPNext(&grp_ci);
+
+        vk::Device tmp_dev;
+        try {
+            tmp_dev = grp.physicalDevices[0].createDevice(dci);
+        } catch (const vk::SystemError& e) {
+            emit("    peer: device-group logical device creation failed: %s\n", e.what());
+            continue;
+        }
+
+        // With the dynamic dispatcher, resolve device-level function pointers
+        // (getGroupPeerMemoryFeatures) against this temporary device before use.
+        VULKAN_HPP_DEFAULT_DISPATCHER.init(tmp_dev);
+
+        bool any_peer = false;
+        for (uint32_t a = 0; a < grp.physicalDeviceCount; a++) {
+            for (uint32_t b = 0; b < grp.physicalDeviceCount; b++) {
+                if (a == b) continue;
+                vk::PeerMemoryFeatureFlags feat =
+                    tmp_dev.getGroupPeerMemoryFeatures(0 /*heap*/, a, b);
+                bool copy_src = (bool) (feat & vk::PeerMemoryFeatureFlagBits::eCopySrc);
+                bool copy_dst = (bool) (feat & vk::PeerMemoryFeatureFlagBits::eCopyDst);
+                bool gen_src  = (bool) (feat & vk::PeerMemoryFeatureFlagBits::eGenericSrc);
+                bool gen_dst  = (bool) (feat & vk::PeerMemoryFeatureFlagBits::eGenericDst);
+                if (copy_src || copy_dst || gen_src || gen_dst) any_peer = true;
+                emit("    peer %u->%u: CopySrc=%d CopyDst=%d GenericSrc=%d GenericDst=%d\n",
+                     a, b, copy_src, copy_dst, gen_src, gen_dst);
+            }
+        }
+        emit("    => direct peer access: %s\n",
+             any_peer ? "YES (device-group P2P path available)"
+                      : "NO (would fall back to host staging)");
+        tmp_dev.destroy();
+        // Re-point the dynamic dispatcher back to the instance level: the
+        // device-level pointers we just loaded belong to the now-destroyed
+        // temporary device and must not be used by later Vulkan calls.
+        VULKAN_HPP_DEFAULT_DISPATCHER.init(vk_instance.instance);
+    }
+
+    return (int) groups.size();
+}
+
 void ggml_backend_vk_get_device_memory(int device, size_t * free, size_t * total) {
     GGML_ASSERT(device < (int) vk_instance.device_indices.size());
     GGML_ASSERT(device < (int) vk_instance.device_supports_membudget.size());
@@ -2412,7 +2515,8 @@ void ggml_backend_vk_get_device_caps(int device_idx, bool * coopmat_support, boo
                                       uint32_t * wavefronts_per_simd, bool * bf16, bool * integer_dot_product,
                                       const char ** arch_name,
                                       uint32_t * coopmat_m, uint32_t * coopmat_n, uint32_t * coopmat_k,
-                                      bool * supports_256_push_constants, uint32_t * max_push_constants_size) {
+                                      bool * supports_256_push_constants, uint32_t * max_push_constants_size,
+                                      bool * subgroup_shuffle, bool * subgroup_vote) {
     ggml_vk_instance_init();
     GGML_ASSERT(device_idx >= 0 && device_idx < (int) vk_instance.device_indices.size());
     vk_device dev = ggml_vk_get_device((size_t)device_idx);
@@ -2420,6 +2524,10 @@ void ggml_backend_vk_get_device_caps(int device_idx, bool * coopmat_support, boo
     if (coopmat1_fa_support)*coopmat1_fa_support = dev->coopmat1_fa_support;
     if (fp16)               *fp16               = dev->fp16;
     if (subgroup_size)      *subgroup_size       = dev->subgroup_size;
+    // Flash Attention scalar/coopmat1 path needs both of these (see FA gate in
+    // supports_op); exposed so callers can tell why FA falls back to CPU.
+    if (subgroup_shuffle)   *subgroup_shuffle   = dev->subgroup_shuffle;
+    if (subgroup_vote)      *subgroup_vote      = dev->subgroup_vote;
     // subgroup_no_shmem is active when subgroup_arithmetic is enabled and not AMD GCN
     if (subgroup_no_shmem)  *subgroup_no_shmem  = dev->subgroup_arithmetic &&
                                                    dev->architecture != vk_device_architecture::AMD_GCN;
@@ -2600,8 +2708,10 @@ static bool ggml_backend_vk_device_supports_op_impl(ggml_backend_dev_t dev, cons
                 case GGML_GLU_OP_SWIGLU_OAI:
                 case GGML_GLU_OP_GEGLU_ERF:
                 case GGML_GLU_OP_GEGLU_QUICK:
-                    return ggml_is_contiguous(op->src[0]) &&
-                           (op->src[0]->type == GGML_TYPE_F32 || op->src[0]->type == GGML_TYPE_F16) &&
+                    // Match upstream: no full-contiguity requirement (the shader
+                    // takes per-row strides). Requiring ggml_is_contiguous forced
+                    // GLU to CPU for permuted views, splitting the graph.
+                    return (op->src[0]->type == GGML_TYPE_F32 || op->src[0]->type == GGML_TYPE_F16) &&
                            (op->type == GGML_TYPE_F32 || op->type == GGML_TYPE_F16) &&
                            (op->src[0]->type == op->type);
                 default:
@@ -2873,8 +2983,16 @@ static bool ggml_backend_vk_device_supports_op_impl(ggml_backend_dev_t dev, cons
             return true;
         case GGML_OP_NORM:
         case GGML_OP_GROUP_NORM:
-        case GGML_OP_L2_NORM:
             return ggml_is_contiguous(op->src[0]);
+        case GGML_OP_L2_NORM:
+            // Match upstream: L2_NORM only needs contiguous *rows*, not a fully
+            // contiguous tensor. Requiring full contiguity (as this case used to,
+            // sharing the NORM/GROUP_NORM branch) rejected the per-head Q/K L2 norm
+            // in Qwen3.5-style models (src is a permuted view), forcing it to CPU
+            // and shattering the graph into ~1 split per layer on GPUs without
+            // Flash Attention (e.g. Tesla P100).
+            return ggml_is_contiguous_rows(op->src[0]) &&
+                   op->src[0]->type == GGML_TYPE_F32 && op->type == GGML_TYPE_F32;
         case GGML_OP_ADD:
         case GGML_OP_SUB:
         case GGML_OP_MUL:
@@ -3324,6 +3442,98 @@ ggml_backend_reg_t ggml_backend_vk_reg() {
         VK_LOG_DEBUG("ggml_backend_vk_reg() -> Error: unknown exception during Vulkan init");
         return nullptr;
     }
+}
+
+// ggmlR, not upstream: explicit Vulkan teardown, called from R's .onUnload while
+// the package DLL — and crucially the Vulkan loader / Mesa ICD .so files — are
+// still mapped. The static `vk_instance` (instance + shared_ptr devices[]) is
+// otherwise destroyed at process exit in an order the C runtime does not
+// coordinate with the loader's own static destructors, so the loader can be
+// unmapped before our device destructors run their loader calls
+// (destroyFence/destroyDescriptorSetLayout/device.destroy), giving a flaky
+// segfault in unmapped memory after results are already returned. Draining and
+// releasing the instance's device refs here, while the loader is still mapped,
+// gases idle driver threads early and shrinks that race.
+//
+// We release the instance's DEVICE references but leave the instance handle
+// itself alive (see the note at the end): late R XPtr finalizers may still need
+// a valid instance to run vkFreeMemory against.
+//
+// Safe w.r.t. downstream (llamaR/sd2R): `vk_device` is a shared_ptr, so
+// resetting the instance's reference only actually destroys a device once every
+// live backend that copied it has been freed — never prematurely. waitIdle first
+// drains any in-flight driver work so the loader threads are quiescent.
+extern "C" void ggml_backend_vk_shutdown(int hard, int status) {
+    r_tp_tracef("vk_shutdown: enter (initialized=%d hard=%d status=%d)",
+                (int) vk_instance_initialized, hard, status);
+    if (!vk_instance_initialized) {
+        r_tp_tracef("vk_shutdown: already down, no-op");
+#ifdef GGML_VK_HARD_EXIT
+        if (hard) {
+            // Still honour the hard request: skip the process teardown that races
+            // the Vulkan loader's static destructors even when we own no devices.
+            r_tp_tracef("vk_shutdown: hard exit(%d) (nothing to tear down)", status);
+            fflush(NULL);
+            _exit(status);
+        }
+#endif
+        return;   // idempotent: guards double-shutdown and use-after-shutdown init
+    }
+    vk_instance_initialized = false;
+
+    int idx = 0;
+    for (auto & dev : vk_instance.devices) {
+        if (dev) {
+            // use_count > 1 means a live backend (e.g. from split_mul_mat/pp_forward,
+            // or held by llamaR/sd2R) still references this device — resetting the
+            // instance's ref will NOT destroy it now; ~vk_device_struct runs later,
+            // when that backend is freed, possibly after we destroy the instance.
+            r_tp_tracef("vk_shutdown: dev[%d] use_count=%ld", idx, (long) dev.use_count());
+        }
+        if (dev && dev->device) {
+            try { dev->device.waitIdle(); } catch (...) {}
+        }
+        try { dev.reset(); } catch (...) {}
+        idx++;
+    }
+    // Deliberately DO NOT destroy vk_instance.instance here.
+    //
+    // A backend created inside pp_forward/split_mul_mat is wrapped in an R XPtr
+    // whose finalizer (r_ggml_vk_backend_finalizer, onexit=TRUE) may not have run
+    // yet when this explicit shutdown fires. That finalizer -> ggml_backend_free ->
+    // last shared_ptr ref -> ~vk_device_struct -> device.destroy()/vkFreeMemory,
+    // which needs a LIVE instance. If we destroy the instance now, that late
+    // vkFreeMemory hits a dead instance => "[Vulkan Loader] vkFreeMemory: Invalid
+    // device" -> Aborted. So we drain+release the instance's own device refs (kills
+    // idle driver threads) but leave the instance handle valid; the OS reclaims it
+    // at process exit after every late device finalizer has run against it.
+    r_tp_tracef("vk_shutdown: devices reset, instance left LIVE for late finalizers");
+
+#ifdef GGML_VK_HARD_EXIT
+    if (hard) {
+        // The f1ba0 segfault is a flaky race between NVIDIA/Mesa driver worker
+        // threads still winding down and the dynamic loader unmapping the Vulkan
+        // ICD .so files during the C runtime's atexit/static-destruction phase.
+        // No R exit hook can win that race (R unmaps the loader before any hook).
+        // Since all results have already been produced and printed by this point,
+        // the only reliable fix is to leave via _exit(), which terminates the
+        // process immediately WITHOUT running atexit handlers, C++ static
+        // destructors, or unmapping shared objects — so there is no loader
+        // static-destruction phase for the driver threads to fault against.
+        // Callers opt in (hard=TRUE) as the last statement of a script/example.
+        // `status` is the process exit code — pass non-zero from an error path so
+        // a failed run does not masquerade as success.
+        r_tp_tracef("vk_shutdown: hard exit(%d) — skipping atexit/loader teardown", status);
+        fflush(NULL);
+        _exit(status);
+    }
+#else
+    // CRAN builds omit the _exit() path entirely (Repository Policy forbids a
+    // package terminating the R session). ggml_vulkan_shutdown() warns the caller
+    // that hard=TRUE degraded to the soft teardown above; see r_interface_vulkan.c.
+    (void) hard;
+    (void) status;
+#endif
 }
 
 // Extension availability

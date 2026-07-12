@@ -213,8 +213,20 @@ ggml_backend_dev_t ggml_backend_meta_device(
         ggml_backend_dev_t * devs, size_t n_devs, ggml_backend_meta_get_split_state_t get_split_state, void * get_split_state_ud) {
     GGML_ASSERT(n_devs <= GGML_BACKEND_META_MAX_DEVICES);
     // TODO: this is not thread-safe - needs to be fixed
-    static std::vector<std::unique_ptr<ggml_backend_meta_device_context>>         ctxs;
-    static std::map<ggml_backend_meta_device_context, struct ggml_backend_device> meta_devs;
+    //
+    // NEVER-DESTROYED SINGLETONS (ggmlR): both caches live on the heap via a
+    // leaked static pointer, so C++ does NOT run their destructors at process
+    // exit. Same rationale as meta_bufts_map() below — on a multi-GPU run these
+    // hold per-device Vulkan-backed contexts, and destroying them during
+    // __run_exit_handlers (in an order undefined relative to the Vulkan/driver
+    // teardown) faulted. The OS reclaims the memory at exit. Explicit cleanup on
+    // package unload is handled elsewhere; these are process-lifetime.
+    static auto * ctxs_ptr =
+        new std::vector<std::unique_ptr<ggml_backend_meta_device_context>>();
+    static auto * meta_devs_ptr =
+        new std::map<ggml_backend_meta_device_context, struct ggml_backend_device>();
+    auto & ctxs      = *ctxs_ptr;
+    auto & meta_devs = *meta_devs_ptr;
 
     std::vector<ggml_backend_dev_t> simple_devs;
     simple_devs.reserve(n_devs);
@@ -343,9 +355,25 @@ bool ggml_backend_buft_is_meta(ggml_backend_buffer_type_t buft) {
 // Process-lifetime cache of meta buffer types, one per meta device. The ctx
 // of each entry is heap-allocated (new) and lives until ggmlR unloads — see
 // ggml_backend_meta_free_cached_bufts(), called from .onUnload.
-static std::map<ggml_backend_dev_t, struct ggml_backend_buffer_type> g_meta_bufts;
+//
+// NEVER-DESTROYED SINGLETON (ggmlR): the map lives on the heap and its pointer
+// is a leaked static, so C++ does NOT run ~map at process exit. This is
+// deliberate: on a multi-GPU run the cached buffer types transitively reference
+// per-device Vulkan state, and the C-runtime's exit-time static destruction
+// order (~map here vs the Vulkan/driver teardown) is undefined — running ~map
+// then faulted (SIGSEGV in ~map during __run_exit_handlers, only after several
+// devices had been touched: the classic static-destruction-order fiasco). The
+// map's memory is reclaimed by the OS at exit; nothing is actually leaked in a
+// way that matters. Controlled cleanup still happens via
+// ggml_backend_meta_free_cached_bufts() when the package is explicitly unloaded.
+static std::map<ggml_backend_dev_t, struct ggml_backend_buffer_type> & meta_bufts_map() {
+    static std::map<ggml_backend_dev_t, struct ggml_backend_buffer_type> * m =
+        new std::map<ggml_backend_dev_t, struct ggml_backend_buffer_type>();
+    return *m;
+}
 
 void ggml_backend_meta_free_cached_bufts(void) {
+    auto & g_meta_bufts = meta_bufts_map();
     for (auto & kv : g_meta_bufts) {
         delete (ggml_backend_meta_buffer_type_context *) kv.second.context;
         kv.second.context = nullptr;
@@ -354,7 +382,7 @@ void ggml_backend_meta_free_cached_bufts(void) {
 }
 
 static ggml_backend_buffer_type_t ggml_backend_meta_device_get_buffer_type(ggml_backend_dev_t dev) {
-    std::map<ggml_backend_dev_t, struct ggml_backend_buffer_type> & meta_bufts = g_meta_bufts;
+    std::map<ggml_backend_dev_t, struct ggml_backend_buffer_type> & meta_bufts = meta_bufts_map();
     GGML_ASSERT(ggml_backend_dev_is_meta(dev));
     {
         auto it = meta_bufts.find(dev);

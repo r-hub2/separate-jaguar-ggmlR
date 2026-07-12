@@ -1,14 +1,27 @@
+# ggmlR 0.8.1
+
+* **Double-precision GPU matmul** — `ggml_matmul_f64()` computes `A %*% B` on the Vulkan GPU in full fp64 (a hand-written `matmul_f64.comp` kernel), matching R's `%*%` to machine precision (~1e-15), unlike the approximate f32/f16 `ggml_matmul()`. Worthwhile on data-centre cards with fast fp64 (Tesla P100/V100, Instinct — 1:2 of fp32); on consumer GPUs (RDNA ~1:16, GeForce ~1:64) the CPU is usually faster. Silently falls back to the CPU without a GPU or the `shaderFloat64` feature.
+* **GPU k-nearest-neighbours for `op = "neighbors"`** — opt in with `knn_backend = "vulkan"` to run the kNN search on the new `knn_tiled.comp` shader: honest-f32 distances with a fused per-row top-k, so the n×n distance matrix is never materialised (footprint linear in n, not n²). Exact neighbours, memory-light, and it avoids the FNN kd-tree's ~O(n²) degradation in ~10-D at large n. Falls back to the CPU when the GPU is unavailable, `n_neighbors > 32`, or n exceeds the VRAM ceiling.
+* **GPU linear algebra drop-in** — `ggml_matmul()`, `ggml_crossprod()` and `ggml_tcrossprod()` run an ordinary R matrix multiply on the Vulkan GPU (plain matrices in and out, CPU fallback). `as_gpu_matrix()` wraps a matrix so `%*%`, `crossprod()` and `tcrossprod()` dispatch to the GPU with no other code changes. `device = "auto"` keeps small multiplies on the CPU; the f32 kernel is forced by default so results match R to ~1e-6 (`prec = "f16"` for speed).
+* **Single-cell `op = "largest_gene"`** — Seurat's `percent.Largest.Gene` QC metric (per-cell highest-expressed gene and its share of the cell total). Runs on the CPU directly over the sparse `dgCMatrix` CSC slots (no densify), bit-exact with `qlcMatrix::colMax`; results land in `meta.data` / `colData`.
+* **Single-cell `op = "normalize"`** now runs sparse on the GPU (`sparse_lognorm.comp`): counts stay a `dgCMatrix` and are never densified, lifting the memory ceiling on large datasets.
+* **UMAP CPU-SGD** layout rewritten in C — the default single-threaded reference is bit-for-bit identical but finishes in seconds instead of minutes.
+
+# ggmlR 0.8.0
+
+* **Multi-GPU tensor parallelism (Vulkan)** — `ggml_vulkan_split_mul_mat()` row-splits a weight matrix across GPUs, computes each slice on its own device, and gathers the result (not in upstream ggml). Verified on 4× Tesla P100.
+* Supporting API: `ggml_vulkan_split_buffer_type()` (split buffer type, with an arbitrary `device_ids` subset), `ggml_vulkan_split_row_ranges()`, and `ggml_vulkan_p2p_selftest()` / `ggml_vulkan_device_groups()` transport probes.
+* **Cross-device transport** defaults to portable **host staging** (correct on every driver); `opaque-fd` and `device-group` are also selectable.
+* **TP × DP hybrid** — `ggml_tp_dp_forward(W, X, replicas)` runs data parallelism over the batch across replicas of tensor-parallel device groups (e.g. 2 replicas × TP=2 on 4 GPUs).
+* **Pipeline parallelism** — `ggml_pp_forward(stages, x, out_shape)` splits a model *by layers* across devices, handing activations between stages once per pass (a single cross-device copy).
+
 # ggmlR 0.7.9
 
-* **Industrial logging**: the Vulkan backend now reports operating-mode changes through the standard `ggml` log — selected device and its capabilities (fp16/bf16/coopmat/BDA), a summary of ops that fell back to CPU, live VRAM buffer footprint, and the silent BF16→F16 downgrade on Vulkan.
-* **Single-cell GPU integration (Seurat)**: new adapter layer that runs GPU-accelerated operations directly on `Seurat` objects, with no hard dependency on Seurat (it stays in `Suggests`).
-  * `RunGGML()` — Seurat-style, pipe-friendly entry point (object in, object out); mirrors `RunPCA()`. First operation is `"embed"` (PCA): the gene-by-gene covariance multiply runs on the Vulkan GPU, the eigendecomposition on the CPU.
-  * `"normalize"` and `"scale"` preprocessing operations — GPU-accelerated `LogNormalize` and feature scaling/centring, matching Seurat's `NormalizeData()` / `ScaleData()`.
-  * **`"umap"` operation** — 2-D UMAP embedding whose SGD layout step runs on a **new Vulkan compute shader** (`umap_sgd.comp`). The kNN graph and fuzzy simplicial set are built on the CPU; the per-edge SGD optimisation (attraction + negative-sampling repulsion, Hogwild-style lock-free writes) is dispatched directly on the GPU, one dispatch per epoch. The negative-sample RNG (PCG hash) is mirrored exactly by the CPU reference, so the shader is verified bit-exact on a conflict-free graph. Use via `RunGGML(obj, op = "umap", reduction = "pca")`.
-  * PCA eigendecomposition now uses a truncated symmetric solver (`RSpectra::eigs_sym`, top-k) when available, falling back to full `eigen()` — `O(genes² · k)` instead of `O(genes³)`, with identical results.
-  * Layered architecture: `ggml_extract()` (extraction, handles Seurat v4 `GetAssayData` vs v5 `LayerData`, sparse `dgCMatrix` → dense), `ggml_run()` (dispatch, auto GPU/CPU with transparent CPU fallback), `ggml_inject()` (writes the result back as a Seurat reduction via `CreateDimReducObject`; run provenance — backend, timings, op parameters — is stashed in the object's `Misc` slot).
-  * Contract objects `ggml_task()` / `ggml_result()` and an introspectable `ggml_ops_registry()` for capability checks before dispatch.
-  * `Seurat`, `SeuratObject`, `Matrix`, `RSpectra`, `irlba` added to `Suggests`; package remains `R CMD check`-clean without them.
+* **logging**: the Vulkan backend reports operating-mode changes through the standard `ggml` log — selected device and capabilities, CPU-fallback summary, live VRAM footprint, and the silent BF16→F16 downgrade.
+* **Single-cell GPU integration (Seurat)**: new adapter running GPU ops directly on `Seurat` objects, with no hard dependency (Seurat stays in `Suggests`).
+* `RunGGML()` — pipe-friendly entry point mirroring `RunPCA()`; operations `"embed"` (PCA), `"normalize"`, `"scale"`, and `"umap"` (2-D layout SGD on a new `umap_sgd.comp` Vulkan shader, verified bit-exact vs the CPU reference).
+* PCA eigendecomposition uses a truncated symmetric solver (`RSpectra::eigs_sym`) when available — `O(genes² · k)` instead of `O(genes³)`.
+* Layered `ggml_extract()` / `ggml_run()` / `ggml_inject()` architecture with run provenance in `Misc`; `Seurat`, `SeuratObject`, `Matrix`, `RSpectra`, `irlba` added to `Suggests`.
 
 # ggmlR 0.7.8
 

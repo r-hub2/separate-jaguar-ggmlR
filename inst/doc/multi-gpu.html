@@ -1,0 +1,639 @@
+<!DOCTYPE html>
+
+<html>
+
+<head>
+
+<meta charset="utf-8" />
+<meta name="generator" content="pandoc" />
+<meta http-equiv="X-UA-Compatible" content="IE=EDGE" />
+
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+
+
+
+<title>Multi-GPU: Tensor, Pipeline and Hybrid Parallelism</title>
+
+<script>// Pandoc 2.9 adds attributes on both header and div. We remove the former (to
+// be compatible with the behavior of Pandoc < 2.8).
+document.addEventListener('DOMContentLoaded', function(e) {
+  var hs = document.querySelectorAll("div.section[class*='level'] > :first-child");
+  var i, h, a;
+  for (i = 0; i < hs.length; i++) {
+    h = hs[i];
+    if (!/^h[1-6]$/i.test(h.tagName)) continue;  // it should be a header h1-h6
+    a = h.attributes;
+    while (a.length > 0) h.removeAttribute(a[0].name);
+  }
+});
+</script>
+
+<style type="text/css">
+code{white-space: pre-wrap;}
+span.smallcaps{font-variant: small-caps;}
+span.underline{text-decoration: underline;}
+div.column{display: inline-block; vertical-align: top; width: 50%;}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+ul.task-list{list-style: none;}
+</style>
+
+
+
+<style type="text/css">
+code {
+white-space: pre;
+}
+.sourceCode {
+overflow: visible;
+}
+</style>
+<style type="text/css" data-origin="pandoc">
+html { -webkit-text-size-adjust: 100%; }
+pre > code.sourceCode { white-space: pre; position: relative; }
+pre > code.sourceCode > span { display: inline-block; line-height: 1.25; }
+pre > code.sourceCode > span:empty { height: 1.2em; }
+.sourceCode { overflow: visible; }
+code.sourceCode > span { color: inherit; text-decoration: inherit; }
+div.sourceCode { margin: 1em 0; }
+pre.sourceCode { margin: 0; }
+@media screen {
+div.sourceCode { overflow: auto; }
+}
+@media print {
+pre > code.sourceCode { white-space: pre-wrap; }
+pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+}
+pre.numberSource code
+{ counter-reset: source-line 0; }
+pre.numberSource code > span
+{ position: relative; left: -4em; counter-increment: source-line; }
+pre.numberSource code > span > a:first-child::before
+{ content: counter(source-line);
+position: relative; left: -1em; text-align: right; vertical-align: baseline;
+border: none; display: inline-block;
+-webkit-touch-callout: none; -webkit-user-select: none;
+-khtml-user-select: none; -moz-user-select: none;
+-ms-user-select: none; user-select: none;
+padding: 0 4px; width: 4em;
+color: #aaaaaa;
+}
+pre.numberSource { margin-left: 3em; border-left: 1px solid #aaaaaa; padding-left: 4px; }
+div.sourceCode
+{ }
+@media screen {
+pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+}
+code span.al { color: #ff0000; font-weight: bold; } 
+code span.an { color: #60a0b0; font-weight: bold; font-style: italic; } 
+code span.at { color: #7d9029; } 
+code span.bn { color: #40a070; } 
+code span.bu { color: #008000; } 
+code span.cf { color: #007020; font-weight: bold; } 
+code span.ch { color: #4070a0; } 
+code span.cn { color: #880000; } 
+code span.co { color: #60a0b0; font-style: italic; } 
+code span.cv { color: #60a0b0; font-weight: bold; font-style: italic; } 
+code span.do { color: #ba2121; font-style: italic; } 
+code span.dt { color: #902000; } 
+code span.dv { color: #40a070; } 
+code span.er { color: #ff0000; font-weight: bold; } 
+code span.ex { } 
+code span.fl { color: #40a070; } 
+code span.fu { color: #06287e; } 
+code span.im { color: #008000; font-weight: bold; } 
+code span.in { color: #60a0b0; font-weight: bold; font-style: italic; } 
+code span.kw { color: #007020; font-weight: bold; } 
+code span.op { color: #666666; } 
+code span.ot { color: #007020; } 
+code span.pp { color: #bc7a00; } 
+code span.sc { color: #4070a0; } 
+code span.ss { color: #bb6688; } 
+code span.st { color: #4070a0; } 
+code span.va { color: #19177c; } 
+code span.vs { color: #4070a0; } 
+code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } 
+</style>
+<script>
+// apply pandoc div.sourceCode style to pre.sourceCode instead
+(function() {
+  var sheets = document.styleSheets;
+  for (var i = 0; i < sheets.length; i++) {
+    if (sheets[i].ownerNode.dataset["origin"] !== "pandoc") continue;
+    try { var rules = sheets[i].cssRules; } catch (e) { continue; }
+    var j = 0;
+    while (j < rules.length) {
+      var rule = rules[j];
+      // check if there is a div.sourceCode rule
+      if (rule.type !== rule.STYLE_RULE || rule.selectorText !== "div.sourceCode") {
+        j++;
+        continue;
+      }
+      var style = rule.style.cssText;
+      // check if color or background-color is set
+      if (rule.style.color === '' && rule.style.backgroundColor === '') {
+        j++;
+        continue;
+      }
+      // replace div.sourceCode by a pre.sourceCode rule
+      sheets[i].deleteRule(j);
+      sheets[i].insertRule('pre.sourceCode{' + style + '}', j);
+    }
+  }
+})();
+</script>
+
+
+
+
+<style type="text/css">body {
+background-color: #fff;
+margin: 1em auto;
+max-width: 700px;
+overflow: visible;
+padding-left: 2em;
+padding-right: 2em;
+font-family: "Open Sans", "Helvetica Neue", Helvetica, Arial, sans-serif;
+font-size: 14px;
+line-height: 1.35;
+}
+#TOC {
+clear: both;
+margin: 0 0 10px 10px;
+padding: 4px;
+width: 400px;
+border: 1px solid #CCCCCC;
+border-radius: 5px;
+background-color: #f6f6f6;
+font-size: 13px;
+line-height: 1.3;
+}
+#TOC .toctitle {
+font-weight: bold;
+font-size: 15px;
+margin-left: 5px;
+}
+#TOC ul {
+padding-left: 40px;
+margin-left: -1.5em;
+margin-top: 5px;
+margin-bottom: 5px;
+}
+#TOC ul ul {
+margin-left: -2em;
+}
+#TOC li {
+line-height: 16px;
+}
+table {
+margin: 1em auto;
+border-width: 1px;
+border-color: #DDDDDD;
+border-style: outset;
+border-collapse: collapse;
+}
+table th {
+border-width: 2px;
+padding: 5px;
+border-style: inset;
+}
+table td {
+border-width: 1px;
+border-style: inset;
+line-height: 18px;
+padding: 5px 5px;
+}
+table, table th, table td {
+border-left-style: none;
+border-right-style: none;
+}
+table thead, table tr.even {
+background-color: #f7f7f7;
+}
+p {
+margin: 0.5em 0;
+}
+blockquote {
+background-color: #f6f6f6;
+padding: 0.25em 0.75em;
+}
+hr {
+border-style: solid;
+border: none;
+border-top: 1px solid #777;
+margin: 28px 0;
+}
+dl {
+margin-left: 0;
+}
+dl dd {
+margin-bottom: 13px;
+margin-left: 13px;
+}
+dl dt {
+font-weight: bold;
+}
+ul {
+margin-top: 0;
+}
+ul li {
+list-style: circle outside;
+}
+ul ul {
+margin-bottom: 0;
+}
+pre, code {
+background-color: #f7f7f7;
+border-radius: 3px;
+color: #333;
+white-space: pre-wrap; 
+}
+pre {
+border-radius: 3px;
+margin: 5px 0px 10px 0px;
+padding: 10px;
+}
+pre:not([class]) {
+background-color: #f7f7f7;
+}
+code {
+font-family: Consolas, Monaco, 'Courier New', monospace;
+font-size: 85%;
+}
+p > code, li > code {
+padding: 2px 0px;
+}
+div.figure {
+text-align: center;
+}
+img {
+background-color: #FFFFFF;
+padding: 2px;
+border: 1px solid #DDDDDD;
+border-radius: 3px;
+border: 1px solid #CCCCCC;
+margin: 0 5px;
+}
+h1 {
+margin-top: 0;
+font-size: 35px;
+line-height: 40px;
+}
+h2 {
+border-bottom: 4px solid #f7f7f7;
+padding-top: 10px;
+padding-bottom: 2px;
+font-size: 145%;
+}
+h3 {
+border-bottom: 2px solid #f7f7f7;
+padding-top: 10px;
+font-size: 120%;
+}
+h4 {
+border-bottom: 1px solid #f7f7f7;
+margin-left: 8px;
+font-size: 105%;
+}
+h5, h6 {
+border-bottom: 1px solid #ccc;
+font-size: 105%;
+}
+a {
+color: #0033dd;
+text-decoration: none;
+}
+a:hover {
+color: #6666ff; }
+a:visited {
+color: #800080; }
+a:visited:hover {
+color: #BB00BB; }
+a[href^="http:"] {
+text-decoration: underline; }
+a[href^="https:"] {
+text-decoration: underline; }
+
+code > span.kw { color: #555; font-weight: bold; } 
+code > span.dt { color: #902000; } 
+code > span.dv { color: #40a070; } 
+code > span.bn { color: #d14; } 
+code > span.fl { color: #d14; } 
+code > span.ch { color: #d14; } 
+code > span.st { color: #d14; } 
+code > span.co { color: #888888; font-style: italic; } 
+code > span.ot { color: #007020; } 
+code > span.al { color: #ff0000; font-weight: bold; } 
+code > span.fu { color: #900; font-weight: bold; } 
+code > span.er { color: #a61717; background-color: #e3d2d2; } 
+</style>
+
+
+
+
+</head>
+
+<body>
+
+
+
+
+<h1 class="title toc-ignore">Multi-GPU: Tensor, Pipeline and Hybrid
+Parallelism</h1>
+
+
+
+<p>This vignette covers running ggmlR across <strong>more than one
+GPU</strong>. For the single-GPU basics — installation, device
+discovery, Vulkan build flags — see <code>vignette(&quot;gpu-vulkan&quot;)</code>.
+For data-parallel <em>training</em> specifically, see
+<code>vignette(&quot;data-parallel-training&quot;)</code>.</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb1-1"><a href="#cb1-1" tabindex="-1"></a><span class="fu">library</span>(ggmlR)</span></code></pre></div>
+<div id="which-mode-do-you-need" class="section level2">
+<h2>1. Which mode do you need?</h2>
+<p>The three modes differ in <em>what</em> gets split across devices,
+and that choice follows from why one GPU is not enough.</p>
+<table>
+<colgroup>
+<col width="13%" />
+<col width="34%" />
+<col width="22%" />
+<col width="29%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Mode</th>
+<th>What is split</th>
+<th>Use when</th>
+<th>Entry point</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Tensor parallelism (TP)</td>
+<td>Individual weight matrices, by rows</td>
+<td>One layer is too big, or you want to cut per-layer latency</td>
+<td><code>ggml_vulkan_split_mul_mat()</code></td>
+</tr>
+<tr class="even">
+<td>Pipeline parallelism (PP)</td>
+<td>Whole layers, by depth</td>
+<td>The <strong>model</strong> does not fit on one card</td>
+<td><code>ggml_pp_forward()</code></td>
+</tr>
+<tr class="odd">
+<td>Data parallelism (DP)</td>
+<td>The batch</td>
+<td>The model fits, you want throughput</td>
+<td><code>dp_train()</code>, <code>ggml_tp_dp_forward()</code></td>
+</tr>
+</tbody>
+</table>
+<p>They compose. <code>ggml_tp_dp_forward()</code> and
+<code>ggml_pp_dp_forward()</code> run DP replicas on top of TP or PP
+groups — for example four GPUs as two replicas of TP=2.</p>
+<p>The decisive practical difference is <strong>how much data crosses
+between devices</strong>:</p>
+<ul>
+<li>TP moves activations across devices <em>twice per split
+layer</em>.</li>
+<li>PP moves activations across devices <em>once per stage boundary</em>
+— for a 2-stage split of a 32-layer model, that is one transfer per
+forward pass.</li>
+<li>DP moves <em>nothing</em> between replicas during inference.</li>
+</ul>
+<p>That ordering matters more than it looks, because of the
+transport.</p>
+<div id="are-you-sure-you-want-this-layer" class="section level3">
+<h3>Are you sure you want this layer?</h3>
+<p>ggmlR provides the <strong>tensor layer</strong>: primitives that
+split individual matrices, graph stages and batches across devices. If
+your goal is to run a whole <strong>language model</strong> across
+several GPUs, you almost certainly want <a href="https://github.com/Zabis13/llamaR">llamaR</a> instead, which is
+built on ggmlR and handles model loading, KV cache, sampling and
+serving:</p>
+<div class="sourceCode" id="cb2"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb2-1"><a href="#cb2-1" tabindex="-1"></a><span class="co"># llamaR — whole-LLM inference; the split happens inside the model loader</span></span>
+<span id="cb2-2"><a href="#cb2-2" tabindex="-1"></a>model <span class="ot">&lt;-</span> <span class="fu">llama_load_model</span>(<span class="st">&quot;model.gguf&quot;</span>, <span class="at">n_gpu_layers =</span> <span class="sc">-</span><span class="dv">1</span><span class="dt">L</span>,</span>
+<span id="cb2-3"><a href="#cb2-3" tabindex="-1"></a>                          <span class="at">devices =</span> <span class="fu">c</span>(<span class="st">&quot;Vulkan0&quot;</span>, <span class="st">&quot;Vulkan1&quot;</span>),</span>
+<span id="cb2-4"><a href="#cb2-4" tabindex="-1"></a>                          <span class="at">split_mode =</span> <span class="st">&quot;row&quot;</span>)     <span class="co"># or &quot;layer&quot; for pipeline</span></span></code></pre></div>
+<p>The names coincide but the code does not:
+<code>split_mode = &quot;row&quot;</code> / <code>&quot;layer&quot;</code> is llamaR’s own
+weight distribution over a real transformer, not a call into the
+<code>ggml_vulkan_split_mul_mat()</code> /
+<code>ggml_pp_forward()</code> shown below. Reach for the ggmlR
+primitives when you are building a custom parallel computation — a model
+architecture of your own, a research prototype, a non-LLM workload —
+rather than serving an existing GGUF.</p>
+<p><code>llamaR</code> ships a full PP/TP/DP sweep over a real model in
+<code>system.file(&quot;examples&quot;, &quot;bench_pp_tp_dp.sh&quot;, package = &quot;llamaR&quot;)</code>.</p>
+</div>
+</div>
+<div id="the-transport-and-why-it-constrains-everything" class="section level2">
+<h2>2. The transport, and why it constrains everything</h2>
+<p>Copying a tensor from GPU 0 to GPU 1 needs a path. ggmlR implements
+three, selected by the <code>transport</code> argument:</p>
+<ul>
+<li><code>&quot;host-staging&quot;</code> (<strong>default</strong>) — device →
+host RAM → device. Portable and always correct.</li>
+<li><code>&quot;opaque-fd&quot;</code> — zero-copy via
+<code>VK_KHR_external_memory_fd</code>.</li>
+<li><code>&quot;device-group&quot;</code> — one logical device spanning several
+cards (NVLink / LDA).</li>
+</ul>
+<p>The default is not a conservative placeholder; on the hardware we
+tested it is the only path that works. Measured on a 4×P100 server:</p>
+<ul>
+<li><code>&quot;opaque-fd&quot;</code> shares memory correctly in loopback (same
+device) but <strong>silently transfers zeros across devices</strong> — a
+hardware/driver limitation on NVIDIA, not a bug in the import path.</li>
+<li><code>&quot;device-group&quot;</code> enumerates five groups, every one of
+them single-device: no NVLink/LDA aggregation is offered at all.</li>
+</ul>
+<p>Verify your own hardware before assuming a zero-copy path exists:</p>
+<div class="sourceCode" id="cb3"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb3-1"><a href="#cb3-1" tabindex="-1"></a><span class="co"># Loopback sanity check: does the transport work at all on device 0?</span></span>
+<span id="cb3-2"><a href="#cb3-2" tabindex="-1"></a>r <span class="ot">&lt;-</span> <span class="fu">ggml_vulkan_p2p_selftest</span>(<span class="dv">0</span><span class="dt">L</span>, <span class="dv">0</span><span class="dt">L</span>)</span>
+<span id="cb3-3"><a href="#cb3-3" tabindex="-1"></a><span class="fu">cat</span>(r<span class="sc">$</span>report)</span>
+<span id="cb3-4"><a href="#cb3-4" tabindex="-1"></a></span>
+<span id="cb3-5"><a href="#cb3-5" tabindex="-1"></a><span class="co"># The real question: does a cross-device copy carry the bytes?</span></span>
+<span id="cb3-6"><a href="#cb3-6" tabindex="-1"></a><span class="cf">if</span> (<span class="fu">ggml_vulkan_device_count</span>() <span class="sc">&gt;=</span> <span class="dv">2</span>) {</span>
+<span id="cb3-7"><a href="#cb3-7" tabindex="-1"></a>  r <span class="ot">&lt;-</span> <span class="fu">ggml_vulkan_p2p_selftest</span>(<span class="dv">0</span><span class="dt">L</span>, <span class="dv">1</span><span class="dt">L</span>, <span class="at">transport =</span> <span class="st">&quot;opaque-fd&quot;</span>)</span>
+<span id="cb3-8"><a href="#cb3-8" tabindex="-1"></a>  <span class="fu">cat</span>(r<span class="sc">$</span>report)          <span class="co"># &quot;verified&quot; vs. a mismatch tells you immediately</span></span>
+<span id="cb3-9"><a href="#cb3-9" tabindex="-1"></a>}</span>
+<span id="cb3-10"><a href="#cb3-10" tabindex="-1"></a></span>
+<span id="cb3-11"><a href="#cb3-11" tabindex="-1"></a><span class="co"># Are there any multi-device (LDA) groups?</span></span>
+<span id="cb3-12"><a href="#cb3-12" tabindex="-1"></a><span class="fu">ggml_vulkan_device_groups</span>()</span></code></pre></div>
+<p>Because <code>host-staging</code> routes through host RAM, <strong>TP
+is the mode that suffers most</strong> and PP the least. If your model
+does not fit on one card, prefer PP.</p>
+</div>
+<div id="tensor-parallelism" class="section level2">
+<h2>3. Tensor parallelism</h2>
+<p><code>ggml_vulkan_split_mul_mat()</code> splits the weight matrix
+<code>W</code> by rows across devices, computes each slice on its own
+GPU, and gathers the result. It is a standalone C routine, deliberately
+outside the ggml graph.</p>
+<div class="sourceCode" id="cb4"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb4-1"><a href="#cb4-1" tabindex="-1"></a><span class="fu">set.seed</span>(<span class="dv">1</span>)</span>
+<span id="cb4-2"><a href="#cb4-2" tabindex="-1"></a>W <span class="ot">&lt;-</span> <span class="fu">matrix</span>(<span class="fu">rnorm</span>(<span class="dv">2048</span> <span class="sc">*</span> <span class="dv">64</span>), <span class="at">nrow =</span> <span class="dv">2048</span>)   <span class="co"># [N x K] weights</span></span>
+<span id="cb4-3"><a href="#cb4-3" tabindex="-1"></a>X <span class="ot">&lt;-</span> <span class="fu">matrix</span>(<span class="fu">rnorm</span>(<span class="dv">4</span> <span class="sc">*</span> <span class="dv">64</span>),    <span class="at">nrow =</span> <span class="dv">4</span>)      <span class="co"># [M x K] activations</span></span>
+<span id="cb4-4"><a href="#cb4-4" tabindex="-1"></a></span>
+<span id="cb4-5"><a href="#cb4-5" tabindex="-1"></a>Y <span class="ot">&lt;-</span> <span class="fu">ggml_vulkan_split_mul_mat</span>(W, X, <span class="at">n_devices =</span> <span class="dv">2</span>)</span>
+<span id="cb4-6"><a href="#cb4-6" tabindex="-1"></a></span>
+<span id="cb4-7"><a href="#cb4-7" tabindex="-1"></a><span class="co"># Contract: identical to the single-device result, up to f32 rounding.</span></span>
+<span id="cb4-8"><a href="#cb4-8" tabindex="-1"></a><span class="fu">max</span>(<span class="fu">abs</span>(Y <span class="sc">-</span> X <span class="sc">%*%</span> <span class="fu">t</span>(W)))                     <span class="co"># ~3.8e-6 on 2 devices</span></span></code></pre></div>
+<p>Pick a subset of GPUs rather than “the first N” with
+<code>device_ids</code>, and give uneven cards uneven shares with
+<code>weights</code>:</p>
+<div class="sourceCode" id="cb5"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb5-1"><a href="#cb5-1" tabindex="-1"></a>Y <span class="ot">&lt;-</span> <span class="fu">ggml_vulkan_split_mul_mat</span>(W, X, <span class="at">device_ids =</span> <span class="fu">c</span>(<span class="dv">0</span><span class="dt">L</span>, <span class="dv">1</span><span class="dt">L</span>))</span>
+<span id="cb5-2"><a href="#cb5-2" tabindex="-1"></a>Y <span class="ot">&lt;-</span> <span class="fu">ggml_vulkan_split_mul_mat</span>(W, X, <span class="at">n_devices =</span> <span class="dv">2</span>, <span class="at">weights =</span> <span class="fu">c</span>(<span class="fl">0.7</span>, <span class="fl">0.3</span>))</span>
+<span id="cb5-3"><a href="#cb5-3" tabindex="-1"></a></span>
+<span id="cb5-4"><a href="#cb5-4" tabindex="-1"></a><span class="co"># Inspect the row ranges the split math will use (0-based, half-open):</span></span>
+<span id="cb5-5"><a href="#cb5-5" tabindex="-1"></a><span class="fu">ggml_vulkan_split_row_ranges</span>(<span class="at">nrows =</span> <span class="dv">2048</span>, <span class="at">n_devices =</span> <span class="dv">2</span>)</span></code></pre></div>
+<p><code>ggml_vulkan_split_buffer_type()</code> exposes the same
+row-split as a ggml buffer type, for callers that allocate weights
+themselves.</p>
+</div>
+<div id="pipeline-parallelism" class="section level2">
+<h2>4. Pipeline parallelism</h2>
+<p>PP assigns <em>layers</em> to devices: GPU 0 runs stages 1–16, GPU 1
+runs 17–32, and exactly one activation tensor crosses between them. Each
+stage is described by a list with its <code>device</code>, its
+<code>in_shape</code>, and a <code>build</code> function that constructs
+the sub-graph and returns a <code>set_weights</code> closure.</p>
+<p>The one non-obvious rule: <strong>weights are set after
+allocation</strong>, which is why <code>build</code> returns
+<code>set_weights</code> instead of filling tensors immediately.</p>
+<div class="sourceCode" id="cb6"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb6-1"><a href="#cb6-1" tabindex="-1"></a>K <span class="ot">&lt;-</span> <span class="dv">64</span><span class="dt">L</span>; M <span class="ot">&lt;-</span> <span class="dv">8</span><span class="dt">L</span></span>
+<span id="cb6-2"><a href="#cb6-2" tabindex="-1"></a>W1 <span class="ot">&lt;-</span> <span class="fu">matrix</span>(<span class="fu">rnorm</span>(K <span class="sc">*</span> K), <span class="at">nrow =</span> K)</span>
+<span id="cb6-3"><a href="#cb6-3" tabindex="-1"></a>W2 <span class="ot">&lt;-</span> <span class="fu">matrix</span>(<span class="fu">rnorm</span>(K <span class="sc">*</span> K), <span class="at">nrow =</span> K)</span>
+<span id="cb6-4"><a href="#cb6-4" tabindex="-1"></a>X  <span class="ot">&lt;-</span> <span class="fu">matrix</span>(<span class="fu">rnorm</span>(K <span class="sc">*</span> M), <span class="at">nrow =</span> K)     <span class="co"># ggml ne = c(K, M): column m is sample m</span></span>
+<span id="cb6-5"><a href="#cb6-5" tabindex="-1"></a></span>
+<span id="cb6-6"><a href="#cb6-6" tabindex="-1"></a>make_stage <span class="ot">&lt;-</span> <span class="cf">function</span>(dev, Wt, relu) {</span>
+<span id="cb6-7"><a href="#cb6-7" tabindex="-1"></a>  <span class="fu">list</span>(</span>
+<span id="cb6-8"><a href="#cb6-8" tabindex="-1"></a>    <span class="at">device   =</span> dev,</span>
+<span id="cb6-9"><a href="#cb6-9" tabindex="-1"></a>    <span class="at">in_shape =</span> <span class="fu">c</span>(K, M),</span>
+<span id="cb6-10"><a href="#cb6-10" tabindex="-1"></a>    <span class="at">build =</span> <span class="cf">function</span>(ctx, input) {</span>
+<span id="cb6-11"><a href="#cb6-11" tabindex="-1"></a>      w <span class="ot">&lt;-</span> <span class="fu">ggml_new_tensor_2d</span>(ctx, GGML_TYPE_F32, K, K)</span>
+<span id="cb6-12"><a href="#cb6-12" tabindex="-1"></a>      z <span class="ot">&lt;-</span> <span class="fu">ggml_mul_mat</span>(ctx, w, input)     <span class="co"># == t(Wt) %*% input in R terms</span></span>
+<span id="cb6-13"><a href="#cb6-13" tabindex="-1"></a>      <span class="fu">list</span>(</span>
+<span id="cb6-14"><a href="#cb6-14" tabindex="-1"></a>        <span class="at">output      =</span> <span class="cf">if</span> (relu) <span class="fu">ggml_relu</span>(ctx, z) <span class="cf">else</span> z,</span>
+<span id="cb6-15"><a href="#cb6-15" tabindex="-1"></a>        <span class="at">set_weights =</span> <span class="cf">function</span>() <span class="fu">ggml_backend_tensor_set_data</span>(w, <span class="fu">as.numeric</span>(Wt))</span>
+<span id="cb6-16"><a href="#cb6-16" tabindex="-1"></a>      )</span>
+<span id="cb6-17"><a href="#cb6-17" tabindex="-1"></a>    })</span>
+<span id="cb6-18"><a href="#cb6-18" tabindex="-1"></a>}</span>
+<span id="cb6-19"><a href="#cb6-19" tabindex="-1"></a></span>
+<span id="cb6-20"><a href="#cb6-20" tabindex="-1"></a>stages <span class="ot">&lt;-</span> <span class="fu">list</span>(<span class="fu">make_stage</span>(<span class="dv">0</span><span class="dt">L</span>, W1, <span class="at">relu =</span> <span class="cn">TRUE</span>),</span>
+<span id="cb6-21"><a href="#cb6-21" tabindex="-1"></a>               <span class="fu">make_stage</span>(<span class="dv">1</span><span class="dt">L</span>, W2, <span class="at">relu =</span> <span class="cn">FALSE</span>))</span>
+<span id="cb6-22"><a href="#cb6-22" tabindex="-1"></a></span>
+<span id="cb6-23"><a href="#cb6-23" tabindex="-1"></a>y <span class="ot">&lt;-</span> <span class="fu">ggml_pp_forward</span>(stages, <span class="at">x =</span> <span class="fu">as.numeric</span>(X), <span class="at">out_shape =</span> <span class="fu">c</span>(K, M))</span>
+<span id="cb6-24"><a href="#cb6-24" tabindex="-1"></a>Y <span class="ot">&lt;-</span> <span class="fu">matrix</span>(y, <span class="at">nrow =</span> K, <span class="at">ncol =</span> M)</span>
+<span id="cb6-25"><a href="#cb6-25" tabindex="-1"></a></span>
+<span id="cb6-26"><a href="#cb6-26" tabindex="-1"></a><span class="fu">max</span>(<span class="fu">abs</span>(Y <span class="sc">-</span> <span class="fu">t</span>(W2) <span class="sc">%*%</span> <span class="fu">pmax</span>(<span class="fu">t</span>(W1) <span class="sc">%*%</span> X, <span class="dv">0</span>)))   <span class="co"># ~1.8e-5</span></span></code></pre></div>
+</div>
+<div id="hybrid-dp-over-tp-or-pp" class="section level2">
+<h2>5. Hybrid: DP over TP or PP</h2>
+<p>With four GPUs, two replicas of TP=2 usually beat one TP=4 group: DP
+adds no cross-device traffic, so the hybrid <em>hides</em> the weakness
+of host-staging.</p>
+<div class="sourceCode" id="cb7"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb7-1"><a href="#cb7-1" tabindex="-1"></a><span class="co"># Replica A = {GPU0, GPU1}, replica B = {GPU2, GPU3}.</span></span>
+<span id="cb7-2"><a href="#cb7-2" tabindex="-1"></a><span class="co"># Each replica takes half the batch; no traffic crosses between replicas.</span></span>
+<span id="cb7-3"><a href="#cb7-3" tabindex="-1"></a>Y <span class="ot">&lt;-</span> <span class="fu">ggml_tp_dp_forward</span>(W, X, <span class="at">replicas =</span> <span class="fu">list</span>(<span class="fu">c</span>(<span class="dv">0</span><span class="dt">L</span>, <span class="dv">1</span><span class="dt">L</span>), <span class="fu">c</span>(<span class="dv">2</span><span class="dt">L</span>, <span class="dv">3</span><span class="dt">L</span>)))</span>
+<span id="cb7-4"><a href="#cb7-4" tabindex="-1"></a></span>
+<span id="cb7-5"><a href="#cb7-5" tabindex="-1"></a><span class="co"># The PP equivalent takes a factory: make_stages(devices, m_shard) -&gt; stage list</span></span>
+<span id="cb7-6"><a href="#cb7-6" tabindex="-1"></a>Y <span class="ot">&lt;-</span> <span class="fu">ggml_pp_dp_forward</span>(make_stages, x, <span class="at">replicas =</span> <span class="fu">list</span>(<span class="fu">c</span>(<span class="dv">0</span><span class="dt">L</span>, <span class="dv">1</span><span class="dt">L</span>), <span class="fu">c</span>(<span class="dv">2</span><span class="dt">L</span>, <span class="dv">3</span><span class="dt">L</span>)),</span>
+<span id="cb7-7"><a href="#cb7-7" tabindex="-1"></a>                        <span class="at">out_ncol =</span> M)</span></code></pre></div>
+<p>For multi-GPU <em>training</em> rather than inference, use
+<code>dp_train()</code> — see
+<code>vignette(&quot;data-parallel-training&quot;)</code>.</p>
+</div>
+<div id="clean-shutdown-and-the---enable-hard-exit-flag" class="section level2">
+<h2>6. Clean shutdown (and the <code>--enable-hard-exit</code>
+flag)</h2>
+<p>A multi-GPU script can segfault <strong>after</strong> it has printed
+its results. The cause is a race at process exit: the Vulkan loader and
+the driver’s ICD libraries get unmapped while driver worker threads are
+still winding down, so late destructors call into unmapped memory. The
+computed results are already out; the crash is harmless but noisy, and
+it turns a successful run into a non-zero exit code.</p>
+<p>Call <code>ggml_vulkan_shutdown()</code> to tear Vulkan down
+<em>while the loader is still mapped</em>. It is idempotent, safe
+mid-session, and Vulkan transparently re-initializes on the next
+operation:</p>
+<div class="sourceCode" id="cb8"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb8-1"><a href="#cb8-1" tabindex="-1"></a><span class="fu">ggml_vulkan_shutdown</span>()     <span class="co"># safe anywhere; releases devices</span></span></code></pre></div>
+<p>That narrows the race but does not close it: no R exit hook runs
+before R unmaps the loader. For a guaranteed-clean exit, make
+<code>hard = TRUE</code> the <strong>last</strong> statement of a
+standalone script — after teardown it calls <code>_exit(status)</code>,
+terminating immediately without running exit handlers or unmapping
+libraries, so there is no teardown phase left to crash.</p>
+<div class="sourceCode" id="cb9"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb9-1"><a href="#cb9-1" tabindex="-1"></a><span class="fu">ggml_vulkan_shutdown</span>(<span class="at">hard =</span> <span class="cn">TRUE</span>, <span class="at">status =</span> <span class="dv">0</span><span class="dt">L</span>)   <span class="co"># never returns</span></span></code></pre></div>
+<p><strong>This path is compiled out by default.</strong> CRAN
+Repository Policy forbids a package from terminating the user’s R
+session, so the released package must not link <code>_exit()</code>. In
+a default build, <code>hard = TRUE</code> performs the normal teardown
+and emits a <code>warning()</code> — it is never silently ignored.
+Compile it in with:</p>
+<div class="sourceCode" id="cb10"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb10-1"><a href="#cb10-1" tabindex="-1"></a><span class="ex">R</span> CMD INSTALL . <span class="at">--configure-args</span><span class="op">=</span><span class="st">&quot;--enable-hard-exit&quot;</span></span></code></pre></div>
+<p>On Windows R ignores <code>configure.args</code>; set
+<code>Sys.setenv(GGML_VK_HARD_EXIT = &quot;1&quot;)</code> before installing from
+source. Check what the current build has:</p>
+<div class="sourceCode" id="cb11"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb11-1"><a href="#cb11-1" tabindex="-1"></a><span class="fu">ggml_vulkan_hard_exit_available</span>()</span></code></pre></div>
+<p>Two caveats. <code>hard = TRUE</code> bypasses R’s shutdown entirely:
+no <code>.RData</code>, no <code>on.exit()</code> handlers, no flushed
+connections beyond what ggmlR flushes itself. Use it only as the final
+line of a script, never mid-session, never inside a package. And
+although the race is observed in multi-GPU scripts — more devices mean
+more driver threads and a wider window — nothing in the mechanism is
+specific to multiple GPUs; single-GPU runs simply have not been seen to
+trip it.</p>
+</div>
+<div id="where-to-look-next" class="section level2">
+<h2>7. Where to look next</h2>
+<p>Runnable demos ship with the package, under
+<code>system.file(&quot;examples&quot;, package = &quot;ggmlR&quot;)</code>:</p>
+<div class="sourceCode" id="cb12"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb12-1"><a href="#cb12-1" tabindex="-1"></a><span class="fu">list.files</span>(<span class="fu">system.file</span>(<span class="st">&quot;examples&quot;</span>, <span class="at">package =</span> <span class="st">&quot;ggmlR&quot;</span>),</span>
+<span id="cb12-2"><a href="#cb12-2" tabindex="-1"></a>           <span class="at">pattern =</span> <span class="st">&quot;^(tp_|pp_|multi_gpu|dp_)&quot;</span>)</span></code></pre></div>
+<ul>
+<li><code>multi_gpu_example.R</code> — device discovery and per-device
+work</li>
+<li><code>tp_dp_hybrid.R</code> — TP×DP hybrid on four GPUs</li>
+<li><code>pp_pipeline.R</code> — two-stage pipeline parallelism</li>
+<li><code>tp_p2p_diagnose.R</code> — transport diagnostics; drop
+<code>hard = TRUE</code> to observe the exit-time crash described
+above</li>
+<li><code>dp_train_demo.R</code> — data-parallel training</li>
+</ul>
+<p>The test suite documents the numeric contracts, and skips gracefully
+when fewer than two GPUs are present:</p>
+<ul>
+<li><code>tests/testthat/test-vulkan-tensor-parallel.R</code> — split
+math, <code>split_mul_mat</code>, buffer-type factory, TP×DP and PP
+forwards</li>
+<li><code>tests/testthat/test-vulkan.R</code>,
+<code>test-vulkan-caps.R</code> — backend and capabilities</li>
+</ul>
+</div>
+<div id="summary" class="section level2">
+<h2>8. Summary</h2>
+<div class="sourceCode" id="cb13"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb13-1"><a href="#cb13-1" tabindex="-1"></a><span class="fu">ggml_vulkan_status</span>()</span></code></pre></div>
+<p>Choose PP when the model does not fit, TP when a layer does not fit
+or latency matters, DP for throughput — and remember that on current
+NVIDIA hardware every cross-device byte goes through host RAM, so the
+mode that moves the least data wins.</p>
+</div>
+
+
+
+<!-- code folding -->
+
+
+<!-- dynamically load mathjax for compatibility with self-contained -->
+<script>
+  (function () {
+    var script = document.createElement("script");
+    script.type = "text/javascript";
+    script.src  = "https://mathjax.rstudio.com/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML";
+    document.getElementsByTagName("head")[0].appendChild(script);
+  })();
+</script>
+
+</body>
+</html>

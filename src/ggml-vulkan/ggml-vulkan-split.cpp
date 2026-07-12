@@ -1,0 +1,984 @@
+// ggmlR Tensor Parallelism (P2P) — Vulkan split buffer type.
+//
+// NOT part of upstream ggml. Upstream implements a tensor-split buffer type only
+// for CUDA/SYCL; this is a Vulkan port. It row-splits a weight matrix across N
+// Vulkan devices so each device holds a horizontal slice of the rows, enabling
+// true tensor parallelism (as opposed to layer-split / replication).
+//
+// This file is #included into ggml-vulkan.cpp as a single translation unit (like
+// the other ggml-vulkan-*.cpp parts); all functions are static. It must be
+// included AFTER ggml-vulkan-graph.cpp so ggml_vk_get_device_count() and the
+// vk_instance / vk_buffer machinery are visible.
+//
+// Stage E2 scope (this commit): the row-split MATH (get_row_split /
+// get_row_rounding / nbytes_split) is pure arithmetic and is unit-tested on a
+// single GPU via R_ggml_vk_split_row_range. The buffer_type SCAFFOLD (context,
+// iface, init/set/get_tensor) is present but its multi-device allocation path
+// cannot be exercised without >=2 GPUs — see TODO.md / memory.
+
+// Extra headers for the P2P self-test (chrono for timing, cstring for memcmp/
+// snprintf, unistd for close()). This file is part of the ggml-vulkan.cpp
+// translation unit; these are additive and idempotent if already pulled in.
+#include <chrono>
+#include <cstdarg>
+#include <cstdint>
+#include <cstring>
+#include <map>
+#include <unistd.h>
+
+// ---------------------------------------------------------------------------
+// Transport abstraction (architectural hook, per NVLink discussion).
+// The way result slices are gathered across devices is deliberately abstracted
+// so alternative cross-device transports can be swapped in without touching the
+// row-split math. All cross-device copies go through ggml_vk_p2p_copy() below.
+//
+// Empirically determined on 4x Tesla P100 (NVIDIA proprietary driver, 2026-07):
+//   * OPAQUE_FD works for loopback (same device) but does NOT share memory
+//     cross-device — an imported fd reads back as all zeros even with a dedicated
+//     allocation bound to the exporter's exact memory type. NVIDIA opaque-fd does
+//     not alias VRAM between two separate VkDevices here.
+//   * DEVICE_GROUP is unavailable: the driver reports every P100 in its own
+//     single-device group (no LDA / NVLink peer path via Vulkan).
+// Therefore HOST_STAGING (device -> host -> device) is the portable default: it
+// is correct everywhere (NVIDIA and AMD/RADV), needs no external dependency, and
+// is bandwidth-limited by PCIe + one RAM round-trip. OPAQUE_FD is kept for AMD,
+// where cross-device dma-buf sharing may actually alias. See memory / TODO.
+// ---------------------------------------------------------------------------
+enum vk_split_transport {
+    VK_SPLIT_TRANSPORT_HOST_STAGING = 0,  // default: portable, correct everywhere (device->host->device)
+    VK_SPLIT_TRANSPORT_OPAQUE_FD,         // PCIe P2P via external_memory_fd (AMD/RADV; broken cross-device on NVIDIA)
+    VK_SPLIT_TRANSPORT_DEVICE_GROUP,      // experimental: NVIDIA LDA, may route over NVLink (unavailable on P100)
+};
+
+// ggmlR TP: single point for a cross-device buffer copy of `bytes` from
+// `src_buf` (on its device) into `dst_buf` (on its device), starting at the given
+// offsets. This is the transport Stage E3's result-gather (and activation
+// broadcast) routes through. Only HOST_STAGING is wired up today; the other
+// transports fall back to it until they are verified on their target hardware.
+//
+// HOST_STAGING: read src slice into a host bounce buffer, then write it into dst.
+// ggml_vk_buffer_read / ggml_vk_buffer_write are each internally synchronous
+// (they submit and wait on their device's fence), so no cross-device semaphore is
+// needed — the read has fully completed on src before the write begins on dst.
+static void ggml_vk_p2p_copy(vk_buffer & dst_buf, size_t dst_offset,
+                             vk_buffer & src_buf, size_t src_offset,
+                             size_t bytes, vk_split_transport transport) {
+    GGML_UNUSED(transport);  // only HOST_STAGING implemented; others fall back here
+    if (bytes == 0 || !src_buf || !dst_buf) {
+        return;
+    }
+    r_tp_tracef("p2p_copy: bounce alloc %zu bytes  src_dev=%p dst_dev=%p",
+                bytes, (void *) src_buf->device.get(), (void *) dst_buf->device.get());
+    std::vector<uint8_t> bounce(bytes);
+    r_tp_tracef("p2p_copy: read src...");
+    ggml_vk_buffer_read(src_buf, src_offset, bounce.data(), bytes);
+    r_tp_tracef("p2p_copy: write dst...");
+    ggml_vk_buffer_write(dst_buf, dst_offset, bounce.data(), bytes);
+    r_tp_tracef("p2p_copy: done");
+}
+
+// Stage E7 (Pipeline Parallelism): hand an activation tensor from one pipeline
+// stage (on device N) to the next stage's input tensor (on device N+1). Both are
+// ordinary Vulkan-backed ggml tensors; this copies src's bytes into dst through
+// the same cross-device transport as the TP gather (host-staging by default).
+//
+// This is the ONE cross-device transfer per full forward pass that pipeline
+// parallelism needs — a single activation handoff between adjacent stages, versus
+// TP's per-layer gather. Returns 0 on success, <0 on a shape/buffer mismatch.
+extern "C" int ggml_backend_vk_stage_handoff(const ggml_tensor * src, ggml_tensor * dst) {
+    if (!src || !dst || !src->buffer || !dst->buffer) {
+        return -1;
+    }
+    const size_t nbytes = ggml_nbytes(src);
+    if (nbytes != ggml_nbytes(dst)) {
+        return -2;   // stage output and next-stage input must have the same size
+    }
+
+    // Pull the vk_buffer + byte offset out of each tensor's backend buffer.
+    auto * src_ctx = (ggml_backend_vk_buffer_context *) src->buffer->context;
+    auto * dst_ctx = (ggml_backend_vk_buffer_context *) dst->buffer->context;
+    if (!src_ctx || !dst_ctx) {
+        return -3;
+    }
+    vk_buffer src_buf = src_ctx->dev_buffer;
+    vk_buffer dst_buf = dst_ctx->dev_buffer;
+    if (!src_buf || !dst_buf) {
+        return -3;
+    }
+    const size_t src_off = vk_tensor_offset(src) + src->view_offs;
+    const size_t dst_off = vk_tensor_offset(dst) + dst->view_offs;
+
+    // Host-staging device->host->device copy (correct across any two devices).
+    ggml_vk_p2p_copy(dst_buf, dst_off, src_buf, src_off, nbytes,
+                     VK_SPLIT_TRANSPORT_HOST_STAGING);
+    return 0;
+}
+
+// Pad each device's row slice so the last row is a multiple of this many
+// elements, matching the CUDA split buffer (avoids out-of-bounds in matmul).
+#define VK_SPLIT_MATRIX_ROW_PADDING 512
+
+// ---------------------------------------------------------------------------
+// Row-split math (pure; unit-tested on a single GPU).
+// tensor_split is a cumulative fraction array: tensor_split[i] is the fraction
+// of rows *before* device i (so tensor_split[0] == 0.0), matching upstream CUDA.
+// ---------------------------------------------------------------------------
+
+// Row rounding granularity. Upstream CUDA derives this from the MMQ tile height
+// per-device; the Vulkan matmul path aligns slice boundaries to the matrix row
+// padding, which is a safe (>=) choice for correctness of the split.
+static int64_t ggml_vk_split_row_rounding(int n_devices) {
+    GGML_UNUSED(n_devices);
+    return VK_SPLIT_MATRIX_ROW_PADDING;
+}
+
+// Compute [row_low, row_high) for device `id` given a tensor's row count.
+// Mirrors ggml-cuda.cu get_row_split. Boundaries are rounded down to a multiple
+// of the rounding granularity; the last device always covers up to nrows.
+static void ggml_vk_split_row_range(int64_t nrows, const float * tensor_split,
+                                    int n_devices, int id,
+                                    int64_t * row_low, int64_t * row_high) {
+    const int64_t rounding = ggml_vk_split_row_rounding(n_devices);
+
+    *row_low = (id == 0) ? 0 : (int64_t)(nrows * tensor_split[id]);
+    *row_low -= *row_low % rounding;
+
+    if (id == n_devices - 1) {
+        *row_high = nrows;
+    } else {
+        *row_high = (int64_t)(nrows * tensor_split[id + 1]);
+        *row_high -= *row_high % rounding;
+    }
+
+    // Clamp defensively so a degenerate tensor_split never yields an inverted or
+    // out-of-range range (the pure test relies on this being total & monotone).
+    if (*row_low  < 0)     *row_low  = 0;
+    if (*row_high > nrows) *row_high = nrows;
+    if (*row_high < *row_low) *row_high = *row_low;
+}
+
+// Bytes for `nrows_split` rows of a tensor (row size derived from ne[0] & type).
+// Unlike upstream CUDA this does not static_assert GGML_MAX_DIMS==4: the ggmlR
+// tree uses GGML_MAX_DIMS==5, and this quantity depends only on ne[0] & type.
+static size_t ggml_vk_split_nbytes(const struct ggml_tensor * tensor, int64_t nrows_split) {
+    return (size_t) nrows_split * ggml_row_size(tensor->type, tensor->ne[0]);
+}
+
+// Normalize a caller-provided per-device weight vector into the cumulative
+// fraction array the split math expects (out[0]==0, monotone non-decreasing,
+// out has n_devices entries). If `weights` is NULL or sums to ~0, split evenly.
+static void ggml_vk_split_normalize(const float * weights, int n_devices, float * out /*[n_devices]*/) {
+    float sum = 0.0f;
+    if (weights) {
+        for (int i = 0; i < n_devices; i++) sum += weights[i] > 0.0f ? weights[i] : 0.0f;
+    }
+    if (!weights || sum <= 0.0f) {
+        for (int i = 0; i < n_devices; i++) out[i] = (float) i / (float) n_devices;
+        return;
+    }
+    float acc = 0.0f;
+    for (int i = 0; i < n_devices; i++) {
+        out[i] = acc / sum;
+        acc += weights[i] > 0.0f ? weights[i] : 0.0f;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Split buffer type — SCAFFOLD.
+// Multi-device allocation/set/get is unverifiable on a single GPU; it is written
+// to the CUDA pattern but gated behind n_devices and left for target hardware.
+// ---------------------------------------------------------------------------
+
+struct ggml_backend_vk_split_buffer_type_context {
+    int                              main_device;
+    int                              n_devices;
+    std::vector<float>               tensor_split;   // cumulative fractions, size n_devices
+    // Physical Vulkan device index that owns split slot `id` (size n_devices).
+    // Lets a TP group live on an arbitrary device subset, e.g. {2,3}, so the
+    // 0-based split slots map onto GPUs 2 and 3 rather than always 0..n-1.
+    std::vector<int>                 device_ids;
+    vk_split_transport               transport;
+    std::string                      name;
+};
+
+// Per-tensor slices: one vk_buffer per device (empty where the slice is 0 rows).
+struct ggml_backend_vk_split_tensor_extra {
+    std::vector<vk_buffer> slices;   // size n_devices
+};
+
+struct ggml_backend_vk_split_buffer_context {
+    std::vector<ggml_backend_vk_split_tensor_extra *> tensor_extras;
+    ~ggml_backend_vk_split_buffer_context() {
+        for (auto * e : tensor_extras) {
+            delete e;   // vk_buffer is shared_ptr; slices free themselves
+        }
+    }
+};
+
+static void ggml_backend_vk_split_buffer_free_buffer(ggml_backend_buffer_t buffer) {
+    auto * ctx = (ggml_backend_vk_split_buffer_context *) buffer->context;
+    delete ctx;
+}
+
+static void * ggml_backend_vk_split_buffer_get_base(ggml_backend_buffer_t buffer) {
+    GGML_UNUSED(buffer);
+    return (void *) 0x1000;  // dummy: real pointers live in the per-tensor extra
+}
+
+static enum ggml_status ggml_backend_vk_split_buffer_init_tensor(ggml_backend_buffer_t buffer, ggml_tensor * tensor) {
+    GGML_ASSERT(tensor->view_src == nullptr && "views of split tensors are not supported");
+    GGML_ASSERT(ggml_is_contiguous(tensor)  && "split buffers only support contiguous tensors");
+
+    auto * ctx      = (ggml_backend_vk_split_buffer_context *)      buffer->context;
+    auto * buft_ctx = (ggml_backend_vk_split_buffer_type_context *) buffer->buft->context;
+
+    const int64_t nrows = ggml_nrows(tensor);
+    const int64_t ne0   = tensor->ne[0];
+
+    auto * extra = new ggml_backend_vk_split_tensor_extra{};
+    extra->slices.resize(buft_ctx->n_devices);
+    ctx->tensor_extras.push_back(extra);
+
+    for (int id = 0; id < buft_ctx->n_devices; id++) {
+        int64_t row_low, row_high;
+        ggml_vk_split_row_range(nrows, buft_ctx->tensor_split.data(),
+                                buft_ctx->n_devices, id, &row_low, &row_high);
+        const int64_t nrows_split = row_high - row_low;
+        if (nrows_split == 0) {
+            continue;   // this device owns no rows of this tensor
+        }
+
+        size_t size = ggml_vk_split_nbytes(tensor, nrows_split);
+        // Pad the last row up to the matrix row padding (matches CUDA).
+        if (ne0 % VK_SPLIT_MATRIX_ROW_PADDING != 0) {
+            size += ggml_row_size(tensor->type, VK_SPLIT_MATRIX_ROW_PADDING - ne0 % VK_SPLIT_MATRIX_ROW_PADDING);
+        }
+
+        // Allocate the slice on the physical device that owns split slot `id`.
+        // Exportable via opaque-fd so the matmul result-gather transport can
+        // share it across devices.
+        vk_device slice_dev = ggml_vk_get_device((size_t) buft_ctx->device_ids[id]);
+        const bool want_export = (buft_ctx->transport == VK_SPLIT_TRANSPORT_OPAQUE_FD)
+                                 && slice_dev->external_memory_fd;
+        extra->slices[id] = ggml_vk_create_buffer(
+            slice_dev, size,
+            { vk::MemoryPropertyFlagBits::eDeviceLocal },
+            /*import_ptr=*/nullptr, /*export_fd=*/want_export);
+    }
+
+    tensor->extra = extra;
+    return GGML_STATUS_SUCCESS;
+}
+
+static void ggml_backend_vk_split_buffer_set_tensor(ggml_backend_buffer_t buffer, ggml_tensor * tensor,
+                                                    const void * data, size_t offset, size_t size) {
+    GGML_ASSERT(offset == 0 && "split tensors must be set in their entirety");
+    GGML_ASSERT(size == ggml_nbytes(tensor));
+    GGML_ASSERT(ggml_is_contiguous(tensor) && "split buffers only support contiguous tensors");
+
+    auto * buft_ctx = (ggml_backend_vk_split_buffer_type_context *) buffer->buft->context;
+    auto * extra    = (ggml_backend_vk_split_tensor_extra *)        tensor->extra;
+
+    const int64_t nrows = ggml_nrows(tensor);
+    const size_t  nb1   = tensor->nb[1];
+
+    for (int id = 0; id < buft_ctx->n_devices; id++) {
+        int64_t row_low, row_high;
+        ggml_vk_split_row_range(nrows, buft_ctx->tensor_split.data(),
+                                buft_ctx->n_devices, id, &row_low, &row_high);
+        const int64_t nrows_split = row_high - row_low;
+        if (nrows_split == 0 || !extra->slices[id]) {
+            continue;
+        }
+        const char * src = (const char *) data + row_low * nb1;
+        const size_t sz  = (size_t) nrows_split * nb1;
+        ggml_vk_buffer_write(extra->slices[id], 0, src, sz);
+    }
+}
+
+static void ggml_backend_vk_split_buffer_get_tensor(ggml_backend_buffer_t buffer, const ggml_tensor * tensor,
+                                                    void * data, size_t offset, size_t size) {
+    GGML_ASSERT(offset == 0 && "split tensors must be read in their entirety");
+    GGML_ASSERT(size == ggml_nbytes(tensor));
+    GGML_ASSERT(ggml_is_contiguous(tensor) && "split buffers only support contiguous tensors");
+
+    auto * buft_ctx = (ggml_backend_vk_split_buffer_type_context *) buffer->buft->context;
+    auto * extra    = (ggml_backend_vk_split_tensor_extra *)        tensor->extra;
+
+    const int64_t nrows = ggml_nrows(tensor);
+    const size_t  nb1   = tensor->nb[1];
+
+    for (int id = 0; id < buft_ctx->n_devices; id++) {
+        int64_t row_low, row_high;
+        ggml_vk_split_row_range(nrows, buft_ctx->tensor_split.data(),
+                                buft_ctx->n_devices, id, &row_low, &row_high);
+        const int64_t nrows_split = row_high - row_low;
+        if (nrows_split == 0 || !extra->slices[id]) {
+            continue;
+        }
+        char * dst = (char *) data + row_low * nb1;
+        const size_t sz = (size_t) nrows_split * nb1;
+        ggml_vk_buffer_read(extra->slices[id], 0, dst, sz);
+    }
+}
+
+static void ggml_backend_vk_split_buffer_clear(ggml_backend_buffer_t buffer, uint8_t value) {
+    GGML_UNUSED(buffer);
+    GGML_UNUSED(value);
+    // Split buffers hold weights that are always fully set via set_tensor; there
+    // is no meaningful whole-buffer clear across devices. No-op (matches CUDA).
+}
+
+static const ggml_backend_buffer_i ggml_backend_vk_split_buffer_interface = {
+    /* .free_buffer     = */ ggml_backend_vk_split_buffer_free_buffer,
+    /* .get_base        = */ ggml_backend_vk_split_buffer_get_base,
+    /* .init_tensor     = */ ggml_backend_vk_split_buffer_init_tensor,
+    /* .memset_tensor   = */ NULL,
+    /* .set_tensor      = */ ggml_backend_vk_split_buffer_set_tensor,
+    /* .get_tensor      = */ ggml_backend_vk_split_buffer_get_tensor,
+    /* .set_tensor_2d   = */ NULL,
+    /* .get_tensor_2d   = */ NULL,
+    /* .cpy_tensor      = */ NULL,
+    /* .clear           = */ ggml_backend_vk_split_buffer_clear,
+    /* .reset           = */ NULL,
+};
+
+// ---------------------------------------------------------------------------
+// Stage E4: split buffer TYPE (the factory the graph allocator talks to).
+// Mirrors upstream CUDA ggml_backend_cuda_split_buffer_type: the buffer_type
+// carries the (main_device, tensor_split) config; alloc_buffer hands back an
+// empty split-buffer context (per-device slices are allocated lazily in
+// init_tensor), and get_alloc_size reports the SUM of the padded per-device
+// slice sizes so the allocator reserves the right total for a split weight.
+// ---------------------------------------------------------------------------
+
+static const char * ggml_backend_vk_split_buffer_type_name(ggml_backend_buffer_type_t buft) {
+    auto * ctx = (ggml_backend_vk_split_buffer_type_context *) buft->context;
+    return ctx->name.c_str();
+}
+
+static ggml_backend_buffer_t ggml_backend_vk_split_buffer_type_alloc_buffer(
+        ggml_backend_buffer_type_t buft, size_t size) {
+    // A split buffer holds no monolithic device allocation; the real per-device
+    // slices are created in init_tensor. We hand back an empty container whose
+    // size is the caller's requested total (used only for bookkeeping).
+    auto * bufctx = new ggml_backend_vk_split_buffer_context{};
+    return ggml_backend_buffer_init(buft, &ggml_backend_vk_split_buffer_interface, bufctx, size);
+}
+
+static size_t ggml_backend_vk_split_buffer_type_get_alignment(ggml_backend_buffer_type_t buft) {
+    auto * ctx = (ggml_backend_vk_split_buffer_type_context *) buft->context;
+    vk_device dev = ggml_vk_get_device((size_t) ctx->main_device);
+    return dev->properties.limits.minStorageBufferOffsetAlignment;
+}
+
+static size_t ggml_backend_vk_split_buffer_type_get_max_size(ggml_backend_buffer_type_t buft) {
+    GGML_UNUSED(buft);
+    return SIZE_MAX;  // a split tensor is never a single allocation
+}
+
+// Sum of the padded per-device slice sizes — the total VRAM a split weight
+// occupies across all devices. Matches CUDA's split get_alloc_size so the graph
+// allocator reserves the correct amount.
+static size_t ggml_backend_vk_split_buffer_type_get_alloc_size(
+        ggml_backend_buffer_type_t buft, const ggml_tensor * tensor) {
+    auto * ctx = (ggml_backend_vk_split_buffer_type_context *) buft->context;
+
+    const int64_t nrows = ggml_nrows(tensor);
+    const int64_t ne0   = tensor->ne[0];
+
+    size_t total = 0;
+    for (int id = 0; id < ctx->n_devices; id++) {
+        int64_t row_low, row_high;
+        ggml_vk_split_row_range(nrows, ctx->tensor_split.data(), ctx->n_devices, id,
+                                &row_low, &row_high);
+        const int64_t nrows_split = row_high - row_low;
+        if (nrows_split == 0) {
+            continue;
+        }
+        size_t size = ggml_vk_split_nbytes(tensor, nrows_split);
+        if (ne0 % VK_SPLIT_MATRIX_ROW_PADDING != 0) {
+            size += ggml_row_size(tensor->type, VK_SPLIT_MATRIX_ROW_PADDING - ne0 % VK_SPLIT_MATRIX_ROW_PADDING);
+        }
+        total += size;
+    }
+    return total;
+}
+
+static const ggml_backend_buffer_type_i ggml_backend_vk_split_buffer_type_interface = {
+    /* .get_name         = */ ggml_backend_vk_split_buffer_type_name,
+    /* .alloc_buffer     = */ ggml_backend_vk_split_buffer_type_alloc_buffer,
+    /* .get_alignment    = */ ggml_backend_vk_split_buffer_type_get_alignment,
+    /* .get_max_size     = */ ggml_backend_vk_split_buffer_type_get_max_size,
+    /* .get_alloc_size   = */ ggml_backend_vk_split_buffer_type_get_alloc_size,
+    /* .is_host          = */ NULL,
+};
+
+// Cache of split buffer types, keyed by (main_device, n_devices, tensor_split).
+// Held in a never-destroyed heap map (leaked static pointer) so the graph can
+// hold buffer_type pointers for its whole lifetime and the C runtime does not
+// run ~map at process exit — same static-destruction-order safety as the meta
+// buffer-type cache (see memory: g_meta_bufts fix).
+static std::map<std::string, ggml_backend_buffer_type> & vk_split_bufts_map() {
+    static auto * m = new std::map<std::string, ggml_backend_buffer_type>();
+    return *m;
+}
+
+// Public C entry point (not upstream): create/fetch a Vulkan tensor-split buffer
+// type. `tensor_split` is a per-device weight vector of length n_devices (may be
+// NULL for an even split); `main_device` is where non-split fallbacks live.
+// `device_ids` (length n_devices, may be NULL) maps split slot i to a physical
+// Vulkan device index — NULL means the identity 0..n_devices-1. This lets a TP
+// group occupy an arbitrary GPU subset, e.g. device_ids={2,3} for the second
+// replica in a TPxDP layout. `transport` selects the cross-device gather
+// transport (0=host-staging default). Returns NULL on bad arguments. The returned
+// buffer_type is cached and must not be freed by the caller.
+extern "C" ggml_backend_buffer_type_t ggml_backend_vk_split_buffer_type(
+        int main_device, const float * tensor_split, int n_devices,
+        const int * device_ids, int transport) {
+    ggml_vk_instance_init();
+
+    const int n_avail = ggml_vk_get_device_count();
+    if (n_devices <= 0 || n_devices > n_avail || main_device < 0 || main_device >= n_avail) {
+        return nullptr;
+    }
+
+    vk_split_transport t = VK_SPLIT_TRANSPORT_HOST_STAGING;
+    if (transport == 1) t = VK_SPLIT_TRANSPORT_OPAQUE_FD;
+    else if (transport == 2) t = VK_SPLIT_TRANSPORT_DEVICE_GROUP;
+
+    // Resolve the physical device for each split slot (identity if NULL). Every
+    // id must be a valid device index.
+    std::vector<int> dev_ids(n_devices);
+    for (int i = 0; i < n_devices; i++) {
+        int d = device_ids ? device_ids[i] : i;
+        if (d < 0 || d >= n_avail) {
+            return nullptr;
+        }
+        dev_ids[i] = d;
+    }
+
+    // Normalize the weight vector into cumulative fractions (the key & the config).
+    std::vector<float> split(n_devices);
+    ggml_vk_split_normalize(tensor_split, n_devices, split.data());
+
+    // Build a stable cache key from the config (device_ids included so groups on
+    // different GPU subsets are distinct cache entries).
+    char key[320];
+    int off = snprintf(key, sizeof(key), "vk_split(main=%d,nd=%d,t=%d,dev=", main_device, n_devices, (int) t);
+    for (int i = 0; i < n_devices && off < (int) sizeof(key); i++) {
+        off += snprintf(key + off, sizeof(key) - off, "%d.", dev_ids[i]);
+    }
+    if (off < (int) sizeof(key)) off += snprintf(key + off, sizeof(key) - off, ",split=");
+    for (int i = 0; i < n_devices && off < (int) sizeof(key); i++) {
+        off += snprintf(key + off, sizeof(key) - off, "%.6f,", split[i]);
+    }
+    if (off < (int) sizeof(key)) snprintf(key + off, sizeof(key) - off, ")");
+
+    auto & cache = vk_split_bufts_map();
+    auto it = cache.find(key);
+    if (it != cache.end()) {
+        return &it->second;
+    }
+
+    // First request for this config: build and cache the buffer_type.
+    auto * ctx = new ggml_backend_vk_split_buffer_type_context{};
+    ctx->main_device  = main_device;
+    ctx->n_devices    = n_devices;
+    ctx->tensor_split = split;
+    ctx->device_ids   = dev_ids;
+    ctx->transport    = t;
+    ctx->name         = key;
+
+    ggml_backend_buffer_type buft{};
+    buft.iface   = ggml_backend_vk_split_buffer_type_interface;
+    buft.device  = ggml_backend_reg_dev_get(ggml_backend_vk_reg(), (size_t) main_device);
+    buft.context = ctx;
+
+    auto res = cache.emplace(std::string(key), buft);
+    return &res.first->second;
+}
+
+// ---------------------------------------------------------------------------
+// P2P self-test (ggmlR TP, not upstream).
+//
+// Exercises the opaque-fd export/import transport that Stage E3 will use to move
+// weight/activation slices between Vulkan devices. Two modes, selected by whether
+// src_dev == dst_dev:
+//
+//   loopback (src == dst): export an fd on a device and import it back on the
+//     SAME device. Sanity-checks that the fd mechanism itself works (allocation
+//     is exportable, getMemoryFdKHR succeeds, ImportMemoryFdInfoKHR binds). Does
+//     NOT exercise any device<->device link.
+//
+//   cross-device (src != dst): export on src, import on dst, then vkCmdCopyBuffer
+//     from the imported (remote) buffer into a local dst buffer on the dst queue.
+//     This is the path whose routing (NVLink vs PCIe) the driver decides; we can
+//     only MEASURE the achieved bandwidth, we cannot query the route from Vulkan.
+//
+// Correctness: a byte pattern written on src is read back from the dst-local copy
+// and compared. Bandwidth: the copy is repeated `iters` times under a fence and
+// timed; GB/s = bytes * iters / seconds (1 GB = 1e9 bytes, to match nvidia-smi).
+//
+// IMPORTANT (reporting): a measured bandwidth above the PCIe 3.0 x16 ceiling
+// (~16 GB/s) is EMPIRICAL evidence that a faster link (e.g. NVLink) carried the
+// bytes — it is NOT a claim that Vulkan used an NVLink API. There is no Vulkan
+// call that reports the physical route; the conclusion is inferred from the rate.
+//
+// Returns 0 on success (data verified), <0 on failure. `out_gbps` receives the
+// measured cross-device bandwidth (0 for loopback / on failure). `report` gets a
+// human-readable summary.
+// Append a printf-style line to a fixed-size report buffer (bounded, never
+// overflows). Marked with the printf format attribute so -Wformat-security is
+// satisfied even for calls with no variadic arguments.
+static void ggml_vk_report_append(char * report, size_t report_size, const char * fmt, ...)
+    __attribute__((format(printf, 3, 4)));
+static void ggml_vk_report_append(char * report, size_t report_size, const char * fmt, ...) {
+    size_t len = strlen(report);
+    if (len >= report_size) {
+        return;
+    }
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(report + len, report_size - len, fmt, ap);
+    va_end(ap);
+}
+
+static int ggml_vk_p2p_selftest_impl(int src_dev, int dst_dev, size_t bytes, int iters,
+                                     vk_split_transport transport,
+                                     double * out_gbps, char * report, size_t report_size) {
+    if (out_gbps) *out_gbps = 0.0;
+    #define say(...) ggml_vk_report_append(report, report_size, __VA_ARGS__)
+
+    const int n_dev = ggml_vk_get_device_count();
+    if (src_dev < 0 || dst_dev < 0 || src_dev >= n_dev || dst_dev >= n_dev) {
+        say("p2p_selftest: device index out of range (have %d device(s))\n", n_dev);
+        return -1;
+    }
+    if (bytes == 0 || iters <= 0) {
+        say("p2p_selftest: bytes and iters must be > 0\n");
+        return -1;
+    }
+
+    const bool loopback = (src_dev == dst_dev);
+    vk_device src = ggml_vk_get_device((size_t) src_dev);
+    vk_device dst = ggml_vk_get_device((size_t) dst_dev);
+
+    say("p2p_selftest: %s  src=dev%d (%s)  dst=dev%d (%s)  %zu bytes x%d  transport=%s\n",
+        loopback ? "LOOPBACK" : "CROSS-DEVICE",
+        src_dev, src->name.c_str(), dst_dev, dst->name.c_str(), bytes, iters,
+        transport == VK_SPLIT_TRANSPORT_HOST_STAGING ? "host-staging"
+        : transport == VK_SPLIT_TRANSPORT_OPAQUE_FD  ? "opaque-fd" : "device-group");
+
+    // ---------------------------------------------------------------------
+    // HOST_STAGING path (ggmlR TP): the portable, correct-everywhere transport.
+    // No fd export/import — just device-local buffers on each side and a
+    // device->host->device copy via ggml_vk_p2p_copy. This is exactly the
+    // transport Stage E3 uses, so a green result here validates the real path.
+    // ---------------------------------------------------------------------
+    if (transport == VK_SPLIT_TRANSPORT_HOST_STAGING) {
+        const auto dev_local = vk::MemoryPropertyFlagBits::eDeviceLocal;
+        vk_buffer src_buf, dst_buf;
+        int rc = 0;
+        try {
+            r_tp_tracef("selftest[host-staging]: alloc src on dev%d...", src_dev);
+            src_buf = ggml_vk_create_buffer(src, bytes, { dev_local });
+            r_tp_tracef("selftest[host-staging]: alloc dst on dev%d...", dst_dev);
+            dst_buf = ggml_vk_create_buffer(dst, bytes, { dev_local });
+            if (!src_buf || !dst_buf) {
+                say("  FAIL: could not allocate device-local buffers\n");
+                return -3;
+            }
+            std::vector<uint8_t> pattern(bytes);
+            for (size_t i = 0; i < bytes; i++) pattern[i] = (uint8_t)((i * 131u + 7u) & 0xFF);
+            ggml_vk_buffer_write(src_buf, 0, pattern.data(), bytes);
+
+            // Correctness: one staged copy, then read back and compare.
+            ggml_vk_p2p_copy(dst_buf, 0, src_buf, 0, bytes, transport);
+            std::vector<uint8_t> readback(bytes);
+            ggml_vk_buffer_read(dst_buf, 0, readback.data(), bytes);
+            if (memcmp(readback.data(), pattern.data(), bytes) != 0) {
+                size_t first = 0;
+                while (first < bytes && readback[first] == pattern[first]) first++;
+                say("  FAIL: data mismatch at byte %zu (got %u, want %u)\n",
+                    first, readback[first], pattern[first]);
+                return -6;
+            }
+            say("  OK: %zu bytes verified via host-staging (device->host->device)\n", bytes);
+
+            // Bandwidth: `iters` staged copies, timed as one batch. GB/s counts the
+            // bytes moved device-to-device (the host round-trip is the cost).
+            if (!loopback) {
+                auto t0 = std::chrono::high_resolution_clock::now();
+                for (int i = 0; i < iters; i++) {
+                    ggml_vk_p2p_copy(dst_buf, 0, src_buf, 0, bytes, transport);
+                }
+                auto t1 = std::chrono::high_resolution_clock::now();
+                double secs = std::chrono::duration<double>(t1 - t0).count();
+                double gbps = secs > 0.0 ? (double) bytes * (double) iters / secs / 1e9 : 0.0;
+                if (out_gbps) *out_gbps = gbps;
+                say("  bandwidth: %.2f GB/s (%d x %zu bytes, host-staged)\n", gbps, iters, bytes);
+                say("  => host-staging is PCIe + RAM bounded by design; NVLink is not used.\n");
+            } else {
+                say("  loopback: bandwidth not meaningful (same-device staging)\n");
+            }
+        } catch (const vk::SystemError & e) {
+            say("  FAIL: Vulkan exception: %s\n", e.what());
+            rc = -7;
+        }
+        // Release the device-local buffers now, while both devices are still fully
+        // alive, rather than letting the shared_ptrs unwind at some later point.
+        // (ggmlR TP: on multi-GPU this test is the first code to touch a non-main
+        // device's sync_staging; freeing here keeps teardown ordering well-defined.)
+        r_tp_tracef("selftest[host-staging]: reset src_buf...");
+        src_buf.reset();
+        r_tp_tracef("selftest[host-staging]: reset dst_buf...");
+        dst_buf.reset();
+        r_tp_tracef("selftest[host-staging]: returning rc=%d (device teardown happens later, at process exit)", rc);
+        return rc;
+    }
+
+    // ---------------------------------------------------------------------
+    // OPAQUE_FD path (below): requires external_memory_fd on both devices.
+    // ---------------------------------------------------------------------
+    if (!src->external_memory_fd) {
+        say("  FAIL: src device does not support VK_KHR_external_memory_fd\n");
+        return -2;
+    }
+    if (!dst->external_memory_fd) {
+        say("  FAIL: dst device does not support VK_KHR_external_memory_fd\n");
+        return -2;
+    }
+
+    const auto dev_local = vk::MemoryPropertyFlagBits::eDeviceLocal;
+
+    vk_buffer src_buf, imported, dst_local;
+    int fd = -1;
+    int rc = 0;
+    try {
+        // 1) Exportable source buffer on src device, filled with a known pattern.
+        src_buf = ggml_vk_create_buffer(src, bytes, { dev_local }, nullptr, /*export_fd=*/true);
+        if (!src_buf || !src_buf->exportable) {
+            say("  FAIL: could not allocate exportable src buffer\n");
+            return -3;
+        }
+        std::vector<uint8_t> pattern(bytes);
+        for (size_t i = 0; i < bytes; i++) pattern[i] = (uint8_t)((i * 131u + 7u) & 0xFF);
+        ggml_vk_buffer_write(src_buf, 0, pattern.data(), bytes);
+
+        // 2) Export an opaque fd for the src allocation.
+        fd = ggml_vk_buffer_export_fd(src_buf);
+        if (fd < 0) {
+            say("  FAIL: getMemoryFdKHR returned no fd\n");
+            return -4;
+        }
+
+        // 3) Import that fd on the dst device. The driver takes ownership of the
+        //    fd on success; do not close it afterwards. Hand over the exporter's
+        //    memory type index: getMemoryFdPropertiesKHR is unreliable on NVIDIA,
+        //    and the import must bind to the SAME type the exporter used or it
+        //    silently reads back as zeros. All devices here are the same model,
+        //    so the index is valid on the dst device too. (ggmlR TP)
+        imported = ggml_vk_create_buffer(dst, bytes, { dev_local }, nullptr,
+                                         /*export_fd=*/false, /*import_fd=*/fd,
+                                         /*import_type_index=*/(int) src_buf->memory_type_index);
+        if (!imported) {
+            say("  FAIL: ImportMemoryFdInfoKHR failed on dst device\n");
+            return -5;
+        }
+        fd = -1;  // consumed by the driver
+
+        // 4) Local destination buffer on dst; copy imported -> dst_local on the
+        //    dst transfer queue. This is the transfer whose route the driver picks.
+        dst_local = ggml_vk_create_buffer(dst, bytes, { dev_local });
+
+        // Warm-up copy (first submit pays one-off costs) + correctness copy.
+        {
+            std::lock_guard<std::recursive_mutex> guard(dst->mutex);
+            vk_context subctx = ggml_vk_create_temporary_context(dst->transfer_queue.cmd_pool);
+            ggml_vk_ctx_begin(dst, subctx);
+            ggml_vk_buffer_copy_async(subctx, dst_local, 0, imported, 0, bytes);
+            ggml_vk_ctx_end(subctx);
+            ggml_vk_submit(subctx, dst->fence);
+            VK_CHECK(dst->device.waitForFences({ dst->fence }, true, UINT64_MAX), "p2p_selftest warmup");
+            dst->device.resetFences({ dst->fence });
+            ggml_vk_queue_command_pools_cleanup(dst);
+        }
+
+        // 5) Correctness: read dst_local back and compare to the source pattern.
+        std::vector<uint8_t> readback(bytes);
+        ggml_vk_buffer_read(dst_local, 0, readback.data(), bytes);
+        if (memcmp(readback.data(), pattern.data(), bytes) != 0) {
+            size_t first = 0;
+            while (first < bytes && readback[first] == pattern[first]) first++;
+            size_t diff = 0, nonzero = 0;
+            for (size_t i = 0; i < bytes; i++) {
+                if (readback[i] != pattern[i]) diff++;
+                if (readback[i] != 0)          nonzero++;
+            }
+            say("  FAIL: data mismatch at byte %zu (got %u, want %u)\n",
+                first, readback[first], pattern[first]);
+            say("        %zu/%zu bytes differ; %zu bytes non-zero "
+                "(all-zero readback => import bound to wrong memory)\n",
+                diff, bytes, nonzero);
+            return -6;
+        }
+        say("  OK: %zu bytes verified across the fd-imported buffer\n", bytes);
+
+        // 6) Bandwidth: time `iters` device->device copies under a single fence.
+        double gbps = 0.0;
+        if (!loopback) {
+            std::lock_guard<std::recursive_mutex> guard(dst->mutex);
+            vk_context subctx = ggml_vk_create_temporary_context(dst->transfer_queue.cmd_pool);
+            ggml_vk_ctx_begin(dst, subctx);
+            for (int i = 0; i < iters; i++) {
+                ggml_vk_buffer_copy_async(subctx, dst_local, 0, imported, 0, bytes);
+            }
+            ggml_vk_ctx_end(subctx);
+
+            auto t0 = std::chrono::high_resolution_clock::now();
+            ggml_vk_submit(subctx, dst->fence);
+            VK_CHECK(dst->device.waitForFences({ dst->fence }, true, UINT64_MAX), "p2p_selftest bench");
+            auto t1 = std::chrono::high_resolution_clock::now();
+            dst->device.resetFences({ dst->fence });
+            ggml_vk_queue_command_pools_cleanup(dst);
+
+            double secs = std::chrono::duration<double>(t1 - t0).count();
+            if (secs > 0.0) {
+                gbps = (double) bytes * (double) iters / secs / 1e9;
+            }
+            if (out_gbps) *out_gbps = gbps;
+
+            const double PCIE3_X16_GBPS = 16.0;
+            say("  bandwidth: %.2f GB/s (%d x %zu bytes)\n", gbps, iters, bytes);
+            if (gbps > PCIE3_X16_GBPS) {
+                say("  => exceeds PCIe 3.0 x16 ceiling (~16 GB/s): empirically a faster\n");
+                say("     link (e.g. NVLink) carried the bytes. NOT a Vulkan NVLink-API claim;\n");
+                say("     the route is inferred from the measured rate, not queried.\n");
+            } else {
+                say("  => at/below PCIe 3.0 x16 ceiling: consistent with a PCIe route\n");
+                say("     (NVLink present in topology may still exist but was not used here).\n");
+            }
+        } else {
+            say("  loopback: bandwidth not meaningful (same-device import)\n");
+        }
+    } catch (const vk::SystemError & e) {
+        say("  FAIL: Vulkan exception: %s\n", e.what());
+        rc = -7;
+    }
+
+    // Buffers are shared_ptr (vk_buffer); they free on scope exit. An un-consumed
+    // fd (only on an early failure path) must be closed to avoid a leak.
+    if (fd >= 0) {
+        close(fd);
+    }
+    return rc;
+    #undef say
+}
+
+// ---------------------------------------------------------------------------
+// Stage E3: tensor-parallel mul_mat across N Vulkan devices (ggmlR TP).
+//
+// Computes Y = W * X where W ([K cols, N rows]) is row-split across the devices
+// and X ([K cols, M rows]) is broadcast to all of them. Each device owns a row
+// slice [row_low, row_high) of W (via the same ggml_vk_split_row_range math the
+// buffer type uses) and produces the matching column slice of Y (ggml_mul_mat's
+// result is [N cols, M rows], so W's rows map to Y's ne[0] = columns). The slices
+// are gathered back into a single host Y through ggml_vk_p2p_copy's transport
+// (host-staging by default).
+//
+// Orchestration lives ABOVE a single device's subctx on purpose: ggml_vk_mul_mat
+// runs inside one ctx->device with an open command buffer owned by the scheduler,
+// so a genuine multi-device split cannot be a branch inside it. Instead we stand
+// up one public ggml_backend_t per device, run a tiny mul_mat graph on each, and
+// concatenate. This reuses the whole proven per-device compute path (prealloc,
+// descriptors, fences) without touching the scheduler contract.
+//
+// This is a flat-buffer contract (all f32, row-major from R's point of view) so
+// it is unit-testable against a plain R `W %*% X`. It is NOT a hot inference path
+// (a per-call backend init + host round-trip); Stage E6 wires the split buffer
+// type into a real graph. This entry validates the split+gather arithmetic and
+// the cross-device transport end to end on >=2 GPUs.
+//
+// Layout (column-major ggml, which is what ggml_backend_tensor_set/get expect):
+//   w      : N*K floats, w[n*K + k]  (N rows of K, row n contiguous)   == A
+//   x      : M*K floats, x[m*K + k]  (M rows of K, row m contiguous)   == B
+//   y (out): M*N floats, y[m*N + n]  (M rows of N, row m contiguous)   == result
+// This matches ggml's ne[0]=fastest convention: A->ne={K,N}, B->ne={K,M},
+// result->ne={N,M}. A device owning W-rows [lo,hi) fills y[m*N + n] for n in [lo,hi).
+//
+// Returns 0 on success, <0 on failure; `report` (optional) gets a short summary.
+static int ggml_vk_split_mul_mat_impl(const float * w, const float * x, float * y,
+                                      int64_t N, int64_t K, int64_t M,
+                                      const float * weights, int n_devices,
+                                      const int * device_ids,
+                                      vk_split_transport transport,
+                                      char * report, size_t report_size) {
+    #define saym(...) ggml_vk_report_append(report, report_size, __VA_ARGS__)
+    if (report && report_size) report[0] = '\0';
+
+    const int n_dev_avail = ggml_vk_get_device_count();
+    if (N <= 0 || K <= 0 || M <= 0 || !w || !x || !y) {
+        saym("split_mul_mat: bad arguments\n");
+        return -1;
+    }
+    if (n_devices <= 0 || n_devices > n_dev_avail) {
+        saym("split_mul_mat: n_devices=%d out of range (have %d)\n", n_devices, n_dev_avail);
+        return -1;
+    }
+
+    // Resolve split slot -> physical device (identity if NULL); validate indices.
+    std::vector<int> dev_ids(n_devices);
+    for (int i = 0; i < n_devices; i++) {
+        int d = device_ids ? device_ids[i] : i;
+        if (d < 0 || d >= n_dev_avail) {
+            saym("split_mul_mat: device_ids[%d]=%d out of range (have %d)\n", i, d, n_dev_avail);
+            return -1;
+        }
+        dev_ids[i] = d;
+    }
+
+    // Cumulative row-split fractions (out[0]==0), same as the buffer type.
+    std::vector<float> split(n_devices);
+    ggml_vk_split_normalize(weights, n_devices, split.data());
+
+    saym("split_mul_mat: Y[%lld x %lld] = W[%lld x %lld] * X[%lld x %lld] over %d device(s), transport=%s\n",
+         (long long) M, (long long) N, (long long) N, (long long) K, (long long) M, (long long) K, n_devices,
+         transport == VK_SPLIT_TRANSPORT_HOST_STAGING ? "host-staging"
+         : transport == VK_SPLIT_TRANSPORT_OPAQUE_FD  ? "opaque-fd" : "device-group");
+
+    int rc = 0;
+    // One backend per participating device; torn down at the end. Kept in a vector
+    // so an early failure can free whatever was created so far.
+    std::vector<ggml_backend_t> backends(n_devices, nullptr);
+
+    try {
+        for (int id = 0; id < n_devices; id++) {
+            int64_t row_low, row_high;
+            ggml_vk_split_row_range(N, split.data(), n_devices, id, &row_low, &row_high);
+            const int64_t nrows = row_high - row_low;
+            if (nrows <= 0) {
+                continue;   // this device owns no rows of W
+            }
+
+            ggml_backend_t backend = ggml_backend_vk_init((size_t) dev_ids[id]);
+            backends[id] = backend;
+
+            // Tiny context holding this device's slice of W, the full X, and the
+            // result slice. no_alloc: tensors are placed in the backend buffer.
+            ggml_init_params ip{};
+            ip.mem_size   = 3 * ggml_tensor_overhead() + ggml_graph_overhead();
+            ip.mem_buffer = nullptr;
+            ip.no_alloc   = true;
+            ggml_context * gctx = ggml_init(ip);
+
+            ggml_tensor * a = ggml_new_tensor_2d(gctx, GGML_TYPE_F32, K, nrows); // W slice [K, nrows]
+            ggml_tensor * b = ggml_new_tensor_2d(gctx, GGML_TYPE_F32, K, M);     // X       [K, M]
+            ggml_tensor * c = ggml_mul_mat(gctx, a, b);                          // -> [nrows, M]
+
+            ggml_backend_buffer_t buf = ggml_backend_alloc_ctx_tensors(gctx, backend);
+            if (!buf) {
+                saym("  FAIL: alloc on device %d (out of VRAM?)\n", id);
+                ggml_free(gctx);
+                rc = -3;
+                break;
+            }
+
+            // Upload this device's W rows [row_low, row_high) and the full X. W is
+            // row-contiguous (row n at w + n*K), so the slice is one contiguous run.
+            ggml_backend_tensor_set(a, w + row_low * K, 0, (size_t) nrows * K * sizeof(float));
+            ggml_backend_tensor_set(b, x,               0, (size_t) M * K * sizeof(float));
+
+            ggml_cgraph * gf = ggml_new_graph(gctx);
+            ggml_build_forward_expand(gf, c);
+            enum ggml_status st = ggml_backend_graph_compute(backend, gf);
+            if (st != GGML_STATUS_SUCCESS) {
+                saym("  FAIL: compute on device %d (status %d)\n", id, (int) st);
+                ggml_free(gctx);
+                rc = -4;
+                break;
+            }
+
+            // Gather: c is [nrows, M] column-major (c[m*nrows + n_local]); scatter
+            // into y[m*N + (row_low + n_local)]. Pull the whole slice to host once,
+            // then place each of its M rows into the right N-column band of y. This
+            // host copy IS the transport for host-staging; kept explicit (rather
+            // than via ggml_vk_p2p_copy) because dst is host memory, not a device
+            // buffer — the p2p_copy helper is device->device. Same round-trip cost.
+            std::vector<float> slice((size_t) nrows * M);
+            ggml_backend_tensor_get(c, slice.data(), 0, slice.size() * sizeof(float));
+            for (int64_t m = 0; m < M; m++) {
+                std::memcpy(y + m * N + row_low,
+                            slice.data() + (size_t) m * nrows,
+                            (size_t) nrows * sizeof(float));
+            }
+
+            ggml_free(gctx);
+        }
+    } catch (const vk::SystemError & e) {
+        saym("  FAIL: Vulkan exception: %s\n", e.what());
+        rc = -7;
+    }
+
+    for (int id = 0; id < n_devices; id++) {
+        if (backends[id]) {
+            ggml_backend_free(backends[id]);
+        }
+    }
+    if (rc == 0) {
+        saym("  OK: split mul_mat gathered across %d device(s)\n", n_devices);
+    }
+    return rc;
+    #undef saym
+}
+
+// Public C entry point (not upstream): tensor-parallel mul_mat. See impl above.
+// `device_ids` (length n_devices, may be NULL for identity 0..n-1) picks the
+// physical GPU subset — e.g. {2,3} for the second replica of a TPxDP layout.
+// `transport`: 0 = host-staging (default, portable), 1 = opaque-fd, 2 = device-group.
+extern "C" int ggml_backend_vk_split_mul_mat(const float * w, const float * x, float * y,
+                                             int64_t N, int64_t K, int64_t M,
+                                             const float * weights, int n_devices,
+                                             const int * device_ids, int transport,
+                                             char * report, size_t report_size) {
+    vk_split_transport t = VK_SPLIT_TRANSPORT_HOST_STAGING;
+    if (transport == 1) t = VK_SPLIT_TRANSPORT_OPAQUE_FD;
+    else if (transport == 2) t = VK_SPLIT_TRANSPORT_DEVICE_GROUP;
+    return ggml_vk_split_mul_mat_impl(w, x, y, N, K, M, weights, n_devices, device_ids, t, report, report_size);
+}
+
+// ---------------------------------------------------------------------------
+// Public C entry point (not upstream): opaque-fd P2P self-test (correctness +
+// cross-device bandwidth). See ggml_vk_p2p_selftest_impl for semantics.
+// ---------------------------------------------------------------------------
+// `transport`: 0 = host-staging (default, portable), 1 = opaque-fd, 2 = device-group.
+extern "C" int ggml_backend_vk_p2p_selftest(int src_dev, int dst_dev,
+                                            size_t bytes, int iters, int transport,
+                                            double * out_gbps,
+                                            char * report, size_t report_size) {
+    if (report && report_size) report[0] = '\0';
+    vk_split_transport t = VK_SPLIT_TRANSPORT_HOST_STAGING;
+    if (transport == 1) t = VK_SPLIT_TRANSPORT_OPAQUE_FD;
+    else if (transport == 2) t = VK_SPLIT_TRANSPORT_DEVICE_GROUP;
+    return ggml_vk_p2p_selftest_impl(src_dev, dst_dev, bytes, iters, t,
+                                     out_gbps, report, report_size);
+}
+
+// ---------------------------------------------------------------------------
+// Public C entry point (not upstream): pure row-split math for unit tests.
+// No Vulkan device is touched — this is the arithmetic verified on a single GPU.
+// ---------------------------------------------------------------------------
+extern "C" int ggml_backend_vk_split_row_ranges(int64_t nrows, const float * weights,
+                                                int n_devices,
+                                                int64_t * row_low, int64_t * row_high) {
+    if (n_devices <= 0 || nrows < 0 || !row_low || !row_high) {
+        return -1;
+    }
+    std::vector<float> split(n_devices);
+    ggml_vk_split_normalize(weights, n_devices, split.data());
+    for (int id = 0; id < n_devices; id++) {
+        ggml_vk_split_row_range(nrows, split.data(), n_devices, id,
+                                &row_low[id], &row_high[id]);
+    }
+    return 0;
+}

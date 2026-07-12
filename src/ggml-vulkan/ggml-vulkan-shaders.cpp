@@ -1333,6 +1333,31 @@ static void ggml_vk_load_shaders(vk_device& device) {
     // (32, 32) = the tile side TS in pairwise_dist.comp.
     ggml_vk_create_pipeline(device, device->pipeline_pairwise_dist, "pairwise_dist", pairwise_dist_len, pairwise_dist_data, "main", 2, sizeof(vk_op_pairwise_dist_push_constants), {32, 32, 1}, {}, 1);
 
+    // Tiled fused k-NN: 3 buffers (X in, KNN_IDX out, KNN_DIST out), ONE workgroup
+    // per query row (wg_denoms = {1,1,1} so the dispatch's n elements become n
+    // groups), local_size_x = WG threads sweeping candidates. Specialization
+    // constants are { WG, K, MAXD } by id: WG = workgroup size (subgroup-friendly),
+    // K = top-k capacity (>= any requested k), MAXD = max feature dims staged to
+    // shared. The requested k arrives per-dispatch in the push constants.
+    {
+        const uint32_t knn_wg   = std::max<uint32_t>(device->subgroup_size, 1u);
+        const uint32_t knn_kcap = 32u;   // top-k capacity; matches best_d[32] in the shader
+        const uint32_t knn_maxd = 64u;   // max feature dims staged to shared (q_row[MAXD])
+        ggml_vk_create_pipeline(device, device->pipeline_knn_tiled, "knn_tiled", knn_tiled_len, knn_tiled_data, "main", 3, sizeof(vk_op_knn_tiled_push_constants), {1, 1, 1}, { knn_wg, knn_kcap, knn_maxd }, 1);
+    }
+
+    // FP64 matmul (PoC, benchmark only): 3 buffers (A, B in, C out), one thread
+    // per output element, tiled 16x16 with shared-memory staging. wg_denoms =
+    // local_size (16, 16) = the tile side TS in matmul_f64.comp. Only created when
+    // the device reports fp64 support (otherwise the double kernel is invalid).
+    if (device->physical_device.getFeatures().shaderFloat64) {
+        ggml_vk_create_pipeline(device, device->pipeline_matmul_f64, "matmul_f64", matmul_f64_len, matmul_f64_data, "main", 3, sizeof(vk_op_matmul_f64_push_constants), {16, 16, 1}, {}, 1);
+    }
+
+    // Sparse LogNormalize: 3 buffers (vals rw, factor, col_of_nnz), one thread
+    // per stored non-zero. wg_denoms.x = local_size_x in sparse_lognorm.comp (256).
+    ggml_vk_create_pipeline(device, device->pipeline_sparse_lognorm, "sparse_lognorm", sparse_lognorm_len, sparse_lognorm_data, "main", 3, sizeof(vk_op_sparse_lognorm_push_constants), {256, 1, 1}, {}, 1);
+
     ggml_vk_create_pipeline(device, device->pipeline_fill_f32, "fill_f32", fill_f32_len, fill_f32_data, "main", 1, sizeof(vk_op_unary_push_constants), {512, 1, 1}, {}, 1);
     ggml_vk_create_pipeline(device, device->pipeline_fill_f16, "fill_f16", fill_f16_len, fill_f16_data, "main", 1, sizeof(vk_op_unary_push_constants), {512, 1, 1}, {}, 1);
 
@@ -1803,6 +1828,9 @@ static vk_device ggml_vk_get_device(size_t idx) {
                 push_descriptor_ext = true;
             } else if (strcmp("VK_EXT_external_memory_host", properties.extensionName) == 0) {
                 device->external_memory_host = true;
+            } else if (strcmp("VK_KHR_external_memory_fd", properties.extensionName) == 0) {
+                // ggmlR Tensor Parallelism (P2P): opaque-fd export/import.
+                device->external_memory_fd = true;
 #if defined(VK_EXT_shader_64bit_indexing)
             } else if (strcmp("VK_EXT_shader_64bit_indexing", properties.extensionName) == 0) {
                 device->shader_64b_indexing = true;
@@ -1973,6 +2001,17 @@ static vk_device ggml_vk_get_device(size_t idx) {
         device->subgroup_vote = (vk11_props.subgroupSupportedStages & vk::ShaderStageFlagBits::eCompute) &&
                                 (vk11_props.subgroupSupportedOperations & vk::SubgroupFeatureFlagBits::eVote);
 
+        // Debug/diagnostic overrides: force-disable individual subgroup features to
+        // emulate weaker GPUs (e.g. Tesla P100) on a more capable card, so that
+        // device-specific fallbacks (Flash Attention -> CPU, graph-split explosion)
+        // can be reproduced locally. All default OFF (no effect) unless the env is set.
+        if (getenv("GGML_VK_DISABLE_SUBGROUP_SHUFFLE"))    device->subgroup_shuffle    = false;
+        if (getenv("GGML_VK_DISABLE_SUBGROUP_VOTE"))       device->subgroup_vote       = false;
+        if (getenv("GGML_VK_DISABLE_SUBGROUP_ARITHMETIC")) device->subgroup_arithmetic = false;
+        if (getenv("GGML_VK_DISABLE_SUBGROUP_BALLOT"))     device->subgroup_ballot     = false;
+        if (getenv("GGML_VK_DISABLE_SUBGROUP_CLUSTERED"))  device->subgroup_clustered  = false;
+        if (getenv("GGML_VK_DISABLE_SUBGROUP_BASIC"))      device->subgroup_basic      = false;
+
         const bool force_disable_f16 = getenv("GGML_VK_DISABLE_F16") != nullptr;
 
         device->fp16 = !force_disable_f16 && fp16_storage && fp16_compute;
@@ -1982,6 +2021,46 @@ static vk_device ggml_vk_get_device(size_t idx) {
         }
 
         device->integer_dot_product = device->integer_dot_product && shader_integer_dot_product_props.integerDotProduct4x8BitPackedSignedAccelerated;
+
+        // ggmlR fork fix (properties-primary + architecture exclusion): the gate
+        // above trusts integerDotProduct4x8BitPackedSignedAccelerated. On NVIDIA
+        // pre-Turing GPUs (Maxwell / Pascal, detected by lack of
+        // VK_KHR_cooperative_matrix) this properties flag is a false positive:
+        // the driver reports it TRUE, but there is no hardware DP4A instruction
+        // (DP4A became a real HW instruction only with Turing), so the
+        // integer-dot (MMQ) matmul path is *emulated* and ~10-13x slower than
+        // the plain f16 dequant path. Measured on Tesla P100 (GP100): isolated
+        // MUL_MAT q6_K 322 -> 3487 GFLOP/s, q8_0 329 -> 4370 GFLOP/s when
+        // integer-dot is disabled; Qwen3.5-9B prefill 58 -> 118 tok/s. The
+        // properties flag stays the primary gate for every other device; this
+        // only excludes the one architecture class where it is documented to
+        // lie. Broader than strictly GP100 (P40/GTX1080 on GP10x do have HW
+        // DP4A) but those are also pre-Turing with a competitive f16 path, so
+        // the simple architecture exclusion is the safe choice. Override with
+        // GGML_VK_FORCE_INTEGER_DOT_PRODUCT=1 if a pre-Turing card really wants it.
+        if (device->integer_dot_product &&
+            device->architecture == vk_device_architecture::NVIDIA_PRE_TURING &&
+            getenv("GGML_VK_FORCE_INTEGER_DOT_PRODUCT") == nullptr) {
+            device->integer_dot_product = false;
+        }
+
+        // Diagnostic dump of the raw *Accelerated properties, gated behind an
+        // env var. Lets us later narrow the exclusion to a precise
+        // properties-only check (find a flag that is honestly false on GP100)
+        // without another round of on-device reconnaissance.
+        if (getenv("GGMLR_DUMP_INTDOT_PROPS") != nullptr) {
+            const auto & p = shader_integer_dot_product_props;
+            std::cerr << "[intdot] dev='" << device->properties.deviceName.data()
+                      << "' arch=" << (int)device->architecture
+                      << " 8BitSignedAccel="   << (int)p.integerDotProduct8BitSignedAccelerated
+                      << " 8BitUnsignedAccel="  << (int)p.integerDotProduct8BitUnsignedAccelerated
+                      << " 4x8PackedSignedAccel="   << (int)p.integerDotProduct4x8BitPackedSignedAccelerated
+                      << " 4x8PackedUnsignedAccel=" << (int)p.integerDotProduct4x8BitPackedUnsignedAccelerated
+                      << " 4x8PackedMixedAccel="    << (int)p.integerDotProduct4x8BitPackedMixedSignednessAccelerated
+                      << " 16BitSignedAccel="   << (int)p.integerDotProduct16BitSignedAccelerated
+                      << " 32BitSignedAccel="   << (int)p.integerDotProduct32BitSignedAccelerated
+                      << std::endl;
+        }
 
         device->min_imported_host_pointer_alignment = external_memory_host_props.minImportedHostPointerAlignment;
 
@@ -2125,6 +2204,14 @@ static vk_device ggml_vk_get_device(size_t idx) {
 
         if (device->external_memory_host) {
             device_extensions.push_back("VK_EXT_external_memory_host");
+        }
+
+        // ggmlR Tensor Parallelism (P2P): enable opaque-fd external memory so
+        // weight-split buffers can be exported on the owning device and imported
+        // on the consumer device (device<->device transfer). Not in upstream ggml.
+        if (device->external_memory_fd) {
+            device_extensions.push_back("VK_KHR_external_memory");
+            device_extensions.push_back("VK_KHR_external_memory_fd");
         }
 
 #if defined(VK_EXT_shader_64bit_indexing)

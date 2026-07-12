@@ -19,6 +19,7 @@ DispatchLoaderDynamic & ggml_vk_default_dispatcher();
 
 #include <algorithm>
 #include <cmath>
+#include <cstdarg>  // ggmlR TP: va_list/vsnprintf for device-group diagnostic report
 #include <iomanip>
 #include <iostream>
 
@@ -80,6 +81,12 @@ namespace std {
 #include "ggml-impl.h"
 #include "ggml-backend-impl.h"
 
+// ggmlR TP: crash-survivable diagnostic logger (GGMLR_TP_TRACE=path). Uses
+// fopen/fwrite/fclose (NOT macro-redirected in this TU), so lines survive a
+// segfault/abort during teardown. No-op when the env var is unset. See
+// r_dbg_filelog.h. Used to localize P2P/teardown crashes; keep the trace points
+// but they stay silent in normal use.
+#include "../r_dbg_filelog.h"
 
 #include "ggml-vulkan-shaders.hpp"
 
@@ -650,6 +657,9 @@ struct vk_device_struct {
     uint64_t suballocation_block_size;
     uint64_t min_imported_host_pointer_alignment;
     bool external_memory_host {};
+    // ggmlR Tensor Parallelism (P2P): opaque-fd export/import for device<->device
+    // weight-split buffers. Not in upstream ggml — see TODO.md "Vulkan Tensor Parallelism".
+    bool external_memory_fd {};
     bool fp16;
     bool bf16;
     bool pipeline_robustness;
@@ -854,6 +864,9 @@ struct vk_device_struct {
 
     vk_pipeline pipeline_umap_sgd;
     vk_pipeline pipeline_pairwise_dist;
+    vk_pipeline pipeline_knn_tiled;
+    vk_pipeline pipeline_matmul_f64;
+    vk_pipeline pipeline_sparse_lognorm;
 
     vk_pipeline pipeline_fill_f32;
     vk_pipeline pipeline_fill_f16;
@@ -947,13 +960,24 @@ struct vk_device_struct {
     ~vk_device_struct() {
         VK_LOG_DEBUG("destroy device " << name);
 
+        // ggmlR TP trace (silent unless GGMLR_TP_TRACE set): step-by-step device
+        // teardown so a segfault here names the exact failing step. sync_staging is
+        // of particular interest — the P2P self-test is the first code to allocate
+        // it on a non-main device.
+        r_tp_tracef("~vk_device_struct enter name=%s staging=%s",
+                    name.c_str(), sync_staging ? "present" : "null");
+
+        r_tp_tracef("  destroyFence...");
         device.destroyFence(fence);
 
+        r_tp_tracef("  destroy sync_staging...");
         ggml_vk_destroy_buffer(sync_staging);
 
+        r_tp_tracef("  destroy cmd_pools...");
         compute_queue.cmd_pool.destroy(device);
         transfer_queue.cmd_pool.destroy(device);
 
+        r_tp_tracef("  destroy pipelines...");
         for (auto& pipeline : all_pipelines) {
             if (pipeline.expired()) {
                 continue;
@@ -964,9 +988,12 @@ struct vk_device_struct {
         }
         all_pipelines.clear();
 
+        r_tp_tracef("  destroyDescriptorSetLayout...");
         device.destroyDescriptorSetLayout(dsl);
 
+        r_tp_tracef("  device.destroy()...");
         device.destroy();
+        r_tp_tracef("~vk_device_struct done name=%s", name.c_str());
     }
 };
 
@@ -991,6 +1018,19 @@ struct vk_buffer_struct {
     size_t size = 0;
     vk::DeviceAddress bda_addr {};
 
+    // ggmlR Tensor Parallelism (P2P): true when this buffer's memory was
+    // allocated with opaque-fd export capability (VkExportMemoryAllocateInfo),
+    // so its device memory can be shared to another Vulkan device. Not upstream.
+    bool exportable = false;
+
+    // ggmlR Tensor Parallelism (P2P): the VkPhysicalDeviceMemoryProperties index
+    // actually used for this allocation. Recorded so an exporter can hand it to
+    // the importer: getMemoryFdPropertiesKHR returns ErrorUnknown on some NVIDIA
+    // drivers, and the imported fd MUST bind to the SAME memory type as the
+    // exporter — the two GPUs are identical, so the index is valid on both. Not
+    // upstream. (uint32_t)-1 means "not tracked / choose from the mask".
+    uint32_t memory_type_index = (uint32_t)-1;
+
     vk_device device;
 
     ~vk_buffer_struct() {
@@ -999,8 +1039,25 @@ struct vk_buffer_struct {
         }
         VK_LOG_DEBUG("~vk_buffer_struct(" << buffer << ", " << size << ")");
 
-        device->device.freeMemory(device_memory);
-        device->device.destroyBuffer(buffer);
+        // ggmlR TP trace (silent unless GGMLR_TP_TRACE set): localizes teardown
+        // crashes — the last line written before a segfault names the failing step.
+        r_tp_tracef("~vk_buffer_struct enter size=%zu dev=%p mem_type=%u",
+                    size, (void *) device.get(), memory_type_index);
+
+        // ggmlR TP: guard teardown. A P2P import that bound to an unusable memory
+        // type (e.g. a failed cross-device self-test) can leave device_memory in a
+        // state where freeMemory faults. Swallow driver errors here so a diagnostic
+        // FAIL path unwinds cleanly instead of taking the process down. Not upstream.
+        try {
+            r_tp_tracef("  freeMemory...");
+            device->device.freeMemory(device_memory);
+            r_tp_tracef("  destroyBuffer...");
+            device->device.destroyBuffer(buffer);
+            r_tp_tracef("~vk_buffer_struct done");
+        } catch (const vk::SystemError &) {
+            // best-effort release; nothing actionable at destruction time
+            r_tp_tracef("~vk_buffer_struct caught vk::SystemError");
+        }
     }
 };
 
@@ -1364,6 +1421,7 @@ struct vk_op_umap_sgd_push_constants {
     float    a;
     float    b;
     float    gamma;
+    uint32_t epoch;   // 1-based; drives the shader's weighted-sampling test
 };
 static_assert(sizeof(vk_op_umap_sgd_push_constants) <= 256, "sizeof(vk_op_umap_sgd_push_constants) must be <= 256");
 
@@ -1374,6 +1432,32 @@ struct vk_op_pairwise_dist_push_constants {
     uint32_t dims;
 };
 static_assert(sizeof(vk_op_pairwise_dist_push_constants) <= 256, "sizeof(vk_op_pairwise_dist_push_constants) must be <= 256");
+
+// Tiled fused k-NN push constants. Must match the `parameter` block in
+// vulkan-shaders/knn_tiled.comp exactly (three uints). k must equal the K
+// specialization constant the pipeline was created with.
+struct vk_op_knn_tiled_push_constants {
+    uint32_t n;
+    uint32_t dims;
+    uint32_t k;
+};
+static_assert(sizeof(vk_op_knn_tiled_push_constants) <= 256, "sizeof(vk_op_knn_tiled_push_constants) must be <= 256");
+
+// FP64 matmul push constants (PoC). Must match the `parameter` block in
+// vulkan-shaders/matmul_f64.comp exactly (three uints: M, N, K).
+struct vk_op_matmul_f64_push_constants {
+    uint32_t M;
+    uint32_t N;
+    uint32_t K;
+};
+static_assert(sizeof(vk_op_matmul_f64_push_constants) <= 256, "sizeof(vk_op_matmul_f64_push_constants) must be <= 256");
+
+// Sparse LogNormalize push constants. Must match the `parameter` block in
+// vulkan-shaders/sparse_lognorm.comp exactly (one uint: the nnz count).
+struct vk_op_sparse_lognorm_push_constants {
+    uint32_t nnz;
+};
+static_assert(sizeof(vk_op_sparse_lognorm_push_constants) <= 256, "sizeof(vk_op_sparse_lognorm_push_constants) must be <= 256");
 
 static vk_op_binary_push_constants vk_op_binary_push_constants_init(
     const ggml_tensor * src0, const ggml_tensor * src1, const ggml_tensor * dst,
@@ -2644,7 +2728,17 @@ static std::vector<uint32_t> ggml_vk_find_memory_properties(const vk::PhysicalDe
 }
 
 static vk_buffer ggml_vk_create_buffer(vk_device& device, size_t size, const std::initializer_list<vk::MemoryPropertyFlags> & req_flags_list,
-                                       void *import_ptr = nullptr) {
+                                       void *import_ptr = nullptr,
+                                       // ggmlR Tensor Parallelism (P2P), not upstream:
+                                       //   export_fd  — allocate memory exportable as an opaque fd (owner side)
+                                       //   import_fd  — import device memory from an opaque fd (consumer side); -1 = none
+                                       //   import_type_index — memory type index the exporter used; when >= 0 the
+                                       //                       fd import binds to exactly this type instead of
+                                       //                       guessing from the mask (getMemoryFdPropertiesKHR is
+                                       //                       unreliable on NVIDIA). -1 = fall back to the mask.
+                                       bool export_fd = false,
+                                       int import_fd = -1,
+                                       int import_type_index = -1) {
     VK_LOG_DEBUG("ggml_vk_create_buffer(" << device->name << ", " << size << ", " << to_string(req_flags_list.begin()[0]) << ", " << to_string(req_flags_list.begin()[req_flags_list.size()-1]) << ")");
     if (size > device->max_buffer_size) {
         throw vk::OutOfDeviceMemoryError("Requested buffer size exceeds device buffer size limit");
@@ -2677,6 +2771,11 @@ static vk_buffer ggml_vk_create_buffer(vk_device& device, size_t size, const std
     if (import_ptr) {
         external_memory_bci.handleTypes = vk::ExternalMemoryHandleTypeFlagBits::eHostAllocationEXT;
         buffer_create_info.setPNext(&external_memory_bci);
+    } else if (export_fd || import_fd >= 0) {
+        // ggmlR Tensor Parallelism (P2P): mark the buffer as backed by opaque-fd
+        // external memory so it can be exported/imported across Vulkan devices.
+        external_memory_bci.handleTypes = vk::ExternalMemoryHandleTypeFlagBits::eOpaqueFd;
+        buffer_create_info.setPNext(&external_memory_bci);
     }
 
     buf->buffer = device->device.createBuffer(buffer_create_info);
@@ -2693,7 +2792,139 @@ static vk_buffer ggml_vk_create_buffer(vk_device& device, size_t size, const std
         mem_flags_info.setPNext(&mem_priority_info);
     }
 
-    if (import_ptr) {
+    // ggmlR Tensor Parallelism (P2P): NVIDIA (and some other drivers) require a
+    // DEDICATED allocation for opaque-fd memory shared across physical devices —
+    // otherwise the import on the consumer device silently binds to unrelated
+    // memory (reads back as zeros). Tie the allocation to this specific buffer on
+    // BOTH the export and import sides. dedicated_info.buffer must be the buffer
+    // handle just created above (buf->buffer). Not upstream ggml.
+    vk::MemoryDedicatedAllocateInfo dedicated_info;
+    const bool want_dedicated = export_fd || import_fd >= 0;
+    if (want_dedicated) {
+        dedicated_info.buffer = buf->buffer;
+        dedicated_info.setPNext(&mem_flags_info);
+    }
+
+    // ggmlR Tensor Parallelism (P2P): when exporting, chain a
+    // VkExportMemoryAllocateInfo onto the allocation so the resulting device
+    // memory can later be shared as an opaque fd via getMemoryFdKHR(). Placed at
+    // the head of the pNext chain (before dedicated_info). Not upstream ggml.
+    vk::ExportMemoryAllocateInfo export_mem_info;
+    if (export_fd) {
+        export_mem_info.handleTypes = vk::ExternalMemoryHandleTypeFlagBits::eOpaqueFd;
+        export_mem_info.setPNext(&dedicated_info);
+    }
+    vk::MemoryAllocateFlagsInfo * alloc_pnext = export_fd
+        ? reinterpret_cast<vk::MemoryAllocateFlagsInfo *>(&export_mem_info)
+        : &mem_flags_info;
+
+    if (import_fd >= 0) {
+        // ggmlR Tensor Parallelism (P2P): import device memory from an opaque fd
+        // exported by the owning device. Ownership of the fd transfers to the
+        // Vulkan driver on a successful import (do not close it here).
+        //
+        // For cross-device P2P the import should use a memory type the driver
+        // reports as valid for THIS fd, via vkGetMemoryFdPropertiesKHR. Reusing
+        // the buffer's generic memoryTypeBits picks an index that matches on
+        // loopback (same physical device) but may be wrong on another GPU.
+        //
+        // BEST-EFFORT: this query returns ErrorUnknown on some NVIDIA drivers
+        // (it does not dispatch for opaque fd the way we call it). Treat it as
+        // advisory only: narrow memoryTypeBits ONLY when the query succeeds and
+        // yields a non-empty intersection; otherwise keep the full mask and let
+        // allocateMemory below try each candidate. Never fail the import here.
+        // (getMemoryFdPropertiesKHR does NOT consume the fd.)
+        const uint32_t orig_type_bits = mem_req.memoryTypeBits;
+
+        // PRIMARY PATH (ggmlR TP): the exporter told us which memory type index it
+        // actually used. Because every device in the split is the same physical
+        // model, that index is valid on this device too, and it is the ONLY index
+        // guaranteed to alias the exported allocation. Bind to exactly it — a
+        // wrong-but-DEVICE_LOCAL type imports "successfully" yet reads back as all
+        // zeros (the symptom this replaces). Only fall through to the mask scan
+        // when no index was handed over.
+        if (import_type_index >= 0) {
+            const uint32_t mti = (uint32_t) import_type_index;
+            if (mti >= mem_props.memoryTypeCount || !(orig_type_bits & (1u << mti))) {
+                // The buffer's own requirements do not admit this type — the two
+                // devices disagree; there is nothing safe to import onto.
+                device->device.destroyBuffer(buf->buffer);
+                GGML_LOG_ERROR("ggml_vulkan[TP]: fd-import type index %u invalid for this device (buffer bits=0x%x, count=%u)\n",
+                               mti, orig_type_bits, mem_props.memoryTypeCount);
+                throw vk::OutOfDeviceMemoryError("fd-import: exporter memory type index not usable on this device");
+            }
+            vk::ImportMemoryFdInfoKHR import_fd_info;
+            import_fd_info.handleType = vk::ExternalMemoryHandleTypeFlagBits::eOpaqueFd;
+            import_fd_info.fd = import_fd;
+            import_fd_info.setPNext(&dedicated_info);
+            try {
+                buf->device_memory = device->device.allocateMemory({ mem_req.size, mti, &import_fd_info });
+            } catch (const vk::SystemError& e) {
+                device->device.destroyBuffer(buf->buffer);
+                throw e;
+            }
+            buf->memory_property_flags = mem_props.memoryTypes[mti].propertyFlags;
+            buf->memory_type_index     = mti;
+            GGML_LOG_INFO("ggml_vulkan[TP]: fd-import bound to exporter memory type index %u\n", mti);
+        } else {
+        // For cross-device P2P the import should use a memory type the driver
+        // reports as valid for THIS fd, via vkGetMemoryFdPropertiesKHR. Reusing
+        // the buffer's generic memoryTypeBits picks an index that matches on
+        // loopback (same physical device) but may be wrong on another GPU.
+        //
+        // BEST-EFFORT: this query returns ErrorUnknown on some NVIDIA drivers
+        // (it does not dispatch for opaque fd the way we call it). Treat it as
+        // advisory only: narrow memoryTypeBits ONLY when the query succeeds and
+        // yields a non-empty intersection; otherwise keep the full mask and let
+        // allocateMemory below try each candidate. Never fail the import here.
+        // (getMemoryFdPropertiesKHR does NOT consume the fd.)
+        try {
+            vk::MemoryFdPropertiesKHR fd_props = device->device.getMemoryFdPropertiesKHR(
+                vk::ExternalMemoryHandleTypeFlagBits::eOpaqueFd, import_fd);
+            const uint32_t narrowed = orig_type_bits & fd_props.memoryTypeBits;
+            if (narrowed != 0) {
+                mem_req.memoryTypeBits = narrowed;
+            }
+            GGML_LOG_INFO("ggml_vulkan[TP]: fd-import memoryTypeBits buffer=0x%x fd=0x%x -> usable=0x%x%s\n",
+                          orig_type_bits, (unsigned) fd_props.memoryTypeBits, mem_req.memoryTypeBits,
+                          narrowed == 0 ? " (empty intersection; kept full mask)" : "");
+        } catch (const vk::SystemError& e) {
+            GGML_LOG_INFO("ggml_vulkan[TP]: getMemoryFdPropertiesKHR unavailable (%s); keeping full memoryTypeBits=0x%x\n",
+                          e.what(), orig_type_bits);
+        }
+        for (auto it = req_flags_list.begin(); it != req_flags_list.end(); it++) {
+            const auto & req_flags = *it;
+            const std::vector<uint32_t> memory_type_indices = ggml_vk_find_memory_properties(&mem_props, &mem_req, req_flags);
+            if (memory_type_indices.empty()) {
+                continue;
+            }
+            buf->memory_property_flags = req_flags;
+            bool done = false;
+            for (auto mtype_it = memory_type_indices.begin(); mtype_it != memory_type_indices.end(); mtype_it++) {
+                try {
+                    vk::ImportMemoryFdInfoKHR import_fd_info;
+                    import_fd_info.handleType = vk::ExternalMemoryHandleTypeFlagBits::eOpaqueFd;
+                    import_fd_info.fd = import_fd;
+                    // ggmlR TP: chain through the dedicated-allocation info so the
+                    // imported memory binds to this dst buffer (see export side).
+                    import_fd_info.setPNext(&dedicated_info);
+                    buf->device_memory = device->device.allocateMemory({ mem_req.size, *mtype_it, &import_fd_info });
+                    buf->memory_type_index = *mtype_it;
+                    done = true;
+                    break;
+                } catch (const vk::SystemError& e) {
+                    if (it + 1 == req_flags_list.end() && mtype_it + 1 == memory_type_indices.end()) {
+                        device->device.destroyBuffer(buf->buffer);
+                        throw e;
+                    }
+                }
+            }
+            if (done) {
+                break;
+            }
+        }
+        }
+    } else if (import_ptr) {
         vk::MemoryHostPointerPropertiesEXT host_pointer_props;
         try {
             host_pointer_props = device->device.getMemoryHostPointerPropertiesEXT(vk::ExternalMemoryHandleTypeFlagBits::eHostAllocationEXT, import_ptr);
@@ -2751,7 +2982,10 @@ static vk_buffer ggml_vk_create_buffer(vk_device& device, size_t size, const std
 
             for (auto mtype_it = memory_type_indices.begin(); mtype_it != memory_type_indices.end(); mtype_it++) {
                 try {
-                    buf->device_memory = device->device.allocateMemory({ mem_req.size, *mtype_it, &mem_flags_info });
+                    // alloc_pnext == &mem_flags_info normally, or the export-info
+                    // head when export_fd is set (ggmlR TP, not upstream).
+                    buf->device_memory = device->device.allocateMemory({ mem_req.size, *mtype_it, alloc_pnext });
+                    buf->memory_type_index = *mtype_it;  // ggmlR TP: hand to importer
                     done = true;
                     break;
                 } catch (const vk::SystemError& e) {
@@ -2779,7 +3013,9 @@ static vk_buffer ggml_vk_create_buffer(vk_device& device, size_t size, const std
 
     if (import_ptr) {
         buf->ptr = import_ptr;
-    } else {
+    } else if (import_fd < 0) {
+        // Do not host-map fd-imported memory (ggmlR TP): it is remote device
+        // memory shared for compute, not intended for CPU access here.
         if (buf->memory_property_flags & vk::MemoryPropertyFlagBits::eHostVisible) {
             buf->ptr = device->device.mapMemory(buf->device_memory, 0, VK_WHOLE_SIZE);
         }
@@ -2789,6 +3025,7 @@ static vk_buffer ggml_vk_create_buffer(vk_device& device, size_t size, const std
 
     buf->device = device;
     buf->size = size;
+    buf->exportable = export_fd;  // ggmlR TP: eligible for getMemoryFdKHR()
 
     if (device->buffer_device_address) {
         const vk::BufferDeviceAddressInfo addressInfo(buf->buffer);
@@ -2797,6 +3034,28 @@ static vk_buffer ggml_vk_create_buffer(vk_device& device, size_t size, const std
     }
 
     return buf;
+}
+
+// ggmlR Tensor Parallelism (P2P), not upstream ggml. Export an opaque fd for a
+// buffer allocated with export_fd=true. The returned fd is owned by the caller;
+// it must be passed to ggml_vk_create_buffer(import_fd=...) on the consumer
+// device (which takes ownership) or closed. Returns -1 on failure.
+static int ggml_vk_buffer_export_fd(vk_buffer& buf) {
+    if (!buf || buf->size == 0 || !buf->exportable) {
+        return -1;
+    }
+    if (!buf->device->external_memory_fd) {
+        return -1;
+    }
+    try {
+        vk::MemoryGetFdInfoKHR get_fd_info;
+        get_fd_info.memory     = buf->device_memory;
+        get_fd_info.handleType = vk::ExternalMemoryHandleTypeFlagBits::eOpaqueFd;
+        return buf->device->device.getMemoryFdKHR(get_fd_info);
+    } catch (const vk::SystemError& e) {
+        GGML_LOG_WARN("ggml_vulkan: getMemoryFdKHR failed (%s)\n", e.what());
+        return -1;
+    }
 }
 
 static vk_buffer ggml_vk_create_buffer_check(vk_device& device, size_t size, vk::MemoryPropertyFlags req_flags, vk::MemoryPropertyFlags fallback_flags = vk::MemoryPropertyFlags(0)) {

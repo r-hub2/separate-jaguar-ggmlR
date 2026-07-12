@@ -24,6 +24,19 @@ SEXP R_ggml_vulkan_is_available(void) {
 #endif
 }
 
+// Check if the hard-exit path (_exit() teardown bypass) is compiled in.
+// OFF by default: CRAN Repository Policy forbids a package terminating the R
+// session, so the CRAN tarball must not link _exit(). Self-builds opt in with
+// `--configure-args="--enable-hard-exit"`. ggml_vulkan_shutdown() consults this
+// to warn instead of silently ignoring hard = TRUE.
+SEXP R_ggml_vk_hard_exit_available(void) {
+#if defined(GGML_USE_VULKAN) && defined(GGML_VK_HARD_EXIT)
+    return ScalarLogical(TRUE);
+#else
+    return ScalarLogical(FALSE);
+#endif
+}
+
 // Get number of Vulkan devices
 SEXP R_ggml_vulkan_device_count(void) {
 #ifdef GGML_USE_VULKAN
@@ -84,6 +97,363 @@ SEXP R_ggml_vulkan_device_memory(SEXP device_idx) {
     error("Vulkan support not compiled. Reinstall with --configure-args=\"--with-vulkan\"");
     return R_NilValue;
 #endif
+}
+
+// ggmlR Tensor Parallelism (P2P), not upstream.
+// Enumerate Vulkan device groups (VK_KHR_device_group / LDA) and probe peer
+// memory access between physical devices in each group. Returns a named list:
+//   n_groups : integer, number of device groups reported by the driver
+//   report   : character, human-readable diagnostic (per-group peer features)
+// A group with >1 device and peer Copy/Generic features is the prerequisite for
+// NVLink-routed transfers via a device-group logical device.
+SEXP R_ggml_vulkan_device_groups(void) {
+#ifdef GGML_USE_VULKAN
+    char report[8192];
+    report[0] = '\0';
+    int n_groups = ggml_backend_vk_get_device_groups(report, sizeof(report));
+
+    SEXP result = PROTECT(allocVector(VECSXP, 2));
+    SEXP names  = PROTECT(allocVector(STRSXP, 2));
+    SET_VECTOR_ELT(result, 0, ScalarInteger(n_groups));
+    SET_VECTOR_ELT(result, 1, mkString(report));
+    SET_STRING_ELT(names, 0, mkChar("n_groups"));
+    SET_STRING_ELT(names, 1, mkChar("report"));
+    setAttrib(result, R_NamesSymbol, names);
+    UNPROTECT(2);
+    return result;
+#else
+    error("Vulkan support not compiled. Reinstall with --configure-args=\"--with-vulkan\"");
+    return R_NilValue;
+#endif
+}
+
+// ggmlR Tensor Parallelism (P2P), not upstream.
+// Pure row-split math for the Vulkan split buffer type — no GPU touched.
+// Args: nrows (numeric scalar), weights (numeric vector length n_devices, or
+//       NULL for an even split), n_devices (integer).
+// Returns a named list with numeric vectors row_low, row_high (0-based,
+// half-open [low, high)), each of length n_devices.
+SEXP R_ggml_vk_split_row_ranges(SEXP r_nrows, SEXP r_weights, SEXP r_n_devices) {
+#ifdef GGML_USE_VULKAN
+    int64_t nrows     = (int64_t) asReal(r_nrows);
+    int     n_devices = asInteger(r_n_devices);
+    if (n_devices <= 0) {
+        error("n_devices must be >= 1");
+    }
+    if (n_devices > GGML_VK_MAX_DEVICES) {
+        error("n_devices (%d) exceeds GGML_VK_MAX_DEVICES (%d)", n_devices, GGML_VK_MAX_DEVICES);
+    }
+
+    float * weights = NULL;
+    float   wbuf[GGML_VK_MAX_DEVICES];
+    if (!isNull(r_weights) && LENGTH(r_weights) > 0) {
+        if (LENGTH(r_weights) != n_devices) {
+            error("weights length (%d) must equal n_devices (%d)", LENGTH(r_weights), n_devices);
+        }
+        for (int i = 0; i < n_devices; i++) {
+            wbuf[i] = (float) REAL(r_weights)[i];
+        }
+        weights = wbuf;
+    }
+
+    int64_t low[GGML_VK_MAX_DEVICES], high[GGML_VK_MAX_DEVICES];
+    int rc = ggml_backend_vk_split_row_ranges(nrows, weights, n_devices, low, high);
+    if (rc != 0) {
+        error("ggml_backend_vk_split_row_ranges failed (bad arguments)");
+    }
+
+    SEXP r_low  = PROTECT(allocVector(REALSXP, n_devices));
+    SEXP r_high = PROTECT(allocVector(REALSXP, n_devices));
+    for (int i = 0; i < n_devices; i++) {
+        REAL(r_low)[i]  = (double) low[i];
+        REAL(r_high)[i] = (double) high[i];
+    }
+
+    SEXP result = PROTECT(allocVector(VECSXP, 2));
+    SEXP names  = PROTECT(allocVector(STRSXP, 2));
+    SET_VECTOR_ELT(result, 0, r_low);
+    SET_VECTOR_ELT(result, 1, r_high);
+    SET_STRING_ELT(names, 0, mkChar("row_low"));
+    SET_STRING_ELT(names, 1, mkChar("row_high"));
+    setAttrib(result, R_NamesSymbol, names);
+    UNPROTECT(4);
+    return result;
+#else
+    (void) r_nrows; (void) r_weights; (void) r_n_devices;
+    error("Vulkan support not compiled. Reinstall with --configure-args=\"--with-vulkan\"");
+    return R_NilValue;
+#endif
+}
+
+// ggmlR Tensor Parallelism (P2P), not upstream.
+// Opaque-fd P2P self-test: exports an fd on src_dev, imports it on dst_dev, copies
+// `bytes` and verifies the data; for src_dev != dst_dev also times `iters`
+// device->device copies and measures bandwidth. Returns a named list:
+//   status  : integer, 0 on success (data verified), <0 on failure
+//   gbps    : numeric, measured cross-device bandwidth (0 for loopback/failure)
+//   report  : character, human-readable diagnostic incl. NVLink-vs-PCIe inference
+// A measured rate > ~16 GB/s empirically indicates a faster link (e.g. NVLink)
+// carried the bytes; the physical route is inferred, not queried from Vulkan.
+SEXP R_ggml_vk_p2p_selftest(SEXP r_src_dev, SEXP r_dst_dev, SEXP r_bytes, SEXP r_iters,
+                            SEXP r_transport) {
+#ifdef GGML_USE_VULKAN
+    int    src_dev   = asInteger(r_src_dev);
+    int    dst_dev   = asInteger(r_dst_dev);
+    size_t bytes     = (size_t) asReal(r_bytes);
+    int    iters     = asInteger(r_iters);
+    int    transport = asInteger(r_transport);  // 0=host-staging, 1=opaque-fd, 2=device-group
+
+    char   report[4096];
+    report[0] = '\0';
+    double gbps = 0.0;
+
+    int status = ggml_backend_vk_p2p_selftest(src_dev, dst_dev, bytes, iters, transport,
+                                              &gbps, report, sizeof(report));
+
+    SEXP result = PROTECT(allocVector(VECSXP, 3));
+    SEXP names  = PROTECT(allocVector(STRSXP, 3));
+    SET_VECTOR_ELT(result, 0, ScalarInteger(status));
+    SET_VECTOR_ELT(result, 1, ScalarReal(gbps));
+    SET_VECTOR_ELT(result, 2, mkString(report));
+    SET_STRING_ELT(names, 0, mkChar("status"));
+    SET_STRING_ELT(names, 1, mkChar("gbps"));
+    SET_STRING_ELT(names, 2, mkChar("report"));
+    setAttrib(result, R_NamesSymbol, names);
+    UNPROTECT(2);
+    return result;
+#else
+    (void) r_src_dev; (void) r_dst_dev; (void) r_bytes; (void) r_iters; (void) r_transport;
+    error("Vulkan support not compiled. Reinstall with --configure-args=\"--with-vulkan\"");
+    return R_NilValue;
+#endif
+}
+
+// ggmlR Tensor Parallelism (P2P), not upstream: Stage E3 tensor-parallel mul_mat.
+// Args: w (numeric N*K, column-major w[n*K+k]), x (numeric M*K, x[m*K+k]),
+//   N, K, M (dims), weights (numeric length n_devices or NULL for even split),
+//   n_devices (integer), transport (0=host-staging,1=opaque-fd,2=device-group).
+// Returns a named list:
+//   status : integer, 0 on success, <0 on failure
+//   y      : numeric M*N result (y[m*N+n]), or NULL on failure
+//   report : character diagnostic
+SEXP R_ggml_vk_split_mul_mat(SEXP r_w, SEXP r_x, SEXP r_N, SEXP r_K, SEXP r_M,
+                             SEXP r_weights, SEXP r_n_devices, SEXP r_device_ids,
+                             SEXP r_transport) {
+#ifdef GGML_USE_VULKAN
+    int64_t N = (int64_t) asReal(r_N);
+    int64_t K = (int64_t) asReal(r_K);
+    int64_t M = (int64_t) asReal(r_M);
+    int     n_devices = asInteger(r_n_devices);
+    int     transport = asInteger(r_transport);
+
+    if (N <= 0 || K <= 0 || M <= 0) {
+        error("N, K, M must all be >= 1");
+    }
+    if (n_devices <= 0) {
+        error("n_devices must be >= 1");
+    }
+    if (n_devices > GGML_VK_MAX_DEVICES) {
+        error("n_devices (%d) exceeds GGML_VK_MAX_DEVICES (%d)", n_devices, GGML_VK_MAX_DEVICES);
+    }
+    if ((int64_t) LENGTH(r_w) != N * K) {
+        error("w length (%d) must equal N*K (%lld)", LENGTH(r_w), (long long) (N * K));
+    }
+    if ((int64_t) LENGTH(r_x) != M * K) {
+        error("x length (%d) must equal M*K (%lld)", LENGTH(r_x), (long long) (M * K));
+    }
+
+    float * weights = NULL;
+    float   wbuf[GGML_VK_MAX_DEVICES];
+    if (!isNull(r_weights) && LENGTH(r_weights) > 0) {
+        if (LENGTH(r_weights) != n_devices) {
+            error("weights length (%d) must equal n_devices (%d)", LENGTH(r_weights), n_devices);
+        }
+        for (int i = 0; i < n_devices; i++) {
+            wbuf[i] = (float) REAL(r_weights)[i];
+        }
+        weights = wbuf;
+    }
+
+    int * device_ids = NULL;
+    int   dbuf[GGML_VK_MAX_DEVICES];
+    if (!isNull(r_device_ids) && LENGTH(r_device_ids) > 0) {
+        if (LENGTH(r_device_ids) != n_devices) {
+            error("device_ids length (%d) must equal n_devices (%d)", LENGTH(r_device_ids), n_devices);
+        }
+        for (int i = 0; i < n_devices; i++) {
+            dbuf[i] = INTEGER(r_device_ids)[i];
+        }
+        device_ids = dbuf;
+    }
+
+    // Copy R doubles into flat float buffers for the C API.
+    R_xlen_t wlen = (R_xlen_t) N * K;
+    R_xlen_t xlen = (R_xlen_t) M * K;
+    R_xlen_t ylen = (R_xlen_t) M * N;
+    float * w = (float *) R_alloc(wlen, sizeof(float));
+    float * x = (float *) R_alloc(xlen, sizeof(float));
+    float * y = (float *) R_alloc(ylen, sizeof(float));
+    for (R_xlen_t i = 0; i < wlen; i++) w[i] = (float) REAL(r_w)[i];
+    for (R_xlen_t i = 0; i < xlen; i++) x[i] = (float) REAL(r_x)[i];
+
+    char   report[4096];
+    report[0] = '\0';
+
+    int status = ggml_backend_vk_split_mul_mat(w, x, y, N, K, M, weights, n_devices,
+                                               device_ids, transport, report, sizeof(report));
+
+    SEXP r_y = R_NilValue;
+    if (status == 0) {
+        r_y = PROTECT(allocVector(REALSXP, ylen));
+        for (R_xlen_t i = 0; i < ylen; i++) REAL(r_y)[i] = (double) y[i];
+    } else {
+        PROTECT(r_y);  // protect R_NilValue placeholder to keep UNPROTECT count uniform
+    }
+
+    SEXP result = PROTECT(allocVector(VECSXP, 3));
+    SEXP names  = PROTECT(allocVector(STRSXP, 3));
+    SET_VECTOR_ELT(result, 0, ScalarInteger(status));
+    SET_VECTOR_ELT(result, 1, r_y);
+    SET_VECTOR_ELT(result, 2, mkString(report));
+    SET_STRING_ELT(names, 0, mkChar("status"));
+    SET_STRING_ELT(names, 1, mkChar("y"));
+    SET_STRING_ELT(names, 2, mkChar("report"));
+    setAttrib(result, R_NamesSymbol, names);
+    UNPROTECT(3);
+    return result;
+#else
+    (void) r_w; (void) r_x; (void) r_N; (void) r_K; (void) r_M;
+    (void) r_weights; (void) r_n_devices; (void) r_device_ids; (void) r_transport;
+    error("Vulkan support not compiled. Reinstall with --configure-args=\"--with-vulkan\"");
+    return R_NilValue;
+#endif
+}
+
+// ggmlR Tensor Parallelism (P2P), not upstream: Stage E4 split buffer type.
+// Args: main_device (int), weights (numeric length n_devices or NULL for even),
+//   n_devices (int), transport (int 0/1/2), and probe_N, probe_K (dims of a probe
+//   weight tensor [K cols, N rows] used to report the split alloc size; pass 0 to
+//   skip). Returns a named list:
+//   ptr        : external pointer to the cached ggml_backend_buffer_type_t
+//   name       : character, the buffer type's config-derived name
+//   alloc_size : numeric, sum of padded per-device slice bytes for the probe
+//                tensor (0 if no probe requested)
+SEXP R_ggml_vk_split_buffer_type(SEXP r_main_device, SEXP r_weights, SEXP r_n_devices,
+                                 SEXP r_device_ids, SEXP r_transport,
+                                 SEXP r_probe_N, SEXP r_probe_K) {
+#ifdef GGML_USE_VULKAN
+    int main_device = asInteger(r_main_device);
+    int n_devices   = asInteger(r_n_devices);
+    int transport   = asInteger(r_transport);
+    int64_t probe_N = (int64_t) asReal(r_probe_N);
+    int64_t probe_K = (int64_t) asReal(r_probe_K);
+
+    if (n_devices <= 0) {
+        error("n_devices must be >= 1");
+    }
+    if (n_devices > GGML_VK_MAX_DEVICES) {
+        error("n_devices (%d) exceeds GGML_VK_MAX_DEVICES (%d)", n_devices, GGML_VK_MAX_DEVICES);
+    }
+
+    float * weights = NULL;
+    float   wbuf[GGML_VK_MAX_DEVICES];
+    if (!isNull(r_weights) && LENGTH(r_weights) > 0) {
+        if (LENGTH(r_weights) != n_devices) {
+            error("weights length (%d) must equal n_devices (%d)", LENGTH(r_weights), n_devices);
+        }
+        for (int i = 0; i < n_devices; i++) {
+            wbuf[i] = (float) REAL(r_weights)[i];
+        }
+        weights = wbuf;
+    }
+
+    int * device_ids = NULL;
+    int   dbuf[GGML_VK_MAX_DEVICES];
+    if (!isNull(r_device_ids) && LENGTH(r_device_ids) > 0) {
+        if (LENGTH(r_device_ids) != n_devices) {
+            error("device_ids length (%d) must equal n_devices (%d)", LENGTH(r_device_ids), n_devices);
+        }
+        for (int i = 0; i < n_devices; i++) {
+            dbuf[i] = INTEGER(r_device_ids)[i];
+        }
+        device_ids = dbuf;
+    }
+
+    ggml_backend_buffer_type_t buft =
+        ggml_backend_vk_split_buffer_type(main_device, weights, n_devices, device_ids, transport);
+    if (buft == NULL) {
+        error("ggml_backend_vk_split_buffer_type failed (bad main_device/n_devices?)");
+    }
+
+    double alloc_size = 0.0;
+    if (probe_N > 0 && probe_K > 0) {
+        // Build a throwaway [K, N] f32 tensor (no backend allocation) just to
+        // query the split alloc size (sum of padded per-device slices).
+        struct ggml_init_params ip = { ggml_tensor_overhead() + 64, NULL, /*no_alloc=*/1 };
+        struct ggml_context * gctx = ggml_init(ip);
+        struct ggml_tensor * probe = ggml_new_tensor_2d(gctx, GGML_TYPE_F32, probe_K, probe_N);
+        alloc_size = (double) ggml_backend_buft_get_alloc_size(buft, probe);
+        ggml_free(gctx);
+    }
+
+    // The buffer_type is cached in C (never freed by us): wrap it in an external
+    // pointer with NO finalizer so R GC does not touch the cached object.
+    SEXP ptr = PROTECT(R_MakeExternalPtr((void *) buft, R_NilValue, R_NilValue));
+
+    SEXP result = PROTECT(allocVector(VECSXP, 3));
+    SEXP names  = PROTECT(allocVector(STRSXP, 3));
+    SET_VECTOR_ELT(result, 0, ptr);
+    SET_VECTOR_ELT(result, 1, mkString(ggml_backend_buft_name(buft)));
+    SET_VECTOR_ELT(result, 2, ScalarReal(alloc_size));
+    SET_STRING_ELT(names, 0, mkChar("ptr"));
+    SET_STRING_ELT(names, 1, mkChar("name"));
+    SET_STRING_ELT(names, 2, mkChar("alloc_size"));
+    setAttrib(result, R_NamesSymbol, names);
+    UNPROTECT(3);
+    return result;
+#else
+    (void) r_main_device; (void) r_weights; (void) r_n_devices; (void) r_device_ids;
+    (void) r_transport; (void) r_probe_N; (void) r_probe_K;
+    error("Vulkan support not compiled. Reinstall with --configure-args=\"--with-vulkan\"");
+    return R_NilValue;
+#endif
+}
+
+// ggmlR Tensor Parallelism (P2P), not upstream: Stage E7 pipeline handoff.
+// Copies the activation tensor `src` (stage N output) into `dst` (stage N+1
+// input) across devices via host staging. Both args are ggml_tensor external
+// pointers. Returns integer status (0 = ok, <0 = shape/buffer mismatch).
+SEXP R_ggml_vk_stage_handoff(SEXP r_src, SEXP r_dst) {
+#ifdef GGML_USE_VULKAN
+    struct ggml_tensor * src = (struct ggml_tensor *) R_ExternalPtrAddr(r_src);
+    struct ggml_tensor * dst = (struct ggml_tensor *) R_ExternalPtrAddr(r_dst);
+    if (src == NULL || dst == NULL) {
+        error("stage_handoff: src/dst tensor pointer is NULL");
+    }
+    int rc = ggml_backend_vk_stage_handoff(src, dst);
+    if (rc != 0) {
+        error("ggml_backend_vk_stage_handoff failed (rc=%d): "
+              "src/dst must be Vulkan-backed and have equal size", rc);
+    }
+    return ScalarInteger(rc);
+#else
+    (void) r_src; (void) r_dst;
+    error("Vulkan support not compiled. Reinstall with --configure-args=\"--with-vulkan\"");
+    return R_NilValue;
+#endif
+}
+
+// ggmlR, not upstream: explicit Vulkan teardown (instance + devices) for
+// R's .onUnload, run while the loader/ICD .so files are still mapped. Idempotent
+// and a no-op when Vulkan was never initialized or not compiled in.
+SEXP R_ggml_vk_shutdown(SEXP r_hard, SEXP r_status) {
+#ifdef GGML_USE_VULKAN
+    // hard != 0 => _exit(status) after teardown (never returns); see ggml-vulkan.h.
+    ggml_backend_vk_shutdown(asLogical(r_hard) == TRUE ? 1 : 0, asInteger(r_status));
+#else
+    (void) r_hard; (void) r_status;
+#endif
+    return R_NilValue;
 }
 
 #ifdef GGML_USE_VULKAN
@@ -235,6 +605,7 @@ SEXP R_ggml_vulkan_device_caps(SEXP device_idx) {
 #ifdef GGML_USE_VULKAN
     bool coopmat_support = false, coopmat1_fa_support = false, fp16 = false, subgroup_no_shmem = false;
     bool bf16 = false, integer_dot_product = false, supports_256_push_constants = false;
+    bool subgroup_shuffle = false, subgroup_vote = false;
     uint32_t subgroup_size = 0, subgroup_min_size = 0, subgroup_max_size = 0, wavefronts_per_simd = 0;
     uint32_t coopmat_m = 0, coopmat_n = 0, coopmat_k = 0, max_push_constants_size = 0;
     const char *arch_name = "OTHER";
@@ -243,16 +614,18 @@ SEXP R_ggml_vulkan_device_caps(SEXP device_idx) {
                                      &subgroup_min_size, &subgroup_max_size,
                                      &wavefronts_per_simd, &bf16, &integer_dot_product, &arch_name,
                                      &coopmat_m, &coopmat_n, &coopmat_k,
-                                     &supports_256_push_constants, &max_push_constants_size);
+                                     &supports_256_push_constants, &max_push_constants_size,
+                                     &subgroup_shuffle, &subgroup_vote);
 
     const char *nms[] = {"coopmat_support", "coopmat1_fa_support", "fp16", "bf16",
                          "integer_dot_product",
                          "subgroup_size", "subgroup_min_size", "subgroup_max_size",
                          "subgroup_no_shmem", "wavefronts_per_simd", "arch",
                          "coopmat_m", "coopmat_n", "coopmat_k",
-                         "supports_256_push_constants", "max_push_constants_size"};
-    SEXP result = PROTECT(allocVector(VECSXP, 16));
-    SEXP names  = PROTECT(allocVector(STRSXP, 16));
+                         "supports_256_push_constants", "max_push_constants_size",
+                         "subgroup_shuffle", "subgroup_vote"};
+    SEXP result = PROTECT(allocVector(VECSXP, 18));
+    SEXP names  = PROTECT(allocVector(STRSXP, 18));
     SET_VECTOR_ELT(result, 0,  ScalarLogical(coopmat_support));
     SET_VECTOR_ELT(result, 1,  ScalarLogical(coopmat1_fa_support));
     SET_VECTOR_ELT(result, 2,  ScalarLogical(fp16));
@@ -269,7 +642,9 @@ SEXP R_ggml_vulkan_device_caps(SEXP device_idx) {
     SET_VECTOR_ELT(result, 13, ScalarInteger((int)coopmat_k));
     SET_VECTOR_ELT(result, 14, ScalarLogical(supports_256_push_constants));
     SET_VECTOR_ELT(result, 15, ScalarInteger((int)max_push_constants_size));
-    for (int i = 0; i < 16; i++) SET_STRING_ELT(names, i, mkChar(nms[i]));
+    SET_VECTOR_ELT(result, 16, ScalarLogical(subgroup_shuffle));
+    SET_VECTOR_ELT(result, 17, ScalarLogical(subgroup_vote));
+    for (int i = 0; i < 18; i++) SET_STRING_ELT(names, i, mkChar(nms[i]));
     setAttrib(result, R_NamesSymbol, names);
     UNPROTECT(2);
     return result;
@@ -343,6 +718,54 @@ SEXP R_ggml_umap_sgd(SEXP backend_ptr, SEXP coords, SEXP edges, SEXP weights,
 #endif
 }
 
+// Sparse LogNormalize over a dgCMatrix's stored non-zeros. vals = @x (nnz
+// doubles), factor = scale_factor/colSum per column (n_cols doubles), col_of_nnz
+// = 0-based column of each stored value (nnz ints, precomputed from @p). Returns
+// the transformed values (nnz doubles), ready to drop back into @x.
+SEXP R_ggml_sparse_lognorm(SEXP backend_ptr, SEXP vals_, SEXP factor_,
+                           SEXP col_of_nnz_, SEXP nnz_, SEXP n_cols_) {
+#ifdef GGML_USE_VULKAN
+    ggml_backend_t backend = (ggml_backend_t)R_ExternalPtrAddr(backend_ptr);
+    if (backend == NULL || !ggml_backend_is_vk(backend)) {
+        error("R_ggml_sparse_lognorm: backend is not a valid Vulkan backend");
+    }
+
+    unsigned int nnz    = (unsigned int)asInteger(nnz_);
+    unsigned int n_cols = (unsigned int)asInteger(n_cols_);
+
+    if ((R_xlen_t)XLENGTH(vals_) != (R_xlen_t)nnz)
+        error("R_ggml_sparse_lognorm: vals length != nnz");
+    if ((R_xlen_t)XLENGTH(factor_) != (R_xlen_t)n_cols)
+        error("R_ggml_sparse_lognorm: factor length != n_cols");
+    if ((R_xlen_t)XLENGTH(col_of_nnz_) != (R_xlen_t)nnz)
+        error("R_ggml_sparse_lognorm: col_of_nnz length != nnz");
+
+    // R doubles/ints -> float/uint32 working buffers
+    float *v = (float*)R_alloc((size_t)nnz, sizeof(float));
+    float *f = (float*)R_alloc((size_t)n_cols, sizeof(float));
+    unsigned int *col = (unsigned int*)R_alloc((size_t)nnz, sizeof(unsigned int));
+
+    double *vd = REAL(vals_);
+    for (R_xlen_t i = 0; i < (R_xlen_t)nnz; i++) v[i] = (float)vd[i];
+    double *fd = REAL(factor_);
+    for (R_xlen_t i = 0; i < (R_xlen_t)n_cols; i++) f[i] = (float)fd[i];
+    int *ci = INTEGER(col_of_nnz_);
+    for (R_xlen_t i = 0; i < (R_xlen_t)nnz; i++) col[i] = (unsigned int)ci[i];
+
+    bool ok = ggml_vk_sparse_lognorm_run(backend, v, f, col, nnz, n_cols);
+    if (!ok) error("R_ggml_sparse_lognorm: GPU dispatch failed");
+
+    SEXP out = PROTECT(allocVector(REALSXP, (R_xlen_t)nnz));
+    double *od = REAL(out);
+    for (R_xlen_t i = 0; i < (R_xlen_t)nnz; i++) od[i] = (double)v[i];
+    UNPROTECT(1);
+    return out;
+#else
+    error("Vulkan support not compiled");
+    return R_NilValue;
+#endif
+}
+
 // ============================================================================
 // Pairwise squared-distance matrix (direct Vulkan dispatch, f32-accurate)
 // ============================================================================
@@ -389,6 +812,118 @@ SEXP R_ggml_dist_f32(SEXP backend_ptr, SEXP x_, SEXP n_, SEXP dims_) {
         float v = d2[i];
         od[i] = (v > 0.0f) ? sqrt((double)v) : 0.0;
     }
+    UNPROTECT(1);
+    return out;
+#else
+    error("Vulkan support not compiled");
+    return R_NilValue;
+#endif
+}
+
+// Tiled fused k-NN: for each of n rows of X (dims each, passed row-major), the k
+// nearest other rows, computed on the GPU without materialising the n x n
+// distance matrix (knn_tiled.comp). Returns a list(idx, dist): idx is an n*k
+// integer matrix of 1-based neighbour rows, dist an n*k double matrix of
+// Euclidean distances, both sorted ascending per row. Unfilled slots (rows with
+// fewer than k other points) get idx = NA, dist = NA. k must be <= 32.
+SEXP R_ggml_knn_f32(SEXP backend_ptr, SEXP x_, SEXP n_, SEXP dims_, SEXP k_) {
+#ifdef GGML_USE_VULKAN
+    ggml_backend_t backend = (ggml_backend_t)R_ExternalPtrAddr(backend_ptr);
+    if (backend == NULL || !ggml_backend_is_vk(backend)) {
+        error("R_ggml_knn_f32: backend is not a valid Vulkan backend");
+    }
+
+    unsigned int n    = (unsigned int)asInteger(n_);
+    unsigned int dims = (unsigned int)asInteger(dims_);
+    unsigned int k    = (unsigned int)asInteger(k_);
+
+    if ((R_xlen_t)XLENGTH(x_) != (R_xlen_t)n * dims)
+        error("R_ggml_knn_f32: x length != n*dims");
+    if (k == 0u || k > 32u)
+        error("R_ggml_knn_f32: k must be in 1..32 (pipeline top-k capacity)");
+
+    // R doubles -> float input; uint/float outputs from the kernel.
+    float        *x   = (float*)       R_alloc((size_t)n * dims, sizeof(float));
+    unsigned int *idx = (unsigned int*)R_alloc((size_t)n * k,    sizeof(unsigned int));
+    float        *dst = (float*)       R_alloc((size_t)n * k,    sizeof(float));
+
+    double *xd = REAL(x_);
+    for (R_xlen_t i = 0; i < (R_xlen_t)n * dims; i++) x[i] = (float)xd[i];
+
+    bool ok = ggml_vk_knn_tiled_run(backend, x, idx, dst, n, dims, k);
+    if (!ok) error("R_ggml_knn_f32: GPU dispatch failed");
+
+    // The kernel writes row-major [i*k + r]; R matrices are column-major, so fill
+    // an n x k matrix transposing on the fly: out[i + r*n] = kernel[i*k + r]. idx
+    // is 0-based from the shader -> 1-based here; the sentinel 0xffffffff (an
+    // unfilled slot) becomes NA in both idx and dist.
+    SEXP r_idx  = PROTECT(allocMatrix(INTSXP,  n, k));
+    SEXP r_dist = PROTECT(allocMatrix(REALSXP, n, k));
+    int    *ip = INTEGER(r_idx);
+    double *dp = REAL(r_dist);
+    for (unsigned int i = 0; i < n; i++) {
+        for (unsigned int r = 0; r < k; r++) {
+            unsigned int raw = idx[(size_t)i * k + r];
+            R_xlen_t     out = (R_xlen_t)i + (R_xlen_t)r * n;   // column-major slot
+            if (raw == 0xffffffffu) {
+                ip[out] = NA_INTEGER;
+                dp[out] = NA_REAL;
+            } else {
+                ip[out] = (int)raw + 1;                        // 0-based -> 1-based
+                dp[out] = (double)dst[(size_t)i * k + r];
+            }
+        }
+    }
+
+    SEXP res = PROTECT(allocVector(VECSXP, 2));
+    SET_VECTOR_ELT(res, 0, r_idx);
+    SET_VECTOR_ELT(res, 1, r_dist);
+    SEXP nms = PROTECT(allocVector(STRSXP, 2));
+    SET_STRING_ELT(nms, 0, mkChar("idx"));
+    SET_STRING_ELT(nms, 1, mkChar("dist"));
+    setAttrib(res, R_NamesSymbol, nms);
+
+    UNPROTECT(4);
+    return res;
+#else
+    error("Vulkan support not compiled");
+    return R_NilValue;
+#endif
+}
+
+// FP64 matmul (PoC): C = A %*% B in double on the GPU. a_ and b_ are passed
+// row-major (t(A) and t(B) from R, whose matrices are column-major), matching
+// the shader's row-major layout; the M*N result is returned row-major as a flat
+// double vector for the R side to shape. M, N, K are the usual GEMM dims.
+SEXP R_ggml_matmul_f64(SEXP backend_ptr, SEXP a_, SEXP b_,
+                       SEXP M_, SEXP N_, SEXP K_) {
+#ifdef GGML_USE_VULKAN
+    ggml_backend_t backend = (ggml_backend_t)R_ExternalPtrAddr(backend_ptr);
+    if (backend == NULL || !ggml_backend_is_vk(backend)) {
+        error("R_ggml_matmul_f64: backend is not a valid Vulkan backend");
+    }
+
+    unsigned int M = (unsigned int)asInteger(M_);
+    unsigned int N = (unsigned int)asInteger(N_);
+    unsigned int K = (unsigned int)asInteger(K_);
+
+    if ((R_xlen_t)XLENGTH(a_) != (R_xlen_t)M * K)
+        error("R_ggml_matmul_f64: a length != M*K");
+    if ((R_xlen_t)XLENGTH(b_) != (R_xlen_t)K * N)
+        error("R_ggml_matmul_f64: b length != K*N");
+
+    // double throughout — no float conversion (the point of the fp64 path).
+    const double *a = REAL(a_);
+    const double *b = REAL(b_);
+    SEXP out = PROTECT(allocVector(REALSXP, (R_xlen_t)M * N));
+    double *c = REAL(out);
+
+    bool ok = ggml_vk_matmul_f64_run(backend, a, b, c, M, N, K);
+    if (!ok) {
+        UNPROTECT(1);
+        error("R_ggml_matmul_f64: GPU dispatch failed (no fp64 support?)");
+    }
+
     UNPROTECT(1);
     return out;
 #else
