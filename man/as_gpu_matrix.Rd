@@ -27,5 +27,5 @@ built-in. Only one operand needs wrapping. \code{crossprod()} and
 \examples{
 A <- matrix(rnorm(9), 3)
 B <- matrix(rnorm(9), 3)
-as_gpu_matrix(A, device = "cpu") \\%*\\% B
+as_gpu_matrix(A, device = "cpu") \%*\% B
 }

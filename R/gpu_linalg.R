@@ -277,7 +277,15 @@ ggml_tcrossprod <- function(A, B = NULL, device = "auto", prec = "f32") {
 #' @slot data The underlying numeric matrix.
 #' @slot device Dispatch preference: \code{"auto"}, \code{"gpu"} or \code{"cpu"}.
 #' @slot prec Precision of the GPU path: \code{"f32"} or \code{"f16"}.
-#' @export
+#' @param x,y Operands; at least one is a \code{ggml_matrix} (the other is
+#'   coerced with \code{as.matrix}). For \code{crossprod}/\code{tcrossprod},
+#'   \code{y} may be missing.
+#' @param object A \code{ggml_matrix} (for the \code{show} method).
+#' @return \code{\%*\%}, \code{crossprod} and \code{tcrossprod} return a plain
+#'   numeric matrix (the GPU result); \code{dim} an integer vector.
+#' @name ggml_matrix-class
+#' @rdname ggml_matrix-class
+#' @exportClass ggml_matrix
 methods::setClass("ggml_matrix",
   representation(data = "matrix", device = "character", prec = "character"))
 
@@ -297,7 +305,7 @@ methods::setClass("ggml_matrix",
 #' @examples
 #' A <- matrix(rnorm(9), 3)
 #' B <- matrix(rnorm(9), 3)
-#' as_gpu_matrix(A, device = "cpu") \%*\% B
+#' as_gpu_matrix(A, device = "cpu") %*% B
 #' @export
 as_gpu_matrix <- function(x, device = "auto", prec = "f32") {
   x <- .ggmlr_as_dmat(x)
@@ -308,6 +316,7 @@ as_gpu_matrix <- function(x, device = "auto", prec = "f32") {
 
 #' Extract the underlying matrix from a ggml_matrix
 #' @param x A \code{\linkS4class{ggml_matrix}}.
+#' @param ... Ignored; present for S3 \code{as.matrix} compatibility.
 #' @return The plain numeric matrix.
 #' @export
 as.matrix.ggml_matrix <- function(x, ...) x@data
@@ -318,39 +327,58 @@ as.matrix.ggml_matrix <- function(x, ...) x@data
   list(device = gm@device, prec = gm@prec)
 }
 
+#' @rdname ggml_matrix-class
 #' @export
 methods::setMethod("%*%", signature("ggml_matrix", "ANY"), function(x, y) {
   o <- .ggmlr_mm_opts(x, y)
   ggml_matmul(x@data, .ggmlr_as_dmat(y), device = o$device, prec = o$prec)
 })
 
+#' @rdname ggml_matrix-class
 #' @export
 methods::setMethod("%*%", signature("ANY", "ggml_matrix"), function(x, y) {
   o <- .ggmlr_mm_opts(x, y)
   ggml_matmul(.ggmlr_as_dmat(x), y@data, device = o$device, prec = o$prec)
 })
 
+#' @rdname ggml_matrix-class
 #' @export
 methods::setMethod("%*%", signature("ggml_matrix", "ggml_matrix"), function(x, y) {
   o <- .ggmlr_mm_opts(x, y)
   ggml_matmul(x@data, y@data, device = o$device, prec = o$prec)
 })
 
+# `crossprod`/`tcrossprod` are plain functions in base R until R 4.4.0 (only
+# `%*%` was an implicit generic before that). Calling setMethod() on a plain
+# function makes methods promote it to a generic and print an informational
+# "Creating a new generic function ..." message at install time. Doing the
+# setGeneric() explicitly ourselves is that same promotion, minus the message,
+# and works identically on R 4.3/4.4/4.5: setGeneric() on an existing function
+# captures base::crossprod as the default method, so every non-ggml_matrix call
+# still runs the original base implementation. See ?setGeneric and ?groupGeneric.
+#' @importFrom methods setGeneric
+methods::setGeneric("crossprod")
+methods::setGeneric("tcrossprod")
+
+#' @rdname ggml_matrix-class
 #' @export
-methods::setMethod("crossprod", signature("ggml_matrix", "ANY"), function(x, y) {
+methods::setMethod("crossprod", signature("ggml_matrix"), function(x, y) {
   b <- if (missing(y) || is.null(y)) NULL else .ggmlr_as_dmat(y)
   ggml_crossprod(x@data, b, device = x@device, prec = x@prec)
 })
 
+#' @rdname ggml_matrix-class
 #' @export
-methods::setMethod("tcrossprod", signature("ggml_matrix", "ANY"), function(x, y) {
+methods::setMethod("tcrossprod", signature("ggml_matrix"), function(x, y) {
   b <- if (missing(y) || is.null(y)) NULL else .ggmlr_as_dmat(y)
   ggml_tcrossprod(x@data, b, device = x@device, prec = x@prec)
 })
 
+#' @rdname ggml_matrix-class
 #' @export
 methods::setMethod("dim", "ggml_matrix", function(x) dim(x@data))
 
+#' @rdname ggml_matrix-class
 #' @export
 methods::setMethod("show", "ggml_matrix", function(object) {
   d <- dim(object@data)

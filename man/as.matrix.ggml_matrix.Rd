@@ -8,6 +8,8 @@
 }
 \arguments{
 \item{x}{A \code{\linkS4class{ggml_matrix}}.}
+
+\item{...}{Ignored; present for S3 \code{as.matrix} compatibility.}
 }
 \value{
 The plain numeric matrix.

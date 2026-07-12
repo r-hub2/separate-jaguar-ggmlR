@@ -757,8 +757,30 @@ reference. Indicative numbers at 2000 cells:
 | `umap` pipeline | kd-tree kNN + sparse fuzzy graph + GPU SGD | ~13× (≈1.45 s → 0.11 s) |
 | `umap` SGD shader alone | one GPU dispatch per epoch | ~10⁹ edge-updates/s |
 
-(Numbers are hardware-dependent; reproduce the pipeline A/B with
-`inst/examples/seurat_op2_gpu.R` and the UMAP shaders with
+The whole pipeline A/B is reproducible with `inst/examples/seurat_op2_gpu.R`,
+which runs the classic Seurat route twice — stock CPU vs `RunGGML()` on the GPU —
+on the Kaggle *Open Problems – Single-Cell Perturbations* counts (18 211 genes ×
+240 090 PBMCs), then checks the two arms agree. A representative run (11 %
+subsample = 23 279 cells, 2000 HVGs, 50 PCs, `--gpu-knn`, AMD RADV):
+
+| step | cpu (s) | gpu (s) | speedup |
+|------|--------:|--------:|--------:|
+| `largest_gene` | 8.92 | 0.28 | 32.2× |
+| `normalize` | 2.84 | 1.61 | 1.8× |
+| `scale` | 1.84 | 1.94 | 0.9× |
+| `embed` (PCA) | 15.92 | 3.03 | 5.3× |
+| `neighbors` | 4.43 | 1.45 | 3.1× |
+| `umap` | 15.32 | 5.34 | 2.9× |
+| **TOTAL (GPU ops)** | **49.27** | **13.66** | **3.6×** |
+
+Every accelerated step matches Seurat to float noise (normalize/scale max abs err
+~1e-6, PCA `|cor|` = 1.0000 over PC1–10, clusters ARI 0.94, `largest_gene`
+top-gene agreement 1.0000). `scale` comes out ~1× — it is memory-bound with
+nothing to accelerate, so it defaults to the CPU even under Vulkan; PCA's
+covariance multiply is the biggest matrix-multiply win. See the
+`single-cell-seurat` vignette for the full breakdown.
+
+(Numbers are hardware-dependent; reproduce the UMAP shaders separately with
 `inst/examples/umap_shaders_bench.R`.)
 
 ```r

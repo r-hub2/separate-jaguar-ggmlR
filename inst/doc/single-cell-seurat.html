@@ -565,6 +565,92 @@ provenance go into <code>metadata()</code>.</p>
 objects:</p>
 <div class="sourceCode" id="cb13"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb13-1"><a href="#cb13-1" tabindex="-1"></a>BiocManager<span class="sc">::</span><span class="fu">install</span>(<span class="fu">c</span>(<span class="st">&quot;SingleCellExperiment&quot;</span>, <span class="st">&quot;SummarizedExperiment&quot;</span>, <span class="st">&quot;S4Vectors&quot;</span>))</span></code></pre></div>
 </div>
+<div id="a-real-dataset-end-to-end" class="section level2">
+<h2>A real dataset, end to end</h2>
+<p>The worked example above is synthetic so the vignette stays
+self-contained. A full CPU-vs-GPU run on real data ships as an example
+script:</p>
+<div class="sourceCode" id="cb14"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb14-1"><a href="#cb14-1" tabindex="-1"></a><span class="fu">system.file</span>(<span class="st">&quot;examples&quot;</span>, <span class="st">&quot;seurat_op2_gpu.R&quot;</span>, <span class="at">package =</span> <span class="st">&quot;ggmlR&quot;</span>)</span></code></pre></div>
+<p>It runs the classic Seurat preprocessing route
+(<code>percent.Largest.Gene → NormalizeData → FindVariableFeatures → ScaleData → RunPCA → FindNeighbors → FindClusters → RunUMAP</code>)
+twice — once as stock Seurat on the CPU, once through
+<code>RunGGML()</code> on the GPU — then checks that the two arms agree
+numerically and prints a per-step speed-up table. The data are the
+Kaggle <em>Open Problems – Single-Cell Perturbations</em> (OP2) counts:
+18 211 genes × 240 090 human PBMCs. The full matrix densifies to ~35 GB,
+so — as in the reference notebook — the pipeline runs on a random
+subsample of the cells.</p>
+<div class="sourceCode" id="cb15"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb15-1"><a href="#cb15-1" tabindex="-1"></a><span class="co"># needs Suggests: Seurat, SeuratObject, Matrix, qs2, data.table, FNN, uwot</span></span>
+<span id="cb15-2"><a href="#cb15-2" tabindex="-1"></a><span class="ex">Rscript</span> seurat_op2_gpu.R                 <span class="co"># default 10% subsample</span></span>
+<span id="cb15-3"><a href="#cb15-3" tabindex="-1"></a><span class="ex">Rscript</span> seurat_op2_gpu.R <span class="at">--frac</span> 0.05     <span class="co"># smaller subsample</span></span>
+<span id="cb15-4"><a href="#cb15-4" tabindex="-1"></a><span class="ex">Rscript</span> seurat_op2_gpu.R <span class="at">--gpu-knn</span>       <span class="co"># op=&quot;neighbors&quot; kNN on the GPU</span></span>
+<span id="cb15-5"><a href="#cb15-5" tabindex="-1"></a><span class="ex">Rscript</span> seurat_op2_gpu.R <span class="at">--chunk</span> 20000   <span class="co"># stream scale/PCA in blocks</span></span>
+<span id="cb15-6"><a href="#cb15-6" tabindex="-1"></a><span class="ex">Rscript</span> seurat_op2_gpu.R <span class="at">--no-cpu</span>        <span class="co"># GPU arm only (skip the CPU timings)</span></span></code></pre></div>
+<p>Every GPU step is one of the five ops from the table above; the two
+steps with no GPU op (<code>FindVariableFeatures</code>,
+<code>FindClusters</code>) run identically in both arms.
+<code>percent.Largest.Gene</code> maps to
+<code>op = &quot;largest_gene&quot;</code>, a memory-bound sparse column argmax
+kept on the CPU (over the <code>dgCMatrix</code> <code>@x</code>, no
+densify) — the point there is parity with
+<code>qlcMatrix::colMax</code>, not a GPU speed-up.</p>
+<div id="speed-up" class="section level3">
+<h3>Speed-up</h3>
+<p>A representative run — 11 % subsample (23 279 cells), 2 000 variable
+features, 50 PCs, <code>--gpu-knn</code> — on an RDNA-class GPU:</p>
+<pre><code>step              cpu (s)    gpu (s)   speedup
+largest_gene         8.92       0.28    32.22x
+normalize            2.84       1.61     1.76x
+scale                1.84       1.94     0.95x
+embed (PCA)         15.92       3.03     5.26x
+neighbors            4.43       1.45     3.05x
+umap                15.32       5.34     2.87x
+TOTAL (gpu ops)     49.27      13.66     3.61x</code></pre>
+<p>The pattern is worth reading rather than just the bottom line:</p>
+<ul>
+<li><strong>PCA</strong> is the biggest matrix-multiply win (5.3×) — the
+covariance multiply is exactly what the GPU is for. Its own breakdown
+shows where the time goes:
+<code>centre 0.47s  matmul_cov 1.27s  eigen 0.06s  matmul_proj 0.98s</code>
+— the eigensolve (CPU) is negligible, so keeping it off the GPU costs
+nothing.</li>
+<li><strong><code>scale</code></strong> comes out ~1× (or slightly
+slower): it is a memory-bound elementwise pass with nothing to
+accelerate, so the host↔︎VRAM copy eats the gain. That is why
+<code>op = &quot;scale&quot;</code> defaults to the CPU even under Vulkan
+(<code>scale_backend = &quot;vulkan&quot;</code> forces the GPU path).</li>
+<li><strong><code>umap</code></strong> here runs its kNN on the FNN
+kd-tree and its SGD layout on the CPU by default — the 2.9× comes from
+the GPU distance/graph phase. The SGD default is deliberate (see the
+UMAP section); <code>sgd_backend = &quot;vulkan&quot;</code> opts into the GPU
+shader.</li>
+<li><strong><code>largest_gene</code></strong> looks like a 32× GPU win
+but is CPU on both sides — the speed-up is the sparse <code>@x</code>
+argmax replacing stock Seurat’s <code>qlcMatrix</code> path, not the
+GPU.</li>
+</ul>
+</div>
+<div id="agreement" class="section level3">
+<h3>Agreement</h3>
+<p>The script densifies a fixed random column sample and compares the
+two arms. Every accelerated step matches Seurat to float32-vs-float64
+noise, and the downstream clustering/embedding preserve the same
+structure:</p>
+<pre><code>normalize   max abs err  9.26e-07   (2000 features x 5000 sampled cells)
+largest_gene top-gene agree  1.0000   percent max abs err  0.00e+00
+scale       max abs err  2.38e-06
+PCA         min |cor| over PC1-10  1.0000
+clusters    ARI  0.9364   (11 GPU vs 11 CPU communities)
+UMAP        within/total SS  gpu 0.048  cpu 0.060  (lower = tighter)</code></pre>
+<p>The comparisons account for the maths, not just the bytes: PCs are
+eigenvectors so their sign is arbitrary (compare <code>|cor|</code>),
+clusterings are label-permuted (the adjusted Rand index is invariant),
+and UMAP is stochastic and initialised differently in each arm (so
+instead of coordinates, measure how tightly each clustering separates in
+the embedding — the GPU layout is actually a hair tighter here,
+<code>0.048</code> vs <code>0.060</code>).</p>
+</div>
+</div>
 <div id="what-is-and-isnt-accelerated" class="section level2">
 <h2>What is and isn’t accelerated</h2>
 <p>Five steps of a standard workflow move to the GPU; only the final

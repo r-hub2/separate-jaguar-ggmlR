@@ -3,7 +3,40 @@
 \docType{class}
 \name{ggml_matrix-class}
 \alias{ggml_matrix-class}
+\alias{\%*\%,ggml_matrix,ANY-method}
+\alias{\%*\%,ANY,ggml_matrix-method}
+\alias{\%*\%,ggml_matrix,ggml_matrix-method}
+\alias{crossprod,ggml_matrix-method}
+\alias{tcrossprod,ggml_matrix-method}
+\alias{dim,ggml_matrix-method}
+\alias{show,ggml_matrix-method}
 \title{A GPU-backed matrix wrapper}
+\usage{
+\S4method{\%*\%}{ggml_matrix,ANY}(x, y)
+
+\S4method{\%*\%}{ANY,ggml_matrix}(x, y)
+
+\S4method{\%*\%}{ggml_matrix,ggml_matrix}(x, y)
+
+\S4method{crossprod}{ggml_matrix}(x, y)
+
+\S4method{tcrossprod}{ggml_matrix}(x, y)
+
+\S4method{dim}{ggml_matrix}(x)
+
+\S4method{show}{ggml_matrix}(object)
+}
+\arguments{
+\item{x, y}{Operands; at least one is a \code{ggml_matrix} (the other is
+coerced with \code{as.matrix}). For \code{crossprod}/\code{tcrossprod},
+\code{y} may be missing.}
+
+\item{object}{A \code{ggml_matrix} (for the \code{show} method).}
+}
+\value{
+\code{\%*\%}, \code{crossprod} and \code{tcrossprod} return a plain
+  numeric matrix (the GPU result); \code{dim} an integer vector.
+}
 \description{
 An S4 class holding an ordinary numeric matrix, tagged so that \code{\%*\%},
 \code{crossprod()} and \code{tcrossprod()} run on the GPU (see
