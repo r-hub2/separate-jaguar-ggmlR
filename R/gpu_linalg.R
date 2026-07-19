@@ -367,7 +367,15 @@ methods::setMethod("%*%", signature("ggml_matrix", "ggml_matrix"), function(x, y
 methods::setGeneric("crossprod")
 methods::setGeneric("tcrossprod")
 
+# The alias below is spelled out because these two generics are promoted by our
+# own setGeneric() above (base's crossprod/tcrossprod are plain functions before
+# R 4.4.0), unlike `%*%` which base already exports as an implicit generic. For
+# a promoted generic R CMD check looks up the method under the signature as
+# *written* ("ggml_matrix"), while roxygen emits the completed one
+# ("ggml_matrix,ANY") -- so without this the check reports the method as
+# undocumented even though the topic itself is documented.
 #' @rdname ggml_matrix-class
+#' @aliases crossprod,ggml_matrix-method
 #' @export
 methods::setMethod("crossprod", signature("ggml_matrix"), function(x, y) {
   b <- if (missing(y) || is.null(y)) NULL else .ggmlr_as_dmat(y)
@@ -375,6 +383,7 @@ methods::setMethod("crossprod", signature("ggml_matrix"), function(x, y) {
 })
 
 #' @rdname ggml_matrix-class
+#' @aliases tcrossprod,ggml_matrix-method
 #' @export
 methods::setMethod("tcrossprod", signature("ggml_matrix"), function(x, y) {
   b <- if (missing(y) || is.null(y)) NULL else .ggmlr_as_dmat(y)
