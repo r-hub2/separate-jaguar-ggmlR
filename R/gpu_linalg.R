@@ -48,6 +48,11 @@
 # transposes. prec = "f32" forces the f32 accumulation kernel (default); "f16"
 # leaves the faster, lower-precision default kernel. Returns an R matrix.
 .ggmlr_gpu_mul_mat <- function(src0, src1, out_shape, prec = "f32") {
+  # Restore the caller's device: ag_device() is process-global state, so leaking
+  # "gpu" here silently reroutes every later ag_* op (and its dtype) for the
+  # rest of the session.
+  orig_device <- ag_default_device()
+  on.exit(tryCatch(ag_device(orig_device), error = function(e) NULL), add = TRUE)
   ag_device("gpu")
   hook <- if (identical(prec, "f32"))
     function(node) .Call("R_ggml_mul_mat_set_prec", node, GGML_PREC_F32,
@@ -68,6 +73,8 @@
 # (no live Vulkan backend, or the device lacks the shaderFloat64 feature so the
 # pipeline was never created and the dispatch returns failure).
 .ggmlr_gpu_matmul_f64 <- function(A, B) {
+  orig_device <- ag_default_device()
+  on.exit(tryCatch(ag_device(orig_device), error = function(e) NULL), add = TRUE)
   ok <- tryCatch({ ag_device("gpu"); TRUE }, error = function(e) FALSE)
   if (!ok) return(NULL)
   backend <- .ag_device_state$backend
