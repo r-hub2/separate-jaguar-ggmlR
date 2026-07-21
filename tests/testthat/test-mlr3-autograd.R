@@ -49,8 +49,13 @@ ag_regr_builder <- function(task, n_features, n_out, pars) {
 
 test_that("LearnerClassifGGML trains an ag_sequential via autograd tradepath", {
   skip_if_no_mlr3()
-  # 40 epochs keep the accuracy assertion comfortably off the convergence edge
-  # (the device is pinned to CPU at the top of the file for determinism).
+  # The accuracy assertion below depends on the weight init, which draws from
+  # the base-R RNG: a plain set.seed() here is not enough, because any test that
+  # ran earlier in the session shifts how many draws happened before this point
+  # and a different start may not converge in 40 epochs (iris then collapses
+  # versicolor/virginica into one class and accuracy lands near 0.55). The
+  # learner's `seed` hyperparameter re-seeds inside .train(), right before the
+  # weights are initialised, so the run is reproducible regardless of history.
   set.seed(1)
   task <- mlr3::tsk("iris")
 
@@ -58,6 +63,7 @@ test_that("LearnerClassifGGML trains an ag_sequential via autograd tradepath", {
   learner$param_set$values$epochs        <- 40L
   learner$param_set$values$batch_size    <- 16L
   learner$param_set$values$learning_rate <- 0.05
+  learner$param_set$values$seed          <- 1L
   learner$model_fn     <- ag_classif_builder
   learner$predict_type <- "prob"
 
@@ -130,6 +136,8 @@ test_that("max_grad_norm clipping does not break training", {
   learner$param_set$values$batch_size    <- 16L
   learner$param_set$values$learning_rate <- 0.05
   learner$param_set$values$max_grad_norm <- 1.0
+  # see the note on `seed` in the first classif test above
+  learner$param_set$values$seed          <- 1L
   learner$model_fn <- ag_classif_builder
 
   learner$train(task)
