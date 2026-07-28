@@ -1744,6 +1744,34 @@ ggml_scale <- function(ctx, a, s) {
   .Call("R_ggml_scale", ctx, a, as.numeric(s), PACKAGE = "ggmlR")
 }
 
+#' Scale and Shift by Constants (Graph)
+#'
+#' Creates a graph node computing \code{s * a + b} for scalar \code{s} and
+#' \code{b}. Unlike \code{ggml_add1()} with \code{ggml_new_f32()}, this adds a
+#' constant without materialising a data-carrying tensor, so it is usable while
+#' building a graph in a \code{no_alloc} context.
+#'
+#' @param ctx GGML context
+#' @param a Input tensor
+#' @param s Scale factor (numeric scalar)
+#' @param b Bias added after scaling (numeric scalar)
+#' @return Tensor representing \code{s * a + b}
+#' @examples
+#' \donttest{
+#' ctx <- ggml_init(16 * 1024 * 1024)
+#' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 4)
+#' ggml_set_f32(a, c(1, 2, 3, 4))
+#' result <- ggml_scale_bias(ctx, a, 2.0, 1.0)
+#' graph <- ggml_build_forward_expand(ctx, result)
+#' ggml_graph_compute(ctx, graph)
+#' output <- ggml_get_f32(result)  # [3, 5, 7, 9]
+#' ggml_free(ctx)
+#' }
+#' @export
+ggml_scale_bias <- function(ctx, a, s, b) {
+  .Call("R_ggml_scale_bias", ctx, a, as.numeric(s), as.numeric(b), PACKAGE = "ggmlR")
+}
+
 #' Clamp (Graph)
 #'
 #' Creates a graph node for clamping values to a range: clamp(x, min, max)
@@ -2552,6 +2580,54 @@ ggml_view_4d <- function(ctx, a, ne0, ne1, ne2, ne3, nb1, nb2, nb3, offset = 0) 
 #' }
 ggml_cpy <- function(ctx, a, b) {
   .Call("R_ggml_cpy", ctx, a, b, PACKAGE = "ggmlR")
+}
+
+#' Cast a Tensor to Another Type
+#'
+#' Returns a tensor with the same shape as \code{a} but of the given type.
+#' Unlike \code{\link{ggml_cpy}} there is no need to allocate the destination
+#' tensor first. Some ggml operations require a specific type -- for example
+#' \code{\link{ggml_conv_1d}} builds its im2col in F16 and so needs an F16
+#' kernel -- and this is the direct way to supply one.
+#'
+#' @param ctx GGML context
+#' @param a Source tensor
+#' @param type Target type constant (e.g. \code{GGML_TYPE_F16})
+#' @return Tensor of the requested type with \code{a}'s shape
+#' @export
+#' @seealso \code{\link{ggml_cast_numeric}}, \code{\link{ggml_cpy}}
+#' @examples
+#' \donttest{
+#' ctx <- ggml_init(16 * 1024 * 1024)
+#' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 100)
+#' a16 <- ggml_cast(ctx, a, GGML_TYPE_F16)
+#' ggml_free(ctx)
+#' }
+ggml_cast <- function(ctx, a, type) {
+  .Call("R_ggml_cast", ctx, a, as.integer(type), PACKAGE = "ggmlR")
+}
+
+#' Numeric Type Conversion
+#'
+#' Converts values numerically (truncating or rounding) rather than
+#' reinterpreting the bits as \code{\link{ggml_cast}} does. Supports
+#' F32<->I32, F32<->I16, F32<->I8, F16<->F32 and BF16<->F32.
+#'
+#' @param ctx GGML context
+#' @param a Source tensor
+#' @param type Target type constant (e.g. \code{GGML_TYPE_I32})
+#' @return Tensor of the requested type with \code{a}'s shape
+#' @export
+#' @seealso \code{\link{ggml_cast}}
+#' @examples
+#' \donttest{
+#' ctx <- ggml_init(16 * 1024 * 1024)
+#' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 10)
+#' i <- ggml_cast_numeric(ctx, a, GGML_TYPE_I32)
+#' ggml_free(ctx)
+#' }
+ggml_cast_numeric <- function(ctx, a, type) {
+  .Call("R_ggml_cast_numeric", ctx, a, as.integer(type), PACKAGE = "ggmlR")
 }
 
 # ============================================================================

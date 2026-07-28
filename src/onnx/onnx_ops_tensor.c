@@ -53,7 +53,11 @@ int map_node_tensor(onnx_ggml_ctx_t *c, const onnx_node_t *n,
         int64_t total = ggml_nelements(a);
         int64_t product = 1;
         int neg_idx = -1;
-        int ndims_a = ggml_n_dims(a);
+        /* Prefer the stored ONNX ndims: ggml_n_dims() drops trailing 1-dims, so
+         * an input like [24,128,4,1] reports 3 and the ONNX-dim -> ggml-ne
+         * mapping below would be off by one for every shape[d]==0 entry. */
+        int ndims_a = tmap_get_ndims(c, n->inputs[0]);
+        if (ndims_a <= 0) ndims_a = ggml_n_dims(a);
         for (int d = 0; d < ndims; d++) {
             if (shape[d] == 0) {
                 /* Map ONNX dim d → ggml ne index (reversed) */

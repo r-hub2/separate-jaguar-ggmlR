@@ -47,6 +47,9 @@ extern SEXP R_ggml_backend_sched_set_tensor_backend(SEXP sched_ptr, SEXP tensor_
 extern SEXP R_ggml_backend_sched_get_tensor_backend(SEXP sched_ptr, SEXP tensor_ptr);
 extern SEXP R_ggml_backend_sched_alloc_graph(SEXP sched_ptr, SEXP graph_ptr);
 extern SEXP R_ggml_backend_sched_graph_compute(SEXP sched_ptr, SEXP graph_ptr);
+extern SEXP R_ggml_backend_sched_trace(SEXP sched_ptr, SEXP enable);
+extern SEXP R_ggml_test_backend_ops(SEXP backend_ptr, SEXP filter);
+extern SEXP R_ggml_test_adamw_steps(SEXP backend_ptr);
 extern SEXP R_ggml_backend_sched_graph_compute_async(SEXP sched_ptr, SEXP graph_ptr);
 extern SEXP R_ggml_backend_sched_synchronize(SEXP sched_ptr);
 extern SEXP R_ggml_backend_sched_reset(SEXP sched_ptr);
@@ -839,6 +842,7 @@ SEXP R_ggml_neg(SEXP ctx_ptr, SEXP a_ptr);
 SEXP R_ggml_sin(SEXP ctx_ptr, SEXP a_ptr);
 SEXP R_ggml_cos(SEXP ctx_ptr, SEXP a_ptr);
 SEXP R_ggml_scale(SEXP ctx_ptr, SEXP a_ptr, SEXP s);
+SEXP R_ggml_scale_bias(SEXP ctx_ptr, SEXP a_ptr, SEXP s, SEXP b);
 SEXP R_ggml_clamp(SEXP ctx_ptr, SEXP a_ptr, SEXP min_val, SEXP max_val);
 SEXP R_ggml_floor(SEXP ctx_ptr, SEXP a_ptr);
 SEXP R_ggml_ceil(SEXP ctx_ptr, SEXP a_ptr);
@@ -930,6 +934,8 @@ SEXP R_ggml_view_4d(SEXP ctx_ptr, SEXP a_ptr, SEXP ne0, SEXP ne1, SEXP ne2, SEXP
 
 // Copy and Set operations
 SEXP R_ggml_cpy(SEXP ctx_ptr, SEXP a_ptr, SEXP b_ptr);
+SEXP R_ggml_cast(SEXP ctx_ptr, SEXP a_ptr, SEXP type);
+SEXP R_ggml_cast_numeric(SEXP ctx_ptr, SEXP a_ptr, SEXP type);
 SEXP R_ggml_set(SEXP ctx_ptr, SEXP a_ptr, SEXP b_ptr, SEXP nb1, SEXP nb2, SEXP nb3, SEXP offset);
 SEXP R_ggml_set_1d(SEXP ctx_ptr, SEXP a_ptr, SEXP b_ptr, SEXP offset);
 SEXP R_ggml_set_2d(SEXP ctx_ptr, SEXP a_ptr, SEXP b_ptr, SEXP nb1, SEXP offset);
@@ -1393,6 +1399,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"R_ggml_sin",   (DL_FUNC) &R_ggml_sin,   2},
     {"R_ggml_cos",   (DL_FUNC) &R_ggml_cos,   2},
     {"R_ggml_scale", (DL_FUNC) &R_ggml_scale, 3},
+    {"R_ggml_scale_bias", (DL_FUNC) &R_ggml_scale_bias, 4},
     {"R_ggml_clamp", (DL_FUNC) &R_ggml_clamp, 4},
     {"R_ggml_floor", (DL_FUNC) &R_ggml_floor, 2},
     {"R_ggml_ceil",  (DL_FUNC) &R_ggml_ceil,  2},
@@ -1468,6 +1475,8 @@ static const R_CallMethodDef CallEntries[] = {
 
     // Copy and Set operations
     {"R_ggml_cpy",            (DL_FUNC) &R_ggml_cpy,            3},
+    {"R_ggml_cast",           (DL_FUNC) &R_ggml_cast,           3},
+    {"R_ggml_cast_numeric",   (DL_FUNC) &R_ggml_cast_numeric,   3},
     {"R_ggml_set",            (DL_FUNC) &R_ggml_set,            7},
     {"R_ggml_set_1d",         (DL_FUNC) &R_ggml_set_1d,         4},
     {"R_ggml_set_2d",         (DL_FUNC) &R_ggml_set_2d,         5},
@@ -1613,6 +1622,9 @@ static const R_CallMethodDef CallEntries[] = {
     {"R_ggml_backend_sched_get_tensor_backend", (DL_FUNC) &R_ggml_backend_sched_get_tensor_backend, 2},
     {"R_ggml_backend_sched_alloc_graph",        (DL_FUNC) &R_ggml_backend_sched_alloc_graph,        2},
     {"R_ggml_backend_sched_graph_compute",      (DL_FUNC) &R_ggml_backend_sched_graph_compute,      2},
+    {"R_ggml_backend_sched_trace",              (DL_FUNC) &R_ggml_backend_sched_trace,              2},
+    {"R_ggml_test_backend_ops",                 (DL_FUNC) &R_ggml_test_backend_ops,                 2},
+    {"R_ggml_test_adamw_steps",                 (DL_FUNC) &R_ggml_test_adamw_steps,                 1},
     {"R_ggml_backend_sched_graph_compute_async",(DL_FUNC) &R_ggml_backend_sched_graph_compute_async,2},
     {"R_ggml_backend_sched_synchronize",        (DL_FUNC) &R_ggml_backend_sched_synchronize,        1},
     {"R_ggml_backend_sched_reset",              (DL_FUNC) &R_ggml_backend_sched_reset,              1},

@@ -695,9 +695,11 @@ nn_build_functional_node <- function(node, built_tensors, built_shapes,
       input_t    <- built_tensors[[parent_id]]
       psh        <- built_shapes[[parent_id]]
       n_features <- prod(psh)
-      ndims      <- ggml_n_dims(input_t)
-      shape      <- ggml_tensor_shape(input_t)
-      bs         <- shape[ndims]
+      # Derive the batch size from the element count rather than from
+      # ggml_n_dims(): ggml reports a trailing unit dimension as absent, so a
+      # batch of 1 makes a [W, H, C, 1] input look 3-D and the batch size would
+      # be read off the channel axis instead.
+      bs <- as.integer(ggml_nelements(input_t) / n_features)
       out <- ggml_reshape_2d(ctx_compute, input_t, n_features, bs)
       list(tensor = out, weights = list())
     },
@@ -1867,6 +1869,13 @@ ggml_predict.ggml_functional_model <- function(model, x, batch_size = 32L, ...) 
     matrix(0.0, nrow = n_samples, ncol = ne)
   })
 
+  # Allocate once, outside the loop -- re-running reset + alloc_graph per batch
+  # lets the scheduler re-lay the intermediate buffers, and on Vulkan every pass
+  # after the first then reads stale data. See nn_predict_batch_run() in
+  # nn_model.R for the same fix and the measurements behind it.
+  ggml_backend_sched_reset(sched)
+  ggml_backend_sched_alloc_graph(sched, graph)
+
   for (ib in seq_len(n_batches)) {
     samp_start <- (ib - 1L) * batch_size
 
@@ -1878,8 +1887,6 @@ ggml_predict.ggml_functional_model <- function(model, x, batch_size = 32L, ...) 
       ggml_backend_tensor_set_data(graph_info$inputs[[1L]], x_ggml[data_start:data_end])
     }
 
-    ggml_backend_sched_reset(sched)
-    ggml_backend_sched_alloc_graph(sched, graph)
     ggml_backend_sched_graph_compute(sched, graph)
 
     row_start <- samp_start + 1L

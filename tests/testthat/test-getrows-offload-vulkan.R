@@ -42,7 +42,12 @@ run_get_rows <- function(backend, n_embd, n_vocab, idx0) {
   idx <- ggml_new_tensor_1d(ctx, GGML_TYPE_I32, n_tok)
   out <- ggml_get_rows(ctx, emb, idx)
 
-  ggml_backend_alloc_ctx_tensors(ctx, backend)
+  # Keep the returned buffer in a live binding: its external pointer carries a
+  # finalizer that frees device memory, so discarding the result lets the next GC
+  # free the buffer while emb/idx still point into it -- the setter below then
+  # writes to unmapped memory. (The binding also guards against the buffer being
+  # collected, but not against a caller that never keeps a reference at all.)
+  buf <- ggml_backend_alloc_ctx_tensors(ctx, backend)
 
   ggml_backend_tensor_set_data(emb, as.vector(tbl))
   # I32 indices must go through the backend setter (ggml_set_i32 writes the

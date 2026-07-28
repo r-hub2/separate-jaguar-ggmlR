@@ -320,7 +320,16 @@ static void ggml_compute_backward(
         } break;
         case GGML_OP_MEAN: {
             if (src0_needs_grads) {
-                ggml_add1_or_set(ctx, cgraph, isrc0, ggml_scale_impl(ctx, grad, 1.0f/src0->ne[0], 0.0, false));
+                // DIVERGENCE from upstream: upstream routes this through
+                // ggml_add1_or_set, which asserts ggml_is_scalar() on the gradient
+                // and therefore only handles ggml_mean() of a 1D tensor. But the
+                // forward op reduces ne[0] alone and returns {1, ne[1], ne[2], ne[3]},
+                // so for any input with ne[1] > 1 the backward pass aborts even
+                // though the forward is well-defined. Broadcast the scaled gradient
+                // back over ne[0] instead, exactly as GGML_OP_SUM_ROWS does above --
+                // mean is sum_rows scaled by 1/ne[0], so the gradients match.
+                ggml_add_or_set(ctx, cgraph, isrc0,
+                    ggml_repeat(ctx, ggml_scale_impl(ctx, grad, 1.0f/src0->ne[0], 0.0, false), src0));
             }
         } break;
         case GGML_OP_REPEAT: {
@@ -442,11 +451,18 @@ static void ggml_compute_backward(
         case GGML_OP_CONT: {
             // same as cpy
             if (src0_needs_grads) {
+                // DIVERGENCE from upstream: upstream asserts the incoming grad is
+                // contiguous. That makes cont(transpose(x)) untrainable, because
+                // GGML_OP_TRANSPOSE's backward returns ggml_transpose(grad), which is
+                // never contiguous -- so any graph that transposes to reach a
+                // non-ne[0] reduction axis (e.g. batch-axis statistics in batch_norm)
+                // aborts while building the backward pass. Materialize the gradient
+                // instead, exactly as GGML_OP_RESHAPE does just below.
                 GGML_ASSERT(!cgraph->grads[isrc0] || ggml_is_contiguous(cgraph->grads[isrc0]));
-                GGML_ASSERT(ggml_is_contiguous(grad));
                 GGML_ASSERT(ggml_nelements(tensor) == ggml_nelements(src0));
+                struct ggml_tensor * grad_cont = ggml_is_contiguous(grad) ? grad : ggml_cont(ctx, grad);
                 ggml_add_or_set(ctx, cgraph, isrc0,
-                    ggml_are_same_shape(tensor, src0) ? grad : ggml_reshape(ctx, grad, src0));
+                    ggml_are_same_shape(tensor, src0) ? grad_cont : ggml_reshape(ctx, grad_cont, src0));
             }
         } break;
         case GGML_OP_RESHAPE: {
@@ -485,21 +501,50 @@ static void ggml_compute_backward(
         case GGML_OP_PERMUTE: {
             if (src0_needs_grads) {
                 const int32_t * axes = (const int32_t *) tensor->op_params;
-                const int axis0 = axes[0] & 0x3;
-                const int axis1 = axes[1] & 0x3;
-                const int axis2 = axes[2] & 0x3;
-                const int axis3 = axes[3] & 0x3;
+                // DIVERGENCE from upstream: upstream masks the stored axes with & 0x3,
+                // i.e. modulo 4. ggml_permute() itself asserts only axis <
+                // GGML_MAX_DIMS, which is 5, so an axis of 4 passes the forward pass and
+                // is then silently read back here as axis 0 -- producing a wrong inverse
+                // permutation with no diagnostic. There is no correct inverse to compute
+                // in that case: axb[] holds four entries and ggml_permute() does not
+                // reorder ne[4] to begin with. Assert instead of quietly
+                // mis-differentiating.
+                const int axis0 = axes[0];
+                const int axis1 = axes[1];
+                const int axis2 = axes[2];
+                const int axis3 = axes[3];
+                GGML_ASSERT(axis0 < 4 && axis1 < 4 && axis2 < 4 && axis3 < 4 &&
+                    "backward pass for ggml_permute() does not support a 5th axis");
                 int axb[4] = {0,0,0,0}; // axes backward
                 axb[axis0] = 0;
                 axb[axis1] = 1;
                 axb[axis2] = 2;
                 axb[axis3] = 3;
+                // NOTE: the gradient stays a non-contiguous view here, matching upstream.
+                // Wrapping it in ggml_cont() was tried and reverted: the backward passes
+                // for CONT and RESHAPE already materialize a non-contiguous gradient, and
+                // permute in practice appears alongside one of them, so three probe graphs
+                // (single path, gradient accumulation via ggml_add_impl, and back-to-back
+                // permutes with no cont between them) all train without it. Adding the
+                // copy would cost one materialization per permute in every attention and
+                // conv backward pass for no demonstrated benefit. If a graph ever does
+                // trip GGML_ASSERT(nb00 == sizeof(src0_t)) with a permuted gradient in
+                // src0 position, materialize here -- and add the graph as a test.
                 ggml_add_or_set(ctx, cgraph, isrc0, ggml_permute(ctx, grad, axb[0], axb[1], axb[2], axb[3]));
             }
         } break;
         case GGML_OP_TRANSPOSE: {
             if (src0_needs_grads) {
-                ggml_add_or_set(ctx, cgraph, isrc0, ggml_transpose(ctx, grad));
+                // DIVERGENCE from upstream: upstream propagates ggml_transpose(grad)
+                // as-is, which is a view with a permuted stride layout and is never
+                // contiguous. Any binary op that later consumes this gradient as its
+                // first operand then trips GGML_ASSERT(nb00 == sizeof(src0_t)) in the
+                // CPU kernels (src1 tolerates non-contiguity, src0 does not), so a
+                // graph that transposes to reach a non-ne[0] reduction axis -- such as
+                // batch-axis statistics in batch_norm -- cannot be trained. Materialize
+                // the transposed gradient so downstream ops see a dense tensor. Doing
+                // it here rather than in the CPU kernels keeps every backend in sync.
+                ggml_add_or_set(ctx, cgraph, isrc0, ggml_cont(ctx, ggml_transpose(ctx, grad)));
             }
         } break;
         case GGML_OP_GET_ROWS: {

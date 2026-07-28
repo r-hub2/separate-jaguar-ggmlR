@@ -1279,6 +1279,28 @@ SEXP R_ggml_scale(SEXP ctx_ptr, SEXP a_ptr, SEXP s) {
     return R_MakeExternalPtr(result, R_NilValue, R_NilValue);
 }
 
+// x = s * a + b. Adding a constant this way keeps the graph allocation-free:
+// unlike ggml_add1 with ggml_new_f32, no data-carrying tensor is created, so it
+// is usable inside a no_alloc context.
+SEXP R_ggml_scale_bias(SEXP ctx_ptr, SEXP a_ptr, SEXP s, SEXP b) {
+    struct ggml_context * ctx = (struct ggml_context *) R_ExternalPtrAddr(ctx_ptr);
+    struct ggml_tensor * a = (struct ggml_tensor *) R_ExternalPtrAddr(a_ptr);
+    float scale = (float) asReal(s);
+    float bias  = (float) asReal(b);
+
+    if (ctx == NULL || a == NULL) {
+        error("Invalid pointer");
+    }
+
+    struct ggml_tensor * result = ggml_scale_bias(ctx, a, scale, bias);
+
+    if (result == NULL) {
+        error("Failed to create scale_bias operation");
+    }
+
+    return R_MakeExternalPtr(result, R_NilValue, R_NilValue);
+}
+
 SEXP R_ggml_clamp(SEXP ctx_ptr, SEXP a_ptr, SEXP min_val, SEXP max_val) {
     struct ggml_context * ctx = (struct ggml_context *) R_ExternalPtrAddr(ctx_ptr);
     struct ggml_tensor * a = (struct ggml_tensor *) R_ExternalPtrAddr(a_ptr);
@@ -2126,6 +2148,31 @@ SEXP R_ggml_backend_alloc_ctx_tensors(SEXP ctx_ptr, SEXP backend_ptr) {
     // before the buffer's (GPU buffer_free may dereference the backend).
     SEXP ptr = PROTECT(R_MakeExternalPtr(buffer, backend_ptr, R_NilValue));
     R_RegisterCFinalizerEx(ptr, r_ggml_backend_buffer_finalizer, TRUE);
+
+    // Anchor the buffer to the context that owns the tensors living inside it.
+    //
+    // The tensors allocated above point into this buffer but hold no R-level
+    // reference to it, so a caller who discards the return value -- e.g. a bare
+    // `ggml_backend_alloc_ctx_tensors(ctx, backend)` -- leaves the external
+    // pointer unreachable. The next GC then runs the finalizer and frees device
+    // memory while the tensors are still in use, and the first
+    // ggml_backend_tensor_set/get segfaults. Storing the buffer in the context's
+    // protected slot makes it reachable for as long as the context is, so the
+    // buffer cannot outlive its tensors' owner regardless of what the caller
+    // does with the result.
+    //
+    // A context may be allocated more than once (successive backends, or a
+    // second call after ggml_set_no_alloc); chain the previous entry onto a list
+    // so no earlier buffer is dropped from the protection graph.
+    SEXP prev = R_ExternalPtrProtected(ctx_ptr);
+    if (prev == R_NilValue) {
+        R_SetExternalPtrProtected(ctx_ptr, ptr);
+    } else {
+        SEXP chain = PROTECT(CONS(ptr, prev));
+        R_SetExternalPtrProtected(ctx_ptr, chain);
+        UNPROTECT(1);
+    }
+
     UNPROTECT(1);
     return ptr;
 }
@@ -2415,6 +2462,42 @@ SEXP R_ggml_cpy(SEXP ctx_ptr, SEXP a_ptr, SEXP b_ptr) {
 
     if (result == NULL) {
         error("Failed to create cpy operation");
+    }
+
+    return R_MakeExternalPtr(result, R_NilValue, R_NilValue);
+}
+
+// Cast a tensor to another type (bitwise copy semantics, GGML_OP_CPY)
+SEXP R_ggml_cast(SEXP ctx_ptr, SEXP a_ptr, SEXP type) {
+    struct ggml_context * ctx = (struct ggml_context *) R_ExternalPtrAddr(ctx_ptr);
+    struct ggml_tensor * a = (struct ggml_tensor *) R_ExternalPtrAddr(a_ptr);
+
+    if (ctx == NULL || a == NULL) {
+        error("Invalid pointer");
+    }
+
+    struct ggml_tensor * result = ggml_cast(ctx, a, (enum ggml_type) asInteger(type));
+
+    if (result == NULL) {
+        error("Failed to create cast operation");
+    }
+
+    return R_MakeExternalPtr(result, R_NilValue, R_NilValue);
+}
+
+// Numeric type conversion (truncate/round rather than reinterpret)
+SEXP R_ggml_cast_numeric(SEXP ctx_ptr, SEXP a_ptr, SEXP type) {
+    struct ggml_context * ctx = (struct ggml_context *) R_ExternalPtrAddr(ctx_ptr);
+    struct ggml_tensor * a = (struct ggml_tensor *) R_ExternalPtrAddr(a_ptr);
+
+    if (ctx == NULL || a == NULL) {
+        error("Invalid pointer");
+    }
+
+    struct ggml_tensor * result = ggml_cast_numeric(ctx, a, (enum ggml_type) asInteger(type));
+
+    if (result == NULL) {
+        error("Failed to create cast_numeric operation");
     }
 
     return R_MakeExternalPtr(result, R_NilValue, R_NilValue);

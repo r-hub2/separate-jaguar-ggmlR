@@ -24,7 +24,7 @@ run_quant_mm <- function(use_gpu, qtype, qfn, M, K, N) {
 
   backend <- if (use_gpu) ggml_vulkan_init(0) else ggml_backend_cpu_init()
   if (!use_gpu) ggml_backend_cpu_set_n_threads(backend, 2L)
-  ggml_backend_alloc_ctx_tensors(ctx, backend)
+  buf <- ggml_backend_alloc_ctx_tensors(ctx, backend)
 
   ggml_backend_tensor_set_data(a, a_q)
   ggml_backend_tensor_set_data(b, as.vector(b_raw))

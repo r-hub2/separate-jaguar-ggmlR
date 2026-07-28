@@ -38,7 +38,7 @@ run_conv2d <- function(backend) {
                     dst_type = GGML_TYPE_F16)
   r  <- ggml_conv_2d(ctx, a, b, 1L, 1L, 1L, 1L, 1L, 1L)
 
-  ggml_backend_alloc_ctx_tensors(ctx, backend)
+  buf <- ggml_backend_alloc_ctx_tensors(ctx, backend)
   ggml_backend_tensor_set_data(a, rep(2.5, KW * KH * IC * OC))
   ggml_backend_tensor_set_data(b, rep(1.5, IW * IH * IC * N))
 

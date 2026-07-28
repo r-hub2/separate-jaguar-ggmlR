@@ -281,6 +281,64 @@ static void sched_sync_cpu_threads(ggml_backend_sched_t sched) {
 }
 
 // Compute graph using scheduler (distributes work across backends)
+// Per-node tracing for debugging backend divergence.
+//
+// Reading intermediate tensors after ggml_backend_sched_graph_compute() returns
+// is unreliable: the scheduler re-aliases intermediate buffers once the graph is
+// done, so the values read back may belong to a different node. The eval
+// callback fires right after each node is computed, while its buffer is still
+// valid, which is the only way to compare two backends node by node.
+//
+// Enabled per call via R_ggml_backend_sched_trace(); prints
+//   name | op | ne[] | sum | min | max
+// to stderr for every node, so two runs can be diffed by NAME rather than by
+// node index (the graphs on two backends need not enumerate nodes alike).
+static bool r_ggml_trace_eval_cb(struct ggml_tensor * t, bool ask, void * user_data) {
+    (void) user_data;
+    if (ask) {
+        return true;   // observe every node
+    }
+    if (t == NULL || t->type != GGML_TYPE_F32) {
+        return true;
+    }
+
+    const int64_t n = ggml_nelements(t);
+    float * buf = (float *) malloc((size_t) n * sizeof(float));
+    if (buf == NULL) {
+        return true;
+    }
+    ggml_backend_tensor_get(t, buf, 0, (size_t) n * sizeof(float));
+
+    double sum = 0.0;
+    float mn = buf[0], mx = buf[0];
+    for (int64_t i = 0; i < n; i++) {
+        sum += buf[i];
+        if (buf[i] < mn) mn = buf[i];
+        if (buf[i] > mx) mx = buf[i];
+    }
+    free(buf);
+
+    fprintf(stderr, "[trace] %-34s %-12s ne=[%lld,%lld,%lld,%lld] sum=%.6f min=%.6f max=%.6f\n",
+            t->name[0] ? t->name : "<unnamed>", ggml_op_name(t->op),
+            (long long) t->ne[0], (long long) t->ne[1],
+            (long long) t->ne[2], (long long) t->ne[3],
+            sum, (double) mn, (double) mx);
+    return true;
+}
+
+SEXP R_ggml_backend_sched_trace(SEXP sched_ptr, SEXP enable) {
+    ggml_backend_sched_t sched = (ggml_backend_sched_t)R_ExternalPtrAddr(sched_ptr);
+    if (sched == NULL) {
+        error("Invalid scheduler pointer");
+    }
+    if (asLogical(enable)) {
+        ggml_backend_sched_set_eval_callback(sched, r_ggml_trace_eval_cb, NULL);
+    } else {
+        ggml_backend_sched_set_eval_callback(sched, NULL, NULL);
+    }
+    return R_NilValue;
+}
+
 SEXP R_ggml_backend_sched_graph_compute(SEXP sched_ptr, SEXP graph_ptr) {
     ggml_backend_sched_t sched = (ggml_backend_sched_t)R_ExternalPtrAddr(sched_ptr);
     struct ggml_cgraph * graph = (struct ggml_cgraph *)R_ExternalPtrAddr(graph_ptr);

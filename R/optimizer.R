@@ -691,11 +691,18 @@ ggml_fit_opt <- function(sched, ctx_compute, inputs, outputs, dataset,
 
   # --- compute parameters (same as R_ggml_opt_fit) ---
   ndata <- as.integer(ggml_opt_dataset_ndata(dataset))
-  nbatch_physical <- .ggml_tensor_last_dim(inputs)
+  nbatch_physical <- .ggml_input_batch_size(inputs, dataset)
+  # A logical batch smaller than the graph's physical batch cannot be honoured:
+  # the forward pass always consumes nbatch_physical samples, so treat that as
+  # the floor rather than deriving an opt_period of 1 from a ratio below one.
+  nbatch_logical  <- as.integer(max(nbatch_logical, nbatch_physical))
   opt_period      <- as.integer(max(1L, nbatch_logical %/% nbatch_physical))
   nbatches_logical  <- ndata %/% nbatch_logical
   ibatch_split    <- as.integer(floor((1.0 - val_split) * nbatches_logical) * opt_period)
-  idata_split     <- ibatch_split * nbatch_physical
+  # Never split past the end of the dataset: ggml_opt_dataset_shuffle() asserts
+  # idata <= ndata, and rounding in the product above can overshoot when ndata
+  # is not a whole number of logical batches.
+  idata_split     <- min(as.integer(ibatch_split * nbatch_physical), ndata)
 
   # --- init optimizer context (preserves momentum across epochs) ---
   ctx_list <- ggml_opt_init_for_fit(
@@ -801,10 +808,20 @@ ggml_fit_opt <- function(sched, ctx_compute, inputs, outputs, dataset,
   do.call(rbind.data.frame, lapply(filled, function(x) as.data.frame(as.list(x))))
 }
 
-# Internal helper: get last dimension of tensor (batch size)
-.ggml_tensor_last_dim <- function(tensor_ptr) {
-  # ggml_tensor has ne[0..3]; last dim = ne[ndims-1]
-  # We use the existing ggml_tensor_shape() helper if available, else call C
-  shape <- ggml_tensor_shape(tensor_ptr)
-  shape[length(shape)]
+# Internal helper: how many datapoints the input tensor holds per forward pass.
+#
+# The batch axis cannot be read off the tensor alone. ggml_tensor_shape() always
+# returns four ne[] entries, so its last element is ne[3] whatever the rank --
+# right for a 4-D [W, H, C, N] input, but a dense [features, N] keeps its batch
+# in ne[1] and a sequence [size, seq, N] in ne[2], both reporting ne[3] == 1.
+# Falling back to ggml_n_dims() does not help either: ggml treats a trailing unit
+# dimension as absent, so a batch of 1 makes [W, H, C, 1] look 3-D and the count
+# would come off the channel axis.
+#
+# The dataset carries the one piece of information that disambiguates this --
+# ne_datapoint, the size of a single sample -- so divide by it.
+.ggml_input_batch_size <- function(tensor_ptr, dataset) {
+  ne_datapoint <- ggml_tensor_shape(ggml_opt_dataset_data(dataset))[1]
+  if (is.na(ne_datapoint) || ne_datapoint <= 0) return(1L)
+  as.integer(max(1, ggml_nelements(tensor_ptr) %/% ne_datapoint))
 }

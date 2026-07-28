@@ -459,6 +459,13 @@ nn_build_graph <- function(model, batch_size, training = TRUE) {
       ggml_set_name(layer$weights$gamma, paste0("bn_", i, "_gamma"))
       ggml_set_name(layer$weights$beta, paste0("bn_", i, "_beta"))
 
+      # Running estimates used at inference time. Not parameters: they are
+      # updated by an EMA during training, never by the optimizer.
+      layer$weights$running_mean <- ggml_new_tensor_1d(ctx_weights, GGML_TYPE_F32, n_features)
+      layer$weights$running_var  <- ggml_new_tensor_1d(ctx_weights, GGML_TYPE_F32, n_features)
+      ggml_set_name(layer$weights$running_mean, paste0("bn_", i, "_running_mean"))
+      ggml_set_name(layer$weights$running_var, paste0("bn_", i, "_running_var"))
+
     } else if (layer$type == "lstm") {
       # input_shape: c(seq_len, input_size)
       input_sz <- layer$input_shape[2]
@@ -605,6 +612,23 @@ nn_build_graph <- function(model, batch_size, training = TRUE) {
         ggml_backend_tensor_set_data(layer$weights$gamma, rep(1.0, n))
         nn_init_zeros(layer$weights$beta)
       }
+
+      # Running estimates: restore when available, else start from the identity
+      # transform (mean 0, variance 1), matching ag_batch_norm().
+      nbn <- ggml_nelements(layer$weights$running_mean)
+      if (has_weights_data && !is.null(old_layer$weights_data$running_mean)) {
+        ggml_backend_tensor_set_data(layer$weights$running_mean, old_layer$weights_data$running_mean)
+        ggml_backend_tensor_set_data(layer$weights$running_var, old_layer$weights_data$running_var)
+      } else if (has_trained_weights && !is.null(old_layer$weights$running_mean)) {
+        ggml_backend_tensor_set_data(layer$weights$running_mean,
+          ggml_backend_tensor_get_data(old_layer$weights$running_mean))
+        ggml_backend_tensor_set_data(layer$weights$running_var,
+          ggml_backend_tensor_get_data(old_layer$weights$running_var))
+      } else {
+        nn_init_zeros(layer$weights$running_mean)
+        ggml_backend_tensor_set_data(layer$weights$running_var, rep(1.0, nbn))
+      }
+
       if (isTRUE(layer$trainable)) {
         ggml_set_param(layer$weights$gamma)
         ggml_set_param(layer$weights$beta)
@@ -703,6 +727,108 @@ nn_build_graph <- function(model, batch_size, training = TRUE) {
     buffer = buffer,
     layers_built = layers_built
   )
+}
+
+# Calibrate batch_norm running statistics after training.
+#
+# For each batch_norm layer, runs the trained network up to the layer that feeds
+# it and records the per-feature mean and variance of those activations over the
+# whole training set. Inference then normalizes with these fixed estimates, so a
+# prediction depends only on the sample itself rather than on which other
+# samples share its batch.
+#
+# Conv-shaped inputs are calibrated too: their statistics pool over the batch
+# and every spatial position, matching nn_bn_normalize_conv(). See
+# nn_bn_channel_stats() for how the flattened activations are folded back.
+#
+#' @keywords internal
+# Per-channel mean and population variance of the activations feeding a
+# batch_norm layer.
+#
+# `acts` is what ggml_predict() returns: one row per sample, each row the
+# layer's input flattened in ggml order (ne[0] varies fastest). For a flat
+# [features] input that is already one column per channel, so a plain colMeans
+# does. For conv-shaped inputs the row packs the spatial axes together with the
+# channel, and the statistics must pool over batch AND space -- matching what
+# nn_bn_normalize_conv() computes during training.
+#
+# Returns NULL when the activation width does not match the layer, so the caller
+# can skip rather than write wrong statistics.
+nn_bn_channel_stats <- function(acts, input_shape, n_features) {
+  if (!is.matrix(acts) || ncol(acts) != prod(input_shape)) return(NULL)
+
+  pooled <- if (length(input_shape) == 1L) {
+    # [features, N]: columns are already channels.
+    acts
+  } else if (length(input_shape) == 2L) {
+    # ggml [C, L, N] with C = input_shape[2]: within a row the channel index
+    # varies fastest, so folding to [C, L*samples] puts each channel on a row.
+    matrix(as.vector(t(acts)), nrow = as.integer(input_shape[2]))
+  } else {
+    # ggml [W, H, C, N] with C = input_shape[3]: W and H vary fastest, so a row
+    # is [W*H, C]. Stack all samples and average each channel's block.
+    wh <- as.integer(input_shape[1]) * as.integer(input_shape[2])
+    matrix(as.vector(t(acts)), nrow = wh)
+  }
+
+  if (length(input_shape) == 3L) {
+    # pooled is [W*H, C*samples]: collapse the spatial rows, then average the
+    # per-sample copies of each channel.
+    per_col <- colMeans(pooled)
+    sq_col  <- colMeans(pooled^2)
+    n_ch <- as.integer(input_shape[3])
+    mu <- rowMeans(matrix(per_col, nrow = n_ch))
+    m2 <- rowMeans(matrix(sq_col,  nrow = n_ch))
+  } else if (length(input_shape) == 2L) {
+    mu <- rowMeans(pooled)
+    m2 <- rowMeans(pooled^2)
+  } else {
+    mu <- colMeans(pooled)
+    m2 <- colMeans(pooled^2)
+  }
+
+  if (length(mu) != n_features) return(NULL)
+  # Population variance, matching the batch statistics used during training.
+  list(mean = as.numeric(mu), var = as.numeric(pmax(m2 - mu^2, 0)))
+}
+
+nn_bn_calibrate <- function(model, x) {
+  bn_idx <- which(vapply(model$layers, function(l) identical(l$type, "batch_norm"),
+                         logical(1)))
+  if (length(bn_idx) == 0L) return(model)
+
+  # Cap the calibration set: the statistics converge long before the full data
+  # is needed, and this keeps fit() cheap for large inputs.
+  n_samples <- if (is.matrix(x)) nrow(x) else dim(x)[1]
+  n_use <- min(n_samples, 1024L)
+  x_use <- slice_first_dim(x, seq_len(n_use))
+
+  for (i in bn_idx) {
+    layer <- model$layers[[i]]
+    if (is.null(layer$weights$running_mean)) next
+
+    # A model consisting of everything before this batch_norm layer, sharing the
+    # trained weight tensors.
+    head_model <- model
+    head_model$layers <- model$layers[seq_len(i - 1L)]
+    if (length(head_model$layers) == 0L) next
+    head_model$history <- NULL
+
+    acts <- tryCatch(
+      ggml_predict(head_model, x_use, batch_size = min(n_use, 32L)),
+      error = function(e) NULL
+    )
+    if (is.null(acts) || !is.matrix(acts)) next
+
+    nf <- ggml_nelements(layer$weights$running_mean)
+    stats <- nn_bn_channel_stats(acts, layer$input_shape, nf)
+    if (is.null(stats)) next
+
+    ggml_backend_tensor_set_data(layer$weights$running_mean, stats$mean)
+    ggml_backend_tensor_set_data(layer$weights$running_var, stats$var)
+  }
+
+  model
 }
 
 # ============================================================================
@@ -971,6 +1097,21 @@ ggml_fit_sequential <- function(model, x, y, epochs = 1, batch_size = 32,
   model$compilation$ctx_weights <- graph_info$ctx_weights
   model$compilation$buffer <- graph_info$buffer
 
+  # Calibrate batch_norm running statistics for inference.
+  #
+  # These have to come from a forward pass over the training data with the final
+  # weights, and ggml_opt_fit() runs every epoch inside a single C call with no
+  # R-visible hook between steps -- the intermediate mean/variance tensors it
+  # allocates are also not addressable from here. So instead of folding an EMA
+  # in per batch, the statistics are computed once, after training, from the
+  # activations feeding each batch_norm layer. The result is the exact mean and
+  # variance over the training set rather than an exponentially-weighted
+  # approximation of it, which is what inference actually wants.
+  #
+  # Must run after ctx_weights/buffer are attached: it calls ggml_predict(),
+  # which rebuilds the graph from model$compilation.
+  model <- nn_bn_calibrate(model, x)
+
   # Build history object
   model$history <- structure(
     list(
@@ -1153,14 +1294,22 @@ ggml_predict.ggml_sequential_model <- function(model, x, batch_size = 32L, ...) 
     sched <- model$compilation$sched
     preds <- matrix(0, nrow = n_batches * bs, ncol = ne_output)
 
+    # Allocate once, outside the loop. Re-running reset + alloc_graph per batch
+    # gives the scheduler a fresh chance to lay out the intermediate buffers, and
+    # on Vulkan the second and later passes then read stale data -- every batch
+    # after the first came out wrong (~0.4 absolute error on softmax outputs)
+    # while the first was exact. The weights live in their own buffer, so nothing
+    # needs re-uploading between batches: set the inputs and compute. This
+    # mirrors the ONNX path, which allocates once behind an `is_allocated` flag.
+    ggml_backend_sched_reset(sched)
+    ggml_backend_sched_alloc_graph(sched, graph)
+
     for (ib in seq_len(n_batches)) {
       data_start <- (ib - 1L) * bs * ne_datapoint + 1L
       data_end <- ib * bs * ne_datapoint
       batch_data <- x_ggml[data_start:data_end]
       ggml_backend_tensor_set_data(graph_info$inputs, batch_data)
 
-      ggml_backend_sched_reset(sched)
-      ggml_backend_sched_alloc_graph(sched, graph)
       ggml_backend_sched_graph_compute(sched, graph)
 
       batch_output <- ggml_backend_tensor_get_data(graph_info$outputs)
@@ -1624,6 +1773,12 @@ ggml_save_model.ggml_sequential_model <- function(model, path) {
     } else if (l$type == "batch_norm" && !is.null(l$weights$gamma)) {
       wdata$gamma <- ggml_backend_tensor_get_data(l$weights$gamma)
       wdata$beta  <- ggml_backend_tensor_get_data(l$weights$beta)
+      # Running estimates are part of the model: without them a reloaded model
+      # would normalize inference batches with the (0, 1) identity transform.
+      if (!is.null(l$weights$running_mean)) {
+        wdata$running_mean <- ggml_backend_tensor_get_data(l$weights$running_mean)
+        wdata$running_var  <- ggml_backend_tensor_get_data(l$weights$running_var)
+      }
     } else if (l$type == "lstm" && !is.null(l$weights$W_gates)) {
       wdata$W_gates <- ggml_backend_tensor_get_data(l$weights$W_gates)
       wdata$U_gates <- ggml_backend_tensor_get_data(l$weights$U_gates)

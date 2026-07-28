@@ -16,7 +16,7 @@ run_conv2d <- function(use_gpu, input_data, kernel_data,
 
   backend <- if (use_gpu) ggml_vulkan_init(0L) else ggml_backend_cpu_init()
   if (!use_gpu) ggml_backend_cpu_set_n_threads(backend, 2L)
-  ggml_backend_alloc_ctx_tensors(ctx, backend)
+  buf <- ggml_backend_alloc_ctx_tensors(ctx, backend)
 
   ggml_backend_tensor_set_data(inp, input_data)
   ggml_backend_tensor_set_data(ker, kernel_data)

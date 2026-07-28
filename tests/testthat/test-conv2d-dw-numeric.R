@@ -55,7 +55,7 @@ run_dw <- function(channels, k, stride, pad, dilation) {
   be <- ggml_backend_cpu_init()
   on.exit(ggml_backend_free(be), add = TRUE)
   ggml_backend_cpu_set_n_threads(be, 2L)
-  ggml_backend_alloc_ctx_tensors(ctx, be)
+  buf <- ggml_backend_alloc_ctx_tensors(ctx, be)
 
   sv <- seq(-1, 1, length.out = src_w * src_h * channels * batch)
   kv <- seq(-1, 1, length.out = k * k * channels)

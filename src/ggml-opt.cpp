@@ -62,10 +62,12 @@ struct ggml_opt_context {
     ggml_cgraph              * allocated_graph      = nullptr;
     ggml_cgraph              * allocated_graph_copy = nullptr;
     struct ggml_context      * ctx_static           = nullptr;
+    struct ggml_context      * ctx_momenta          = nullptr;
     struct ggml_context      * ctx_cpu              = nullptr;
     struct ggml_context      * ctx_compute          = nullptr;
     struct ggml_context      * ctx_copy             = nullptr;
     ggml_backend_buffer_t      buf_static           = nullptr;
+    ggml_backend_buffer_t      buf_momenta          = nullptr;
     ggml_backend_buffer_t      buf_cpu              = nullptr;
     std::mt19937               rng;
     enum ggml_opt_loss_type    loss_type;
@@ -416,13 +418,13 @@ static void ggml_opt_build(ggml_opt_context_t opt_ctx) {
     if (!opt_ctx->ctx_static) {
         // The static context is used for:
         //   - gradients (1 per loss, 1 tensor per param if using gradient accumulation)
-        //   - optimizer momenta (2 tensors per param)
         //   - labels (if using static graphs)
         //   - loss (if using static graphs, up to 5 tensors)
         //   - pred (if using static graphs)
         //   - ncorrect (if using static graphs, 2 tensors).
+        // NOTE: optimizer momenta live in ctx_momenta instead, see below.
         constexpr size_t n_loss = 1;
-        const size_t tensors_per_param = (accumulate ? 1 : 0) + (need_momenta ? 2 : 0);
+        const size_t tensors_per_param = accumulate ? 1 : 0;
         const size_t tensors_const = opt_ctx->static_graphs ? 9 : 0;
         const size_t size_meta = (n_loss + tensors_per_param*n_param + tensors_const) * ggml_tensor_overhead();
         struct ggml_init_params params = {
@@ -431,6 +433,26 @@ static void ggml_opt_build(ggml_opt_context_t opt_ctx) {
             /*.no_alloc   =*/ true,
         };
         opt_ctx->ctx_static = ggml_init(params);
+    }
+
+    if (need_momenta && !opt_ctx->ctx_momenta) {
+        // The momenta context holds the AdamW m/v tensors (2 per param).
+        //
+        // These are kept separate from ctx_static because GGML_OP_OPT_STEP_ADAMW *writes* to
+        // them even though they are passed as sources. ggml_backend_sched only copies split
+        // inputs one way (into the executing backend, see ggml_backend_sched_compute_splits);
+        // there is no copy back. So if m/v live on a different backend than the one running
+        // the optimizer step, every update is written into a scratch copy and discarded,
+        // leaving m/v pinned at their initial values. ctx_static must stay on CPU because it
+        // also holds loss/labels tensors whose ops are not supported on GPU backends, hence
+        // the split: momenta are allocated on the backend that actually owns the params.
+        const size_t size_meta = 2 * n_param * ggml_tensor_overhead();
+        struct ggml_init_params params = {
+            /*.mem_size   =*/ size_meta,
+            /*.mem_buffer =*/ nullptr,
+            /*.no_alloc   =*/ true,
+        };
+        opt_ctx->ctx_momenta = ggml_init(params);
     }
     GGML_ASSERT(opt_ctx->build_type <= opt_ctx->build_type_alloc);
 
@@ -575,8 +597,8 @@ static void ggml_opt_build(ggml_opt_context_t opt_ctx) {
             for (int i = 0; i < n_nodes; ++i) {
                 ggml_tensor * node = opt_ctx->gf->nodes[i];
                 if (node->flags & GGML_TENSOR_FLAG_PARAM) {
-                    opt_ctx->grad_m[i] = ggml_new_tensor(opt_ctx->ctx_static, GGML_TYPE_F32, GGML_MAX_DIMS, node->ne);
-                    opt_ctx->grad_v[i] = ggml_new_tensor(opt_ctx->ctx_static, GGML_TYPE_F32, GGML_MAX_DIMS, node->ne);
+                    opt_ctx->grad_m[i] = ggml_new_tensor(opt_ctx->ctx_momenta, GGML_TYPE_F32, GGML_MAX_DIMS, node->ne);
+                    opt_ctx->grad_v[i] = ggml_new_tensor(opt_ctx->ctx_momenta, GGML_TYPE_F32, GGML_MAX_DIMS, node->ne);
                 } else {
                     opt_ctx->grad_m[i] = nullptr;
                     opt_ctx->grad_v[i] = nullptr;
@@ -639,8 +661,44 @@ static void ggml_opt_build(ggml_opt_context_t opt_ctx) {
         }
     }
 
+    // Allocate the momenta on the backend that owns the params, so that the in-place m/v
+    // updates done by GGML_OP_OPT_STEP_ADAMW land in the real tensors instead of a scratch
+    // split-input copy that is thrown away after each step (see ctx_momenta above).
+    if (need_momenta && !opt_ctx->buf_momenta) {
+        ggml_backend_buffer_type_t buft = nullptr;
+        for (int i = 0; i < opt_ctx->gf->n_nodes; ++i) {
+            ggml_tensor * node = opt_ctx->gf->nodes[i];
+            if ((node->flags & GGML_TENSOR_FLAG_PARAM) && node->buffer) {
+                buft = ggml_backend_buffer_get_type(node->buffer);
+                break;
+            }
+        }
+        if (buft) {
+            opt_ctx->buf_momenta = ggml_backend_alloc_ctx_tensors_from_buft(opt_ctx->ctx_momenta, buft);
+        }
+        if (!opt_ctx->buf_momenta) {
+            // Fall back to the last backend (CPU), matching the pre-split behavior.
+            const int n_backends = ggml_backend_sched_get_n_backends(opt_ctx->backend_sched);
+            opt_ctx->buf_momenta = ggml_backend_alloc_ctx_tensors(
+                opt_ctx->ctx_momenta, ggml_backend_sched_get_backend(opt_ctx->backend_sched, n_backends - 1));
+        }
+        GGML_ASSERT(opt_ctx->buf_momenta);
+
+        // Zero the momenta explicitly: ggml_graph_reset() below only runs when buf_static is
+        // allocated in this call, which is not the case when the graph was already built for
+        // GGML_OPT_BUILD_TYPE_GRAD.
+        for (size_t i = 0; i < opt_ctx->grad_m.size(); ++i) {
+            if (opt_ctx->grad_m[i]) {
+                ggml_set_zero(opt_ctx->grad_m[i]);
+            }
+            if (opt_ctx->grad_v[i]) {
+                ggml_set_zero(opt_ctx->grad_v[i]);
+            }
+        }
+    }
+
     if (!opt_ctx->buf_static) {
-        // Allocate ctx_static on CPU (last backend) — contains grad accumulators, momenta, loss tensors
+        // Allocate ctx_static on CPU (last backend) — contains grad accumulators, loss tensors
         const int n_backends = ggml_backend_sched_get_n_backends(opt_ctx->backend_sched);
         opt_ctx->buf_static = ggml_backend_alloc_ctx_tensors(
             opt_ctx->ctx_static, ggml_backend_sched_get_backend(opt_ctx->backend_sched, n_backends - 1));
@@ -690,8 +748,10 @@ void ggml_opt_free(ggml_opt_context_t opt_ctx) {
         return;
     }
     ggml_backend_buffer_free(opt_ctx->buf_static);
+    ggml_backend_buffer_free(opt_ctx->buf_momenta);
     ggml_backend_buffer_free(opt_ctx->buf_cpu);
     ggml_free(opt_ctx->ctx_static);
+    ggml_free(opt_ctx->ctx_momenta);
     ggml_free(opt_ctx->ctx_cpu);
     ggml_free(opt_ctx->ctx_copy);
     delete opt_ctx;

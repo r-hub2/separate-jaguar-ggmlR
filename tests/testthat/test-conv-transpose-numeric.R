@@ -27,7 +27,7 @@ run_ct1d <- function(stride) {
 
   be <- cpu_backend()
   on.exit(ggml_backend_free(be), add = TRUE)
-  ggml_backend_alloc_ctx_tensors(ctx, be)
+  buf <- ggml_backend_alloc_ctx_tensors(ctx, be)
   ggml_backend_tensor_set_data(t, as.numeric(0:5))
   ggml_backend_tensor_set_data(k, as.numeric(0:11))
 
@@ -70,7 +70,7 @@ run_ct2d <- function(stride) {
 
   be <- cpu_backend()
   on.exit(ggml_backend_free(be), add = TRUE)
-  ggml_backend_alloc_ctx_tensors(ctx, be)
+  buf <- ggml_backend_alloc_ctx_tensors(ctx, be)
   ggml_backend_tensor_set_data(t, as.numeric(0:11))
   ggml_backend_tensor_set_data(k, as.numeric(0:23))
 

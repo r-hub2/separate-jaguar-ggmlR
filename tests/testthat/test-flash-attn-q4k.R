@@ -23,7 +23,7 @@ test_that("Q4_K flash attention produces finite, non-zero output on CPU", {
 
   backend <- ggml_backend_cpu_init()
   ggml_backend_cpu_set_n_threads(backend, 2L)
-  ggml_backend_alloc_ctx_tensors(ctx, backend)
+  buf <- ggml_backend_alloc_ctx_tensors(ctx, backend)
 
   ggml_backend_tensor_set_data(q, as.vector(q_raw))
   ggml_backend_tensor_set_data(k, k_q)
@@ -64,7 +64,7 @@ test_that("Q4_K flash attention GPU matches CPU (correlation > 0.999)", {
 
     backend <- if (use_gpu) ggml_vulkan_init(0) else ggml_backend_cpu_init()
     if (!use_gpu) ggml_backend_cpu_set_n_threads(backend, 2L)
-    ggml_backend_alloc_ctx_tensors(ctx, backend)
+    buf <- ggml_backend_alloc_ctx_tensors(ctx, backend)
 
     ggml_backend_tensor_set_data(q, as.vector(q_raw))
     ggml_backend_tensor_set_data(k, k_q)

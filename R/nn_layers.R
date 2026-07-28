@@ -747,7 +747,25 @@ nn_apply_activation <- function(ctx, tensor, activation) {
 }
 
 #' Build conv_1d forward pass
-#' @return A \code{ggml_tensor} holding the 1-D convolution output (with bias and activation applied).
+#'
+#' The sequential API lays a 3-D input out as \code{[size, seq, N]} -- the
+#' channel on \code{ne[0]} -- which is what LSTM/GRU and batch_norm expect.
+#' The convolution wants the opposite: data as \code{[L, IC, N]} against a
+#' \code{[K, IC, OC]} kernel. So the input is transposed on the way in and the
+#' result transposed back, keeping the layer's contract with its neighbours
+#' unchanged.
+#'
+#' The convolution is assembled here rather than via \code{ggml_conv_1d()},
+#' which hard-codes an F16 im2col and therefore needs an F16 kernel. Casting the
+#' kernel makes the forward pass work but breaks training: the gradient w.r.t.
+#' the kernel is an \code{OUT_PROD} whose first operand is then F16, and the CPU
+#' backend only implements \code{OUT_PROD} for F32 and quantized inputs, so the
+#' scheduler finds no backend for that node. Building the same im2col +
+#' \code{mul_mat} in F32 -- which is what \code{ggml_conv_2d()} does, passing the
+#' kernel's own type -- keeps the whole path differentiable.
+#'
+#' @return A \code{ggml_tensor} \code{[OC, OL, N]} holding the 1-D convolution
+#'   output (with bias and activation applied).
 #' @keywords internal
 nn_build_conv_1d <- function(ctx, input_tensor, layer) {
   kernel <- layer$weights$kernel
@@ -762,10 +780,44 @@ nn_build_conv_1d <- function(ctx, input_tensor, layer) {
     p0 <- 0L
   }
 
-  out <- ggml_conv_1d(ctx, kernel, input_tensor, s0 = s0, p0 = p0, d0 = 1L)
+  # [IC, L, N] -> [L, IC, N]
+  data_t <- ggml_cont(ctx, ggml_permute(ctx, input_tensor, 1L, 0L, 2L, 3L))
 
-  # Reshape bias [OC] -> [1, OC, 1] for broadcasting with [OL, OC, N]
-  bias_3d <- ggml_reshape_3d(ctx, bias, 1L, layer$config$filters, 1L)
+  k_shape <- ggml_tensor_shape(kernel)          # [K, IC, OC]
+  kk <- as.integer(k_shape[1]); kic <- as.integer(k_shape[2])
+  koc <- as.integer(k_shape[3])
+
+  im <- ggml_im2col(ctx, kernel, data_t, s0 = s0, s1 = 0L, p0 = p0, p1 = 0L,
+                    d0 = 1L, d1 = 0L, is_2D = FALSE, dst_type = GGML_TYPE_F32)
+  im_shape <- ggml_tensor_shape(im)             # [IC*K, OL, N]
+
+  ol <- as.integer(im_shape[2])
+  nb <- as.integer(im_shape[3])
+
+  out <- ggml_mul_mat(
+    ctx,
+    ggml_reshape_2d(ctx, im, as.integer(im_shape[1]), nb * ol),
+    ggml_reshape_2d(ctx, kernel, kk * kic, koc)
+  )
+  # mul_mat returns [OL*N, OC] -- the whole batch for one filter, then the next.
+  # Splitting that straight into [OL, OC, N] (what ggml_conv_1d() does) only
+  # holds for N == 1; past that it interleaves filters and samples. Split along
+  # the axes the data actually has, then move OC into place.
+  out <- ggml_reshape_3d(ctx, out, ol, nb, koc)            # [OL, N, OC]
+  out <- ggml_cont(ctx, ggml_permute(ctx, out, 0L, 2L, 1L, 3L))  # [OL, OC, N]
+
+  # [OL, OC, N] -> [OC, OL, N], back to the layout the next layer expects.
+  #
+  # The bias is added after this transpose, not before. Adding it first makes the
+  # bias gradient a ggml_repeat_back() of the permute's output, and that kernel
+  # requires a contiguous first operand (nb00 == sizeof(float)) which a permuted
+  # view never is -- training then aborts. It only survived with an activation
+  # in between, because the activation's backward materializes the gradient.
+  # Applied here the bias sees a contiguous tensor either way.
+  out <- ggml_cont(ctx, ggml_permute(ctx, out, 1L, 0L, 2L, 3L))
+
+  # Reshape bias [OC] -> [OC, 1, 1] for broadcasting with [OC, OL, N]
+  bias_3d <- ggml_reshape_3d(ctx, bias, layer$config$filters, 1L, 1L)
   out <- ggml_add(ctx, out, bias_3d)
   nn_apply_activation(ctx, out, layer$config$activation)
 }
@@ -845,10 +897,11 @@ nn_build_global_average_pooling_2d <- function(ctx, input_tensor, layer) {
 #' @keywords internal
 nn_build_flatten <- function(ctx, input_tensor, layer) {
   n_features <- prod(layer$input_shape)
-  # Batch dim is the last non-1 dimension, determined by n_dims
-  ndims <- ggml_n_dims(input_tensor)
-  shape <- ggml_tensor_shape(input_tensor)
-  batch_size <- shape[ndims]
+  # Derive the batch size from the element count rather than from
+  # ggml_n_dims(): ggml reports a trailing unit dimension as absent, so a batch
+  # of 1 makes a [W, H, C, 1] input look 3-D and the batch size would be read
+  # off the channel axis instead.
+  batch_size <- as.integer(ggml_nelements(input_tensor) / n_features)
 
   ggml_reshape_2d(ctx, input_tensor, n_features, batch_size)
 }
@@ -865,32 +918,166 @@ nn_build_dense <- function(ctx, input_tensor, layer) {
   nn_apply_activation(ctx, out, layer$config$activation)
 }
 
-#' Build batch_norm forward pass
-#' @return A \code{ggml_tensor} with RMS-normalized, scaled and shifted values.
+#' Normalize a conv-shaped input over the batch and all spatial positions
+#'
+#' Batch normalization pools its statistics per channel over the batch AND every
+#' spatial position. \code{ggml_mean()} only reduces \code{ne[0]}, so the input is
+#' first rearranged to put all reduced axes into \code{ne[0]} and the channel into
+#' \code{ne[1]}. Both layouts fold adjacent axes, which is a pure view; only the
+#' one \code{permute} in the 4-D route costs a copy.
+#'
+#' \describe{
+#'   \item{3-D \code{[C, L, N]}}{channel is \code{ne[0]}. \code{L} and \code{N} are
+#'     adjacent, so \code{reshape} to \code{[C, L*N]} then transpose to
+#'     \code{[L*N, C]}.}
+#'   \item{4-D \code{[W, H, C, N]}}{channel is \code{ne[2]}. \code{W} and \code{H}
+#'     are adjacent (\code{reshape} to \code{[W*H, C, N]}), then \code{permute}
+#'     brings \code{N} beside \code{W*H} (\code{[W*H, N, C]}) so a second
+#'     \code{reshape} folds both into \code{[W*H*N, C]}.}
+#' }
+#'
+#' At inference time the stored running estimates are used instead, broadcast
+#' along the channel axis, so a prediction does not depend on batch composition.
+#'
+#' @param training Logical; use batch statistics (TRUE) or running estimates (FALSE).
+#' @return A \code{ggml_tensor} with the same shape as \code{input_tensor}.
 #' @keywords internal
-nn_build_batch_norm <- function(ctx, input_tensor, layer) {
+nn_bn_normalize_conv <- function(ctx, input_tensor, layer, training, eps) {
+  input_shape <- layer$input_shape
+  shape <- ggml_tensor_shape(input_tensor)
+
+  if (!isTRUE(training)) {
+    # Inference: normalize with the stored running estimates. Reshaping them onto
+    # the channel axis lets ggml_repeat broadcast over the spatial and batch axes.
+    rm <- layer$weights$running_mean
+    rv <- layer$weights$running_var
+    if (is.null(rm) || is.null(rv)) {
+      # No running estimates (e.g. an untrained or legacy model): fall back to
+      # the current batch's statistics rather than a wrong constant.
+      return(nn_bn_normalize_conv(ctx, input_tensor, layer, TRUE, eps))
+    }
+    n_ch <- as.integer(if (length(input_shape) == 3) input_shape[3] else input_shape[2])
+    if (length(input_shape) == 3) {
+      rm_b <- ggml_reshape_4d(ctx, rm, 1L, 1L, n_ch, 1L)
+      rv_b <- ggml_reshape_4d(ctx, rv, 1L, 1L, n_ch, 1L)
+    } else {
+      rm_b <- ggml_reshape_3d(ctx, rm, n_ch, 1L, 1L)
+      rv_b <- ggml_reshape_3d(ctx, rv, n_ch, 1L, 1L)
+    }
+    centred <- ggml_sub(ctx, input_tensor,
+                        ggml_cont(ctx, ggml_repeat(ctx, rm_b, input_tensor)))
+    denom <- ggml_sqrt(ctx, ggml_scale_bias(ctx, rv_b, 1.0, eps))
+    return(ggml_div(ctx, centred,
+                    ggml_cont(ctx, ggml_repeat(ctx, denom, input_tensor))))
+  }
+
+  # --- Training: statistics from the current batch -------------------------
+  if (length(input_shape) == 2) {
+    # [C, L, N] -> [C, L*N] -> [L*N, C]: the channel lands on ne[1].
+    n_ch <- as.integer(shape[1])
+    flat <- ggml_reshape_2d(ctx, input_tensor, n_ch, as.integer(shape[2] * shape[3]))
+    work <- ggml_cont(ctx, ggml_transpose(ctx, flat))
+  } else {
+    # [W, H, C, N] -> [W*H, C, N] -> [W*H, N, C] -> [W*H*N, C].
+    wh <- as.integer(shape[1] * shape[2])
+    n_ch <- as.integer(shape[3])
+    nb <- as.integer(shape[4])
+    folded <- ggml_reshape_3d(ctx, input_tensor, wh, n_ch, nb)
+    swapped <- ggml_cont(ctx, ggml_permute(ctx, folded, 0L, 2L, 1L, 3L))
+    work <- ggml_reshape_2d(ctx, swapped, wh * nb, n_ch)
+  }
+
+  mu <- ggml_mean(ctx, work)                                   # [1, C]
+  centred <- ggml_cont(ctx, ggml_sub(ctx, work,
+                                     ggml_cont(ctx, ggml_repeat(ctx, mu, work))))
+  var <- ggml_mean(ctx, ggml_sqr(ctx, centred))                # [1, C]
+  denom <- ggml_sqrt(ctx, ggml_scale_bias(ctx, var, 1.0, eps))
+  xhat <- ggml_div(ctx, centred,
+                   ggml_cont(ctx, ggml_repeat(ctx, denom, centred)))
+
+  # Undo the rearrangement so the result has the layer's own shape again.
+  #
+  # The reshape must restore the input's rank, not just its element count. With
+  # a batch of 1 the trailing dimension is a unit, and ggml_reshape_3d() on a
+  # 4-D layout would leave a tensor whose ggml_n_dims() is 3 -- nn_build_flatten()
+  # then reads the batch size off the wrong axis and aborts. Rebuilding at the
+  # original rank keeps ne[] identical to what came in.
+  if (length(input_shape) == 2) {
+    back <- ggml_cont(ctx, ggml_transpose(ctx, xhat))           # [C, L*N]
+    ggml_reshape_3d(ctx, back, n_ch, as.integer(shape[2]), as.integer(shape[3]))
+  } else {
+    unfolded <- ggml_reshape_3d(ctx, ggml_cont(ctx, xhat), wh, nb, n_ch)
+    restored <- ggml_cont(ctx, ggml_permute(ctx, unfolded, 0L, 2L, 1L, 3L))
+    ggml_reshape_4d(ctx, restored, as.integer(shape[1]), as.integer(shape[2]),
+                    n_ch, nb)
+  }
+}
+
+#' Build batch_norm forward pass
+#'
+#' Normalizes per channel over the BATCH axis -- and, for conv-shaped inputs, over
+#' every spatial position as well -- the defining property of batch normalization.
+#' During training the statistics come from the current batch; at inference time
+#' the stored running estimates are used instead, so a prediction depends only on
+#' the sample itself and not on which other samples share its batch. Mirrors
+#' \code{ag_batch_norm()} in the autograd API.
+#'
+#' For a flat \code{[features, batch]} input the batch axis is \code{ne[1]}.
+#' Reductions in ggml run along \code{ne[0]}, hence the transposes: they move the
+#' batch axis into reduction position and back. Conv-shaped inputs need a
+#' different rearrangement and are handled by \code{nn_bn_normalize_conv()}.
+#'
+#' @param training Logical; use batch statistics (TRUE) or running estimates (FALSE).
+#' @return A \code{ggml_tensor} with batch-normalized, scaled and shifted values.
+#' @keywords internal
+nn_build_batch_norm <- function(ctx, input_tensor, layer, training = TRUE) {
   gamma <- layer$weights$gamma
   beta <- layer$weights$beta
   eps <- layer$config$eps
-
-  # Use rms_norm (has backward pass, unlike ggml_norm)
-  normed <- ggml_rms_norm(ctx, input_tensor, eps = eps)
-
-  # Scale and shift: gamma * normed + beta
-  # gamma and beta are 1D [n_features], need reshape for broadcasting
   input_shape <- layer$input_shape
+
+  # gamma and beta are 1D [n_features]; reshape so they broadcast along the
+  # channel axis when the input carries spatial dimensions. The channel axis
+  # differs per input rank -- see nn_bn_channel_axis() for the layout.
   if (length(input_shape) == 3) {
-    # [W, H, C, N] -> reshape gamma to [1, 1, C, 1]
+    # Conv2D: ggml [W, H, C, N], channel is ne[2] -> gamma as [1, 1, C, 1]
     gamma_r <- ggml_reshape_4d(ctx, gamma, 1L, 1L, as.integer(input_shape[3]), 1L)
     beta_r <- ggml_reshape_4d(ctx, beta, 1L, 1L, as.integer(input_shape[3]), 1L)
   } else if (length(input_shape) == 2) {
-    # [L, C, N] -> reshape gamma to [1, C, 1]
-    gamma_r <- ggml_reshape_3d(ctx, gamma, 1L, as.integer(input_shape[2]), 1L)
-    beta_r <- ggml_reshape_3d(ctx, beta, 1L, as.integer(input_shape[2]), 1L)
+    # Conv1D/LSTM: R [seq, size] -> ggml [size, seq, N]. The channel is `size`,
+    # i.e. ne[0], so gamma broadcasts as [C, 1, 1]. (This used to reshape to
+    # [1, C, 1], which put the per-channel scale on the sequence axis.)
+    gamma_r <- ggml_reshape_3d(ctx, gamma, as.integer(input_shape[2]), 1L, 1L)
+    beta_r <- ggml_reshape_3d(ctx, beta, as.integer(input_shape[2]), 1L, 1L)
   } else {
     # [features, N] -> gamma is already [features], broadcast over N
     gamma_r <- gamma
     beta_r <- beta
+  }
+
+  if (length(input_shape) > 1) {
+    normed <- nn_bn_normalize_conv(ctx, input_tensor, layer, training, eps)
+    out <- ggml_mul(ctx, normed, gamma_r)
+    return(ggml_add(ctx, out, beta_r))
+  }
+
+  if (isTRUE(training)) {
+    # [features, batch] -> [batch, features] so ne[0] is the batch axis
+    xt <- ggml_cont(ctx, ggml_transpose(ctx, input_tensor))
+    mu <- ggml_mean(ctx, xt)                                  # [1, features]
+    centred <- ggml_cont(ctx, ggml_sub(ctx, xt, ggml_cont(ctx, ggml_repeat(ctx, mu, xt))))
+    var <- ggml_mean(ctx, ggml_sqr(ctx, centred))             # [1, features]
+    denom <- ggml_sqrt(ctx, ggml_scale_bias(ctx, var, 1.0, eps))
+    xhat <- ggml_div(ctx, centred, ggml_cont(ctx, ggml_repeat(ctx, denom, centred)))
+    normed <- ggml_cont(ctx, ggml_transpose(ctx, xhat))       # back to [features, batch]
+
+  } else {
+    # Inference: normalize with the stored running estimates.
+    rm <- layer$weights$running_mean
+    rv <- layer$weights$running_var
+    centred <- ggml_sub(ctx, input_tensor, ggml_cont(ctx, ggml_repeat(ctx, rm, input_tensor)))
+    denom <- ggml_sqrt(ctx, ggml_scale_bias(ctx, rv, 1.0, eps))
+    normed <- ggml_div(ctx, centred, ggml_cont(ctx, ggml_repeat(ctx, denom, input_tensor)))
   }
 
   out <- ggml_mul(ctx, normed, gamma_r)
@@ -936,7 +1123,7 @@ nn_build_layer <- function(ctx, input_tensor, layer, training = TRUE,
     "global_average_pooling_2d" = nn_build_global_average_pooling_2d(ctx, input_tensor, layer),
     "flatten" = nn_build_flatten(ctx, input_tensor, layer),
     "dense" = nn_build_dense(ctx, input_tensor, layer),
-    "batch_norm" = nn_build_batch_norm(ctx, input_tensor, layer),
+    "batch_norm" = nn_build_batch_norm(ctx, input_tensor, layer, training),
     "dropout" = nn_build_dropout(ctx, input_tensor, layer, training),
     "embedding" = nn_build_embedding(ctx_weights, ctx, input_tensor, layer),
     "lstm" = nn_build_lstm(ctx, input_tensor, layer, batch_size = NULL),

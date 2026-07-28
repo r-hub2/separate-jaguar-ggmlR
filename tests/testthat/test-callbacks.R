@@ -288,18 +288,25 @@ test_that("ggml_callback_early_stopping stops ggml_fit early", {
   s <- make_linear_setup()
   on.exit(cleanup_setup(s))
 
-  # patience=1: should stop after 2 epochs with no improvement
+  # On this problem val_loss improves every epoch, so early stopping on the real
+  # metric would never fire -- correctly. Feed the callback a metric that never
+  # improves, so `patience` is what decides and the test measures the stopping
+  # mechanism rather than how fast this particular setup happens to converge.
+  cb <- ggml_callback_early_stopping(monitor = "val_loss", patience = 1)
+  stalled <- list(on_epoch_end = function(epoch, logs, state) {
+    logs$val_loss <- 1.0
+    cb$on_epoch_end(epoch, logs, state)
+  })
+
   hist <- suppressMessages(ggml_fit(
     s$sched, s$ctx_compute, s$inputs, s$outputs, s$dataset,
     nepoch = 20L, nbatch_logical = 10L,
     val_split = 0.2, silent = TRUE,
-    callbacks = list(
-      ggml_callback_early_stopping(monitor = "val_loss", patience = 1)
-    )
+    callbacks = list(stalled)
   ))
 
-  # Should have stopped before 20 epochs
-  expect_lt(nrow(hist), 20)
+  # Epoch 1 sets the best value, epoch 2 fails to improve and trips patience=1.
+  expect_equal(nrow(hist), 2L)
 })
 
 # ============================================================================

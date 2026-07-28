@@ -86,7 +86,7 @@ test_that("get_rel_pos + add_rel_pos match upstream reference values", {
   be <- ggml_backend_cpu_init()
   on.exit(ggml_backend_free(be), add = TRUE)
   ggml_backend_cpu_set_n_threads(be, 2L)
-  ggml_backend_alloc_ctx_tensors(ctx, be)
+  buf <- ggml_backend_alloc_ctx_tensors(ctx, be)
 
   ggml_backend_tensor_set_data(t,  as.numeric(0:8))        # buf_f16 from 0
   ggml_backend_tensor_set_data(t2, as.numeric(1:9))        # buf_f16 + 1

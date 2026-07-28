@@ -247,6 +247,41 @@ else
   echo "SIMD: disabled (default). Use --with-simd to enable."
 fi
 
+# --- Detect CPU architecture for arch-fallback ---
+#
+# We only ship arch/x86/ native implementations. On non-x86 targets (Windows
+# arm64) we need -DGGML_CPU_GENERIC so that arch-fallback.h maps all _generic
+# functions to their canonical names; otherwise the aarch64 branch of that
+# header expects arch/arm/ sources we don't ship, and the link fails with
+# undefined ggml_gemv_*/ggml_gemm_* repack symbols. Same mechanism as the
+# Unix configure.
+#
+# Unlike the Unix configure we cannot trust `uname -m`: on Windows arm64 the
+# MSYS shell may run under x64 emulation and report x86_64 even though the
+# toolchain targets aarch64. Ask the C compiler for its target triple instead
+# (both gcc and clang support -dumpmachine), reading CC from R's Makeconf when
+# it is not in the environment.
+echo "Detecting CPU architecture..."
+GENERIC_CPPFLAGS=""
+X86_OBJECTS="ggml-cpu/arch/x86/cpu-feats.o ggml-cpu/arch/x86/quants.o ggml-cpu/arch/x86/repack.o"
+ARCH_CC="${CC:-}"
+if [ -z "$ARCH_CC" ] && [ -n "$MAKECONF" ]; then
+  ARCH_CC=$(grep '^CC *=' "$MAKECONF" | head -1 | sed 's/[^=]*= *//')
+fi
+[ -z "$ARCH_CC" ] && ARCH_CC=gcc
+ARCH=$($ARCH_CC -dumpmachine 2>/dev/null)
+[ -z "$ARCH" ] && ARCH=$(uname -m 2>/dev/null || echo "unknown")
+case "$ARCH" in
+  x86_64*|i?86*|amd64*)
+    echo "  x86 architecture detected ($ARCH), using native arch/x86/ implementations"
+    ;;
+  *)
+    GENERIC_CPPFLAGS="-DGGML_CPU_GENERIC"
+    X86_OBJECTS=""
+    echo "  Non-x86 architecture ($ARCH), using generic CPU fallbacks"
+    ;;
+esac
+
 # --- Build Vulkan shaders ---
 if [ "$USE_VULKAN" = "yes" ]; then
 
@@ -382,6 +417,8 @@ sed \
   -e "s|@OPENMP_CFLAGS@|$OPENMP_CFLAGS|g" \
   -e "s|@OPENMP_CXXFLAGS@|$OPENMP_CXXFLAGS|g" \
   -e "s|@OPENMP_CPPFLAGS@|$OPENMP_CPPFLAGS|g" \
+  -e "s|@GENERIC_CPPFLAGS@|$GENERIC_CPPFLAGS|g" \
+  -e "s|@X86_OBJECTS@|$X86_OBJECTS|g" \
   src/Makevars.win.in > src/Makevars.win
 
 # Sync public headers from src/ to inst/include/
