@@ -76,7 +76,8 @@ heavy <- c(
   "quants-iq-degenerate",
   "getrows-offload-vulkan",
   "gpu-linalg",
-  "sc-umap"
+  "sc-umap",
+  "diagnostics"
 )
 
 # Under the valgrind memtest, running the full light suite (~67 files) blows

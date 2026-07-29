@@ -3,6 +3,7 @@
 #include <R_ext/Rdynload.h>
 #include "ggml.h"
 #include "ggml-cpu.h"
+#include "r_ptr_check.h"
 
 // Vulkan functions (defined in r_interface_vulkan.c)
 extern SEXP R_ggml_vulkan_is_available(void);
@@ -126,6 +127,12 @@ extern SEXP R_ggml_backend_dev_supports_op(SEXP, SEXP);
 extern SEXP R_ggml_backend_dev_supports_buft(SEXP, SEXP);
 extern SEXP R_ggml_backend_dev_offload_op(SEXP, SEXP);
 extern SEXP R_ggml_backend_dev_init(SEXP, SEXP);
+extern SEXP R_ggml_backend_dev_buffer_type(SEXP);
+extern SEXP R_ggml_backend_dev_host_buffer_type(SEXP);
+extern SEXP R_ggml_backend_buft_name(SEXP);
+extern SEXP R_ggml_backend_buft_get_alignment(SEXP);
+extern SEXP R_ggml_backend_buft_get_max_size(SEXP);
+extern SEXP R_ggml_backend_buft_is_host(SEXP);
 // Backend registry
 extern SEXP R_ggml_backend_reg_count(void);
 extern SEXP R_ggml_backend_reg_get(SEXP);
@@ -411,8 +418,8 @@ SEXP R_ggml_init(SEXP mem_size, SEXP no_alloc) {
 }
 
 SEXP R_ggml_free(SEXP ctx_ptr) {
-    struct ggml_context * ctx = (struct ggml_context *) R_ExternalPtrAddr(ctx_ptr);
-    
+    struct ggml_context * ctx = (struct ggml_context *) r_ptr_freeable(ctx_ptr, "context");
+
     if (ctx != NULL) {
         ggml_free(ctx);
         R_ClearExternalPtr(ctx_ptr);
@@ -1696,6 +1703,12 @@ static const R_CallMethodDef CallEntries[] = {
     {"R_ggml_backend_dev_supports_op",          (DL_FUNC) &R_ggml_backend_dev_supports_op,           2},
     {"R_ggml_backend_dev_supports_buft",        (DL_FUNC) &R_ggml_backend_dev_supports_buft,         2},
     {"R_ggml_backend_dev_offload_op",           (DL_FUNC) &R_ggml_backend_dev_offload_op,            2},
+    {"R_ggml_backend_dev_buffer_type",          (DL_FUNC) &R_ggml_backend_dev_buffer_type,           1},
+    {"R_ggml_backend_dev_host_buffer_type",     (DL_FUNC) &R_ggml_backend_dev_host_buffer_type,      1},
+    {"R_ggml_backend_buft_name",                (DL_FUNC) &R_ggml_backend_buft_name,                 1},
+    {"R_ggml_backend_buft_get_alignment",       (DL_FUNC) &R_ggml_backend_buft_get_alignment,        1},
+    {"R_ggml_backend_buft_get_max_size",        (DL_FUNC) &R_ggml_backend_buft_get_max_size,         1},
+    {"R_ggml_backend_buft_is_host",             (DL_FUNC) &R_ggml_backend_buft_is_host,              1},
     {"R_ggml_backend_dev_init",                 (DL_FUNC) &R_ggml_backend_dev_init,                  2},
     {"R_ggml_backend_reg_count",                (DL_FUNC) &R_ggml_backend_reg_count,                 0},
     {"R_ggml_backend_reg_get",                  (DL_FUNC) &R_ggml_backend_reg_get,                   1},

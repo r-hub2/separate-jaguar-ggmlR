@@ -6,6 +6,7 @@
 #include <Rinternals.h>
 #include "ggml.h"
 #include "ggml-backend.h"
+#include "r_ptr_check.h"
 
 #ifdef GGML_USE_VULKAN
 #include "ggml-vulkan.h"
@@ -501,7 +502,7 @@ SEXP R_ggml_vulkan_init(SEXP device_idx) {
 // Free Vulkan backend
 SEXP R_ggml_vulkan_free(SEXP backend_ptr) {
 #ifdef GGML_USE_VULKAN
-    ggml_backend_t backend = (ggml_backend_t)R_ExternalPtrAddr(backend_ptr);
+    ggml_backend_t backend = (ggml_backend_t) r_ptr_freeable(backend_ptr, "backend");
 
     if (backend != NULL) {
         ggml_backend_free(backend);

@@ -7,6 +7,7 @@
 #include "ggml-backend.h"
 #include "ggml-cpu.h"
 #include "ggml-opt.h"
+#include "r_ptr_check.h"
 
 extern int ggmlR_get_n_threads(void);
 
@@ -86,7 +87,7 @@ SEXP R_ggml_opt_dataset_init(SEXP type_data, SEXP type_label,
 
 // Free dataset
 SEXP R_ggml_opt_dataset_free(SEXP dataset_ptr) {
-    ggml_opt_dataset_t dataset = (ggml_opt_dataset_t)R_ExternalPtrAddr(dataset_ptr);
+    ggml_opt_dataset_t dataset = (ggml_opt_dataset_t) r_ptr_freeable(dataset_ptr, "dataset");
 
     if (dataset != NULL) {
         ggml_opt_dataset_free(dataset);
@@ -178,13 +179,10 @@ SEXP R_ggml_opt_dataset_shuffle(SEXP opt_ctx_ptr, SEXP dataset_ptr, SEXP idata) 
 // Get batch from dataset
 SEXP R_ggml_opt_dataset_get_batch(SEXP dataset_ptr, SEXP data_batch_ptr,
                                    SEXP labels_batch_ptr, SEXP ibatch) {
-    ggml_opt_dataset_t dataset = (ggml_opt_dataset_t)R_ExternalPtrAddr(dataset_ptr);
-    struct ggml_tensor * data_batch = (struct ggml_tensor *)R_ExternalPtrAddr(data_batch_ptr);
-    struct ggml_tensor * labels_batch = NULL;
-
-    if (labels_batch_ptr != R_NilValue) {
-        labels_batch = (struct ggml_tensor *)R_ExternalPtrAddr(labels_batch_ptr);
-    }
+    ggml_opt_dataset_t dataset = (ggml_opt_dataset_t) r_ptr_required(dataset_ptr, "dataset");
+    struct ggml_tensor * data_batch = (struct ggml_tensor *) r_ptr_required(data_batch_ptr, "data_batch tensor");
+    struct ggml_tensor * labels_batch =
+        (struct ggml_tensor *) r_ptr_or_null(labels_batch_ptr, "labels_batch");
 
     if (dataset == NULL) {
         error("Invalid dataset pointer");
@@ -274,7 +272,7 @@ SEXP R_ggml_opt_init(SEXP sched_ptr, SEXP loss_type, SEXP optimizer_type, SEXP o
 
 // Free optimizer context
 SEXP R_ggml_opt_free(SEXP opt_ctx_ptr) {
-    ggml_opt_context_t opt_ctx = (ggml_opt_context_t)R_ExternalPtrAddr(opt_ctx_ptr);
+    ggml_opt_context_t opt_ctx = (ggml_opt_context_t) r_ptr_freeable(opt_ctx_ptr, "optimizer context");
 
     if (opt_ctx != NULL) {
         ggml_opt_free(opt_ctx);
@@ -462,7 +460,7 @@ SEXP R_ggml_opt_result_init(void) {
 
 // Free result
 SEXP R_ggml_opt_result_free(SEXP result_ptr) {
-    ggml_opt_result_t result = (ggml_opt_result_t)R_ExternalPtrAddr(result_ptr);
+    ggml_opt_result_t result = (ggml_opt_result_t) r_ptr_freeable(result_ptr, "result");
 
     if (result != NULL) {
         ggml_opt_result_free(result);
@@ -596,11 +594,11 @@ SEXP R_ggml_opt_fit(SEXP sched_ptr, SEXP ctx_compute_ptr,
                     SEXP dataset_ptr, SEXP loss_type, SEXP optimizer_type,
                     SEXP nepoch, SEXP nbatch_logical, SEXP val_split, SEXP silent) {
 
-    ggml_backend_sched_t sched = (ggml_backend_sched_t)R_ExternalPtrAddr(sched_ptr);
-    struct ggml_context * ctx_compute = (struct ggml_context *)R_ExternalPtrAddr(ctx_compute_ptr);
-    struct ggml_tensor * inputs = (struct ggml_tensor *)R_ExternalPtrAddr(inputs_ptr);
-    struct ggml_tensor * outputs = (struct ggml_tensor *)R_ExternalPtrAddr(outputs_ptr);
-    ggml_opt_dataset_t dataset = (ggml_opt_dataset_t)R_ExternalPtrAddr(dataset_ptr);
+    ggml_backend_sched_t sched = (ggml_backend_sched_t) r_ptr_required(sched_ptr, "scheduler");
+    struct ggml_context * ctx_compute = (struct ggml_context *) r_ptr_required(ctx_compute_ptr, "compute context");
+    struct ggml_tensor * inputs = (struct ggml_tensor *) r_ptr_required(inputs_ptr, "inputs tensor");
+    struct ggml_tensor * outputs = (struct ggml_tensor *) r_ptr_required(outputs_ptr, "outputs tensor");
+    ggml_opt_dataset_t dataset = (ggml_opt_dataset_t) r_ptr_required(dataset_ptr, "dataset");
 
     if (sched == NULL) {
         error("Invalid scheduler pointer");
@@ -785,11 +783,11 @@ SEXP R_ggml_opt_result_pred(SEXP result_ptr) {
 // Prepare allocation for non-static graphs
 SEXP R_ggml_opt_prepare_alloc(SEXP opt_ctx_ptr, SEXP ctx_compute_ptr,
                                SEXP graph_ptr, SEXP inputs_ptr, SEXP outputs_ptr) {
-    ggml_opt_context_t opt_ctx = (ggml_opt_context_t)R_ExternalPtrAddr(opt_ctx_ptr);
-    struct ggml_context * ctx_compute = (struct ggml_context *)R_ExternalPtrAddr(ctx_compute_ptr);
-    struct ggml_cgraph * gf = (struct ggml_cgraph *)R_ExternalPtrAddr(graph_ptr);
-    struct ggml_tensor * inputs = (struct ggml_tensor *)R_ExternalPtrAddr(inputs_ptr);
-    struct ggml_tensor * outputs = (struct ggml_tensor *)R_ExternalPtrAddr(outputs_ptr);
+    ggml_opt_context_t opt_ctx = (ggml_opt_context_t) r_ptr_required(opt_ctx_ptr, "optimizer context");
+    struct ggml_context * ctx_compute = (struct ggml_context *) r_ptr_required(ctx_compute_ptr, "compute context");
+    struct ggml_cgraph * gf = (struct ggml_cgraph *) r_ptr_required(graph_ptr, "graph");
+    struct ggml_tensor * inputs = (struct ggml_tensor *) r_ptr_required(inputs_ptr, "inputs tensor");
+    struct ggml_tensor * outputs = (struct ggml_tensor *) r_ptr_required(outputs_ptr, "outputs tensor");
 
     if (opt_ctx == NULL) {
         error("Invalid optimizer context pointer");
@@ -876,8 +874,8 @@ static void r_callback_wrapper(
 SEXP R_ggml_opt_epoch(SEXP opt_ctx_ptr, SEXP dataset_ptr,
                        SEXP result_train_ptr, SEXP result_eval_ptr,
                        SEXP idata_split, SEXP callback_train, SEXP callback_eval) {
-    ggml_opt_context_t opt_ctx = (ggml_opt_context_t)R_ExternalPtrAddr(opt_ctx_ptr);
-    ggml_opt_dataset_t dataset = (ggml_opt_dataset_t)R_ExternalPtrAddr(dataset_ptr);
+    ggml_opt_context_t opt_ctx = (ggml_opt_context_t) r_ptr_required(opt_ctx_ptr, "optimizer context");
+    ggml_opt_dataset_t dataset = (ggml_opt_dataset_t) r_ptr_required(dataset_ptr, "dataset");
 
     ggml_opt_result_t result_train = NULL;
     ggml_opt_result_t result_eval = NULL;

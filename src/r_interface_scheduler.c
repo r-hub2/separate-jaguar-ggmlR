@@ -6,6 +6,7 @@
 #include "ggml.h"
 #include "ggml-backend.h"
 #include "ggml-cpu.h"
+#include "r_ptr_check.h"
 
 extern int ggmlR_get_n_threads(void);
 
@@ -62,6 +63,10 @@ SEXP R_ggml_backend_sched_new(SEXP backends_list, SEXP parallel, SEXP graph_size
     // Extract backend pointers from list
     for (int i = 0; i < n_user_backends; i++) {
         SEXP backend_ptr = VECTOR_ELT(backends_list, i);
+        if (TYPEOF(backend_ptr) != EXTPTRSXP) {
+            free(backends);
+            error("backends[[%d]] is not an external pointer", i + 1);
+        }
         backends[i] = (ggml_backend_t)R_ExternalPtrAddr(backend_ptr);
 
         if (backends[i] == NULL) {
@@ -115,7 +120,7 @@ SEXP R_ggml_backend_sched_new(SEXP backends_list, SEXP parallel, SEXP graph_size
 
 // Free backend scheduler
 SEXP R_ggml_backend_sched_free(SEXP sched_ptr) {
-    ggml_backend_sched_t sched = (ggml_backend_sched_t)R_ExternalPtrAddr(sched_ptr);
+    ggml_backend_sched_t sched = (ggml_backend_sched_t) r_ptr_freeable(sched_ptr, "scheduler");
 
     if (sched != NULL) {
         ggml_backend_sched_free(sched);
@@ -211,19 +216,9 @@ SEXP R_ggml_backend_sched_get_n_copies(SEXP sched_ptr) {
 
 // Set which backend a tensor should use
 SEXP R_ggml_backend_sched_set_tensor_backend(SEXP sched_ptr, SEXP tensor_ptr, SEXP backend_ptr) {
-    ggml_backend_sched_t sched = (ggml_backend_sched_t)R_ExternalPtrAddr(sched_ptr);
-    struct ggml_tensor * tensor = (struct ggml_tensor *)R_ExternalPtrAddr(tensor_ptr);
-    ggml_backend_t backend = (ggml_backend_t)R_ExternalPtrAddr(backend_ptr);
-
-    if (sched == NULL) {
-        error("Invalid scheduler pointer");
-    }
-    if (tensor == NULL) {
-        error("Invalid tensor pointer");
-    }
-    if (backend == NULL) {
-        error("Invalid backend pointer");
-    }
+    ggml_backend_sched_t sched = (ggml_backend_sched_t) r_ptr_required(sched_ptr, "scheduler");
+    struct ggml_tensor * tensor = (struct ggml_tensor *) r_ptr_required(tensor_ptr, "tensor");
+    ggml_backend_t backend = (ggml_backend_t) r_ptr_required(backend_ptr, "backend");
 
     ggml_backend_sched_set_tensor_backend(sched, tensor, backend);
     return R_NilValue;
@@ -318,7 +313,7 @@ static bool r_ggml_trace_eval_cb(struct ggml_tensor * t, bool ask, void * user_d
     }
     free(buf);
 
-    fprintf(stderr, "[trace] %-34s %-12s ne=[%lld,%lld,%lld,%lld] sum=%.6f min=%.6f max=%.6f\n",
+    REprintf("[trace] %-34s %-12s ne=[%lld,%lld,%lld,%lld] sum=%.6f min=%.6f max=%.6f\n",
             t->name[0] ? t->name : "<unnamed>", ggml_op_name(t->op),
             (long long) t->ne[0], (long long) t->ne[1],
             (long long) t->ne[2], (long long) t->ne[3],

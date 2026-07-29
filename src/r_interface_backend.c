@@ -6,6 +6,7 @@
 #include "ggml.h"
 #include "ggml-backend.h"
 #include "ggml-backend-impl.h"
+#include "r_ptr_check.h"
 
 // ============================================================================
 // Device Type Constants
@@ -206,46 +207,86 @@ SEXP R_ggml_backend_dev_get_props(SEXP device_ptr) {
     return result;
 }
 
-SEXP R_ggml_backend_dev_supports_op(SEXP device_ptr, SEXP op_ptr) {
-    ggml_backend_dev_t device = (ggml_backend_dev_t)R_ExternalPtrAddr(device_ptr);
-    struct ggml_tensor * op = (struct ggml_tensor *)R_ExternalPtrAddr(op_ptr);
+// Default buffer type of a device. The buffer type is owned by the backend and
+// lives as long as it does, so the returned pointer carries no finalizer and
+// must not be freed by R.
+SEXP R_ggml_backend_dev_buffer_type(SEXP device_ptr) {
+    ggml_backend_dev_t device = (ggml_backend_dev_t) r_ptr_required(device_ptr, "device");
 
-    if (device == NULL) {
-        error("Invalid device pointer");
+    ggml_backend_buffer_type_t buft = ggml_backend_dev_buffer_type(device);
+    if (buft == NULL) {
+        return R_NilValue;
     }
-    if (op == NULL) {
-        error("Invalid tensor pointer");
+
+    SEXP ptr = PROTECT(R_MakeExternalPtr(buft, R_NilValue, R_NilValue));
+    UNPROTECT(1);
+    return ptr;
+}
+
+// Pinned/host buffer type of a device, or NULL if the device has none (the CPU
+// backend and several others legitimately return NULL here).
+SEXP R_ggml_backend_dev_host_buffer_type(SEXP device_ptr) {
+    ggml_backend_dev_t device = (ggml_backend_dev_t) r_ptr_required(device_ptr, "device");
+
+    ggml_backend_buffer_type_t buft = ggml_backend_dev_host_buffer_type(device);
+    if (buft == NULL) {
+        return R_NilValue;
     }
+
+    SEXP ptr = PROTECT(R_MakeExternalPtr(buft, R_NilValue, R_NilValue));
+    UNPROTECT(1);
+    return ptr;
+}
+
+SEXP R_ggml_backend_buft_name(SEXP buft_ptr) {
+    ggml_backend_buffer_type_t buft =
+        (ggml_backend_buffer_type_t) r_ptr_required(buft_ptr, "buffer type");
+
+    const char * name = ggml_backend_buft_name(buft);
+    return mkString(name ? name : "");
+}
+
+SEXP R_ggml_backend_buft_get_alignment(SEXP buft_ptr) {
+    ggml_backend_buffer_type_t buft =
+        (ggml_backend_buffer_type_t) r_ptr_required(buft_ptr, "buffer type");
+
+    return ScalarReal((double) ggml_backend_buft_get_alignment(buft));
+}
+
+SEXP R_ggml_backend_buft_get_max_size(SEXP buft_ptr) {
+    ggml_backend_buffer_type_t buft =
+        (ggml_backend_buffer_type_t) r_ptr_required(buft_ptr, "buffer type");
+
+    return ScalarReal((double) ggml_backend_buft_get_max_size(buft));
+}
+
+SEXP R_ggml_backend_buft_is_host(SEXP buft_ptr) {
+    ggml_backend_buffer_type_t buft =
+        (ggml_backend_buffer_type_t) r_ptr_required(buft_ptr, "buffer type");
+
+    return ScalarLogical(ggml_backend_buft_is_host(buft));
+}
+
+SEXP R_ggml_backend_dev_supports_op(SEXP device_ptr, SEXP op_ptr) {
+    ggml_backend_dev_t device = (ggml_backend_dev_t) r_ptr_required(device_ptr, "device");
+    struct ggml_tensor * op = (struct ggml_tensor *) r_ptr_required(op_ptr, "tensor");
 
     bool supports = ggml_backend_dev_supports_op(device, op);
     return ScalarLogical(supports);
 }
 
 SEXP R_ggml_backend_dev_supports_buft(SEXP device_ptr, SEXP buft_ptr) {
-    ggml_backend_dev_t device = (ggml_backend_dev_t)R_ExternalPtrAddr(device_ptr);
-    ggml_backend_buffer_type_t buft = (ggml_backend_buffer_type_t)R_ExternalPtrAddr(buft_ptr);
-
-    if (device == NULL) {
-        error("Invalid device pointer");
-    }
-    if (buft == NULL) {
-        error("Invalid buffer type pointer");
-    }
+    ggml_backend_dev_t device = (ggml_backend_dev_t) r_ptr_required(device_ptr, "device");
+    ggml_backend_buffer_type_t buft =
+        (ggml_backend_buffer_type_t) r_ptr_required(buft_ptr, "buffer type");
 
     bool supports = ggml_backend_dev_supports_buft(device, buft);
     return ScalarLogical(supports);
 }
 
 SEXP R_ggml_backend_dev_offload_op(SEXP device_ptr, SEXP op_ptr) {
-    ggml_backend_dev_t device = (ggml_backend_dev_t)R_ExternalPtrAddr(device_ptr);
-    struct ggml_tensor * op = (struct ggml_tensor *)R_ExternalPtrAddr(op_ptr);
-
-    if (device == NULL) {
-        error("Invalid device pointer");
-    }
-    if (op == NULL) {
-        error("Invalid tensor pointer");
-    }
+    ggml_backend_dev_t device = (ggml_backend_dev_t) r_ptr_required(device_ptr, "device");
+    struct ggml_tensor * op = (struct ggml_tensor *) r_ptr_required(op_ptr, "tensor");
 
     bool offload = ggml_backend_dev_offload_op(device, op);
     return ScalarLogical(offload);
@@ -364,7 +405,7 @@ SEXP R_ggml_backend_load(SEXP path) {
 }
 
 SEXP R_ggml_backend_unload(SEXP reg_ptr) {
-    ggml_backend_reg_t reg = (ggml_backend_reg_t)R_ExternalPtrAddr(reg_ptr);
+    ggml_backend_reg_t reg = (ggml_backend_reg_t) r_ptr_freeable(reg_ptr, "backend registry");
 
     if (reg != NULL) {
         ggml_backend_unload(reg);
@@ -401,7 +442,7 @@ SEXP R_ggml_backend_event_new(SEXP device_ptr) {
 }
 
 SEXP R_ggml_backend_event_free(SEXP event_ptr) {
-    ggml_backend_event_t event = (ggml_backend_event_t)R_ExternalPtrAddr(event_ptr);
+    ggml_backend_event_t event = (ggml_backend_event_t) r_ptr_freeable(event_ptr, "event");
 
     if (event != NULL) {
         ggml_backend_event_free(event);
@@ -479,12 +520,10 @@ SEXP R_ggml_backend_graph_plan_create(SEXP backend_ptr, SEXP graph_ptr) {
 }
 
 SEXP R_ggml_backend_graph_plan_free(SEXP backend_ptr, SEXP plan_ptr) {
-    ggml_backend_t backend = (ggml_backend_t)R_ExternalPtrAddr(backend_ptr);
-    ggml_backend_graph_plan_t plan = (ggml_backend_graph_plan_t)R_ExternalPtrAddr(plan_ptr);
+    ggml_backend_t backend = (ggml_backend_t) r_ptr_required(backend_ptr, "backend");
+    ggml_backend_graph_plan_t plan =
+        (ggml_backend_graph_plan_t) r_ptr_freeable(plan_ptr, "graph plan");
 
-    if (backend == NULL) {
-        error("Invalid backend pointer");
-    }
     if (plan != NULL) {
         ggml_backend_graph_plan_free(backend, plan);
         R_ClearExternalPtr(plan_ptr);
@@ -730,15 +769,8 @@ SEXP R_ggml_backend_get_device(SEXP backend_ptr) {
 // ============================================================================
 
 SEXP R_ggml_backend_graph_compute_async(SEXP backend_ptr, SEXP graph_ptr) {
-    ggml_backend_t backend = (ggml_backend_t)R_ExternalPtrAddr(backend_ptr);
-    struct ggml_cgraph * graph = (struct ggml_cgraph *)R_ExternalPtrAddr(graph_ptr);
-
-    if (backend == NULL) {
-        error("Invalid backend pointer");
-    }
-    if (graph == NULL) {
-        error("Invalid graph pointer");
-    }
+    ggml_backend_t backend = (ggml_backend_t) r_ptr_required(backend_ptr, "backend");
+    struct ggml_cgraph * graph = (struct ggml_cgraph *) r_ptr_required(graph_ptr, "graph");
 
     enum ggml_status status = ggml_backend_graph_compute_async(backend, graph);
     return ScalarInteger((int)status);
@@ -770,6 +802,9 @@ SEXP R_ggml_backend_multi_buffer_alloc_buffer(SEXP buffers_list) {
 
     for (size_t i = 0; i < n_buffers; i++) {
         SEXP buf_ptr = VECTOR_ELT(buffers_list, i);
+        if (TYPEOF(buf_ptr) != EXTPTRSXP) {
+            error("buffers[[%zu]] is not an external pointer", i + 1);
+        }
         buffers[i] = (ggml_backend_buffer_t)R_ExternalPtrAddr(buf_ptr);
         if (buffers[i] == NULL) {
             error("Invalid buffer pointer at index %zu", i);
@@ -836,11 +871,7 @@ SEXP R_ggml_backend_register(SEXP reg_ptr) {
 }
 
 SEXP R_ggml_backend_device_register(SEXP device_ptr) {
-    ggml_backend_dev_t device = (ggml_backend_dev_t)R_ExternalPtrAddr(device_ptr);
-
-    if (device == NULL) {
-        error("Invalid device pointer");
-    }
+    ggml_backend_dev_t device = (ggml_backend_dev_t) r_ptr_required(device_ptr, "device");
 
     ggml_backend_device_register(device);
     return R_NilValue;

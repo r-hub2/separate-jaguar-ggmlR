@@ -183,6 +183,83 @@ ggml_backend_dev_offload_op <- function(device, op) {
  .Call("R_ggml_backend_dev_offload_op", device, op)
 }
 
+#' Get the default buffer type of a device
+#'
+#' Returns the buffer type a device allocates from by default. This is the
+#' buffer type the device itself reports as supported, so it is the natural
+#' argument to \code{\link{ggml_backend_dev_supports_buft}}.
+#'
+#' The buffer type is owned by the backend and lives for as long as the backend
+#' does; the returned external pointer has no finalizer and must not be freed.
+#'
+#' @param device External pointer to device
+#' @return External pointer to the buffer type, or NULL if the device has none
+#' @export
+#' @family backend
+#' @examples
+#' \donttest{
+#' dev <- ggml_backend_dev_get(0)
+#' buft <- ggml_backend_dev_buffer_type(dev)
+#' ggml_backend_buft_name(buft)
+#' ggml_backend_dev_supports_buft(dev, buft)  # TRUE: a device supports its own
+#' }
+ggml_backend_dev_buffer_type <- function(device) {
+ .Call("R_ggml_backend_dev_buffer_type", device)
+}
+
+#' Get the host (pinned) buffer type of a device
+#'
+#' Returns the buffer type used for pinned host memory, which allows faster
+#' host-device transfers. Many devices — including the CPU backend — have no
+#' such buffer type and return NULL.
+#'
+#' As with \code{\link{ggml_backend_dev_buffer_type}}, the returned pointer is
+#' owned by the backend and must not be freed.
+#'
+#' @param device External pointer to device
+#' @return External pointer to the host buffer type, or NULL if unavailable
+#' @export
+#' @family backend
+ggml_backend_dev_host_buffer_type <- function(device) {
+ .Call("R_ggml_backend_dev_host_buffer_type", device)
+}
+
+#' Get the name of a buffer type
+#' @param buft External pointer to buffer type
+#' @return Character name of the buffer type
+#' @export
+#' @family backend
+ggml_backend_buft_name <- function(buft) {
+ .Call("R_ggml_backend_buft_name", buft)
+}
+
+#' Get the allocation alignment of a buffer type
+#' @param buft External pointer to buffer type
+#' @return Numeric alignment in bytes
+#' @export
+#' @family backend
+ggml_backend_buft_get_alignment <- function(buft) {
+ .Call("R_ggml_backend_buft_get_alignment", buft)
+}
+
+#' Get the maximum allocation size of a buffer type
+#' @param buft External pointer to buffer type
+#' @return Numeric maximum single-allocation size in bytes
+#' @export
+#' @family backend
+ggml_backend_buft_get_max_size <- function(buft) {
+ .Call("R_ggml_backend_buft_get_max_size", buft)
+}
+
+#' Check whether a buffer type allocates host-accessible memory
+#' @param buft External pointer to buffer type
+#' @return Logical, TRUE if buffers of this type live in host memory
+#' @export
+#' @family backend
+ggml_backend_buft_is_host <- function(buft) {
+ .Call("R_ggml_backend_buft_is_host", buft)
+}
+
 #' Initialize backend from device
 #' @param device External pointer to device
 #' @param params Optional parameters string

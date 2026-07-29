@@ -5,6 +5,7 @@
 #include <string.h>
 #include "ggml.h"
 #include "gguf.h"
+#include "r_ptr_check.h"
 
 /* ── finalizer ─────────────────────────────────────────────── */
 
@@ -65,7 +66,7 @@ SEXP R_gguf_free(SEXP r_ptr) {
 /* ── R_gguf_info(ptr) ──────────────────────────────────────── */
 
 SEXP R_gguf_info(SEXP r_ptr) {
-    struct gguf_context *gf = (struct gguf_context *)R_ExternalPtrAddr(r_ptr);
+    struct gguf_context *gf = (struct gguf_context *)r_ptr_freeable(r_ptr, "GGUF context");
     if (!gf) Rf_error("GGUF context already freed");
 
     SEXP result = PROTECT(Rf_allocVector(VECSXP, 3));
@@ -87,7 +88,7 @@ SEXP R_gguf_info(SEXP r_ptr) {
 /* ── R_gguf_metadata(ptr) ──────────────────────────────────── */
 
 SEXP R_gguf_metadata(SEXP r_ptr) {
-    struct gguf_context *gf = (struct gguf_context *)R_ExternalPtrAddr(r_ptr);
+    struct gguf_context *gf = (struct gguf_context *)r_ptr_freeable(r_ptr, "GGUF context");
     if (!gf) Rf_error("GGUF context already freed");
 
     int64_t n_kv = gguf_get_n_kv(gf);
@@ -198,7 +199,7 @@ SEXP R_gguf_metadata(SEXP r_ptr) {
 /* ── R_gguf_tensor_names(ptr) ──────────────────────────────── */
 
 SEXP R_gguf_tensor_names(SEXP r_ptr) {
-    struct gguf_context *gf = (struct gguf_context *)R_ExternalPtrAddr(r_ptr);
+    struct gguf_context *gf = (struct gguf_context *)r_ptr_freeable(r_ptr, "GGUF context");
     if (!gf) Rf_error("GGUF context already freed");
 
     int64_t n = gguf_get_n_tensors(gf);
@@ -214,7 +215,7 @@ SEXP R_gguf_tensor_names(SEXP r_ptr) {
 /* ── R_gguf_tensor_info(ptr, name) ─────────────────────────── */
 
 SEXP R_gguf_tensor_info(SEXP r_ptr, SEXP r_name) {
-    struct gguf_context *gf = (struct gguf_context *)R_ExternalPtrAddr(r_ptr);
+    struct gguf_context *gf = (struct gguf_context *)r_ptr_freeable(r_ptr, "GGUF context");
     if (!gf) Rf_error("GGUF context already freed");
 
     const char *name = CHAR(STRING_ELT(r_name, 0));
@@ -275,7 +276,7 @@ SEXP R_gguf_tensor_info(SEXP r_ptr, SEXP r_name) {
 /* ── R_gguf_tensor_data(ptr, name) — dequantize to f32 ─────── */
 
 SEXP R_gguf_tensor_data(SEXP r_ptr, SEXP r_name) {
-    struct gguf_context *gf = (struct gguf_context *)R_ExternalPtrAddr(r_ptr);
+    struct gguf_context *gf = (struct gguf_context *)r_ptr_freeable(r_ptr, "GGUF context");
     if (!gf) Rf_error("GGUF context already freed");
 
     SEXP tag = R_ExternalPtrTag(r_ptr);
