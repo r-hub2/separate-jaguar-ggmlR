@@ -23,6 +23,38 @@ ggml_build_forward_expand <- function(ctx, tensor) {
   .Call("R_ggml_build_forward_expand", ctx, tensor, PACKAGE = "ggmlR")
 }
 
+#' Add Another Root to an Existing Computation Graph
+#'
+#' \code{ggml_build_forward_expand()} always creates a fresh graph, so it can
+#' only express a single root.  A model with several \emph{independent} output
+#' branches needs every output expanded into the same graph: an output that is
+#' unreachable from the first root never enters the graph, the scheduler never
+#' assigns it a buffer, and reading it back fails.  This appends \code{tensor}
+#' and its ancestors to a graph that already exists.
+#'
+#' @param graph Graph object returned by \code{ggml_build_forward_expand()}.
+#' @param tensor Additional output tensor to expand into \code{graph}.
+#' @return \code{NULL}, invisibly.  \code{graph} is modified in place.
+#' @export
+#' @examples
+#' \donttest{
+#' ctx <- ggml_init(16 * 1024 * 1024)
+#' a <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 4)
+#' b <- ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 4)
+#' ggml_set_f32(a, 1:4)
+#' ggml_set_f32(b, 5:8)
+#' # Two independent outputs -- neither reachable from the other.
+#' o1 <- ggml_add(ctx, a, a)
+#' o2 <- ggml_add(ctx, b, b)
+#' graph <- ggml_build_forward_expand(ctx, o1)
+#' ggml_graph_expand(graph, o2)
+#' ggml_graph_compute(ctx, graph)
+#' ggml_free(ctx)
+#' }
+ggml_graph_expand <- function(graph, tensor) {
+  invisible(.Call("R_ggml_graph_expand", graph, tensor, PACKAGE = "ggmlR"))
+}
+
 #' Compute Computation Graph
 #' 
 #' Executes the computation graph using CPU backend

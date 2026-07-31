@@ -74,7 +74,14 @@ ggml_dense <- function(units, activation = NULL, name = NULL, trainable = TRUE) 
   )
 }
 
-#' Create a Conv2D Layer Object
+#' Create a Reusable Conv2D Layer Object
+#'
+#' Builds a \emph{layer object} to be applied with \code{\link{ggml_apply}},
+#' which is how a single set of convolution weights is shared between several
+#' inputs.  This is the convolution counterpart of \code{\link{ggml_dense}}.
+#'
+#' For the ordinary pipe-style form that appends a conv layer to a graph
+#' (\code{x |> ggml_layer_conv_2d(...)}), see \code{\link{ggml_layer_conv_2d}}.
 #'
 #' @param filters Number of output filters.
 #' @param kernel_size Integer or length-2 integer vector.
@@ -84,8 +91,19 @@ ggml_dense <- function(units, activation = NULL, name = NULL, trainable = TRUE) 
 #' @param name Optional character name.
 #' @param trainable Logical.
 #' @return A \code{ggml_layer} object.
+#' @seealso \code{\link{ggml_apply}}, \code{\link{ggml_dense}}
 #' @export
-ggml_layer_conv_2d <- function(filters, kernel_size, activation = NULL,
+#' @examples
+#' \donttest{
+#' # One convolution shared between two inputs.
+#' shared <- ggml_conv_2d_layer(filters = 4L, kernel_size = 3L, activation = "relu")
+#' x1 <- ggml_input(shape = c(8L, 8L, 1L))
+#' x2 <- ggml_input(shape = c(8L, 8L, 1L))
+#' o1 <- ggml_apply(x1, shared)
+#' o2 <- ggml_apply(x2, shared)
+#' stopifnot(identical(o1$layer_id, o2$layer_id))   # same weights
+#' }
+ggml_conv_2d_layer <- function(filters, kernel_size, activation = NULL,
                           strides = c(1L, 1L), padding = "valid",
                           name = NULL, trainable = TRUE) {
   if (length(kernel_size) == 1L) kernel_size <- rep(as.integer(kernel_size), 2L)
@@ -107,7 +125,14 @@ ggml_layer_conv_2d <- function(filters, kernel_size, activation = NULL,
   )
 }
 
-#' Create a Conv1D Layer Object
+#' Create a Reusable Conv1D Layer Object
+#'
+#' Builds a \emph{layer object} to be applied with \code{\link{ggml_apply}},
+#' which is how a single set of convolution weights is shared between several
+#' inputs.  This is the convolution counterpart of \code{\link{ggml_dense}}.
+#'
+#' For the ordinary pipe-style form that appends a conv layer to a graph
+#' (\code{x |> ggml_layer_conv_1d(...)}), see \code{\link{ggml_layer_conv_1d}}.
 #'
 #' @param filters Number of output filters.
 #' @param kernel_size Integer kernel size.
@@ -117,8 +142,19 @@ ggml_layer_conv_2d <- function(filters, kernel_size, activation = NULL,
 #' @param name Optional character name.
 #' @param trainable Logical.
 #' @return A \code{ggml_layer} object.
+#' @seealso \code{\link{ggml_apply}}, \code{\link{ggml_dense}}
 #' @export
-ggml_layer_conv_1d <- function(filters, kernel_size, activation = NULL,
+#' @examples
+#' \donttest{
+#' # One convolution shared between two sequence inputs.
+#' shared <- ggml_conv_1d_layer(filters = 4L, kernel_size = 3L)
+#' x1 <- ggml_input(shape = c(16L, 2L))
+#' x2 <- ggml_input(shape = c(16L, 2L))
+#' o1 <- ggml_apply(x1, shared)
+#' o2 <- ggml_apply(x2, shared)
+#' stopifnot(identical(o1$layer_id, o2$layer_id))   # same weights
+#' }
+ggml_conv_1d_layer <- function(filters, kernel_size, activation = NULL,
                           strides = 1L, padding = "valid",
                           name = NULL, trainable = TRUE) {
   if (is.null(name)) name <- nn_auto_name("conv_1d")
@@ -463,6 +499,97 @@ ggml_layer_concatenate <- function(tensors, axis = 0L, name = NULL) {
 }
 
 # ============================================================================
+# ggml_layer_custom()
+# ============================================================================
+
+#' Define a Custom Layer From an R Function
+#'
+#' Turns an arbitrary composition of ggml operations into a reusable functional
+#' layer.  \code{ggml_layer_custom()} does not build anything itself — it
+#' returns a \emph{layer function} that behaves like any other
+#' \code{ggml_layer_*()} and can be piped into a model.
+#'
+#' The \code{forward} function is called once while the compute graph is being
+#' built, with the active \code{ggml_context} and the parent tensor.  Because
+#' the returned tensor becomes an ordinary graph node, gradients flow through a
+#' custom layer automatically — as long as every operation used inside
+#' \code{forward} implements a backward pass.
+#'
+#' @section Weights:
+#' Custom layers are stateless: \code{forward} maps activations to activations
+#' and owns no trainable parameters.  Put learnable weights in a neighbouring
+#' \code{ggml_layer_dense()}, or use the autograd API (\code{ag_*}) when a layer
+#' needs its own parameters.
+#'
+#' @param forward A function of \code{(ctx, x)} returning a ggml tensor, where
+#'   \code{ctx} is the compute context and \code{x} the parent tensor.  All
+#'   ggml operations take \code{ctx} as their first argument.
+#' @param name Optional character name for the layer.  Used as the base for
+#'   auto-generated node names.
+#' @param output_shape Output shape excluding the batch dimension.  Defaults to
+#'   \code{NULL}, meaning the layer preserves its input shape (correct for
+#'   element-wise layers such as custom activations).  Supply an integer vector
+#'   when \code{forward} changes the shape, or a function of the input shape.
+#' @return A layer function of \code{(x, name = NULL)} that appends a custom
+#'   node to the graph and returns the new \code{ggml_tensor_node}.
+#' @export
+#' @examples
+#' \donttest{
+#' # Mish activation: x * tanh(softplus(x))
+#' layer_mish <- ggml_layer_custom(
+#'   name    = "mish",
+#'   forward = function(ctx, x) ggml_mul(ctx, x, ggml_tanh(ctx, ggml_softplus(ctx, x)))
+#' )
+#'
+#' inp <- ggml_input(shape = 8L)
+#' out <- inp |>
+#'   ggml_layer_dense(16L) |>
+#'   layer_mish() |>
+#'   ggml_layer_dense(2L, activation = "softmax")
+#' model <- ggml_model(inputs = inp, outputs = out)
+#' }
+ggml_layer_custom <- function(forward, name = NULL, output_shape = NULL) {
+  if (!is.function(forward)) {
+    stop("'forward' must be a function of (ctx, x) returning a ggml tensor.")
+  }
+  if (length(formals(forward)) < 2L) {
+    stop("'forward' must accept two arguments: (ctx, x). ",
+         "Every ggml operation takes the context as its first argument, ",
+         "e.g. forward = function(ctx, x) ggml_relu(ctx, x).")
+  }
+  if (!is.null(output_shape) &&
+      !is.function(output_shape) && !is.numeric(output_shape)) {
+    stop("'output_shape' must be NULL, an integer vector, or a function ",
+         "of the input shape.")
+  }
+
+  base_name <- if (is.null(name)) "custom" else name
+
+  # The returned layer function is what the user pipes into.
+  function(x, name = NULL) {
+    if (!inherits(x, "ggml_tensor_node")) {
+      stop("A custom layer must be applied to a ggml_tensor_node ",
+           "(the output of ggml_input() or another layer).")
+    }
+    node_name <- if (!is.null(name)) name else nn_auto_name(base_name)
+
+    structure(
+      list(
+        id        = nn_next_node_id(),
+        node_type = "custom",
+        config    = list(
+          name         = node_name,
+          forward      = forward,
+          output_shape = output_shape
+        ),
+        parents = list(x)
+      ),
+      class = "ggml_tensor_node"
+    )
+  }
+}
+
+# ============================================================================
 # Topological sort
 # ============================================================================
 
@@ -504,6 +631,17 @@ nn_functional_output_shape <- function(node, parent_shapes) {
     },
     "batch_norm" = parent_shapes[[1]],
     "add" = parent_shapes[[1]],
+    "custom" = {
+      osh <- node$config$output_shape
+      if (is.null(osh)) {
+        # Element-wise by default: the layer preserves its input shape.
+        parent_shapes[[1]]
+      } else if (is.function(osh)) {
+        as.integer(osh(parent_shapes[[1]]))
+      } else {
+        as.integer(osh)
+      }
+    },
     "concatenate" = {
       ndim <- length(parent_shapes[[1]])
       axis <- node$config$axis  # 0-based, may be negative
@@ -701,6 +839,16 @@ nn_build_functional_node <- function(node, built_tensors, built_shapes,
       # be read off the channel axis instead.
       bs <- as.integer(ggml_nelements(input_t) / n_features)
       out <- ggml_reshape_2d(ctx_compute, input_t, n_features, bs)
+      list(tensor = out, weights = list())
+    },
+
+    "custom" = {
+      input_t <- built_tensors[[node$parents[[1]]$id]]
+      out <- node$config$forward(ctx_compute, input_t)
+      if (is.null(out)) {
+        stop("Custom layer '", node$config$name, "': forward() returned NULL. ",
+             "It must return the ggml tensor produced by its operations.")
+      }
       list(tensor = out, weights = list())
     },
 
@@ -1022,11 +1170,27 @@ nn_build_functional_node <- function(node, built_tensors, built_shapes,
 #'   during evaluate/predict (dropout becomes identity).
 #' @return Named list with inputs, outputs, ctx_weights, ctx_compute, buffer, node_weights
 #' @keywords internal
-nn_build_functional_graph <- function(model, batch_size, training = FALSE) {
+# logits_output: see the note on nn_build_graph() in nn_model.R.
+# ggml_cross_entropy_loss() applies log_softmax internally, so a model ending in
+# a softmax activation would have it applied twice during cross-entropy
+# training. Set for fit(), left FALSE for inference.
+nn_build_functional_graph <- function(model, batch_size, training = FALSE,
+                                      logits_output = FALSE) {
   backend      <- model$compilation$backend
   saved_weights <- model$node_weights  # NULL before first fit, list after
   # R-vector weights from ggml_load_model (node_id -> named list of numeric)
   saved_weights_data <- model$node_weights_data
+
+  # Strip a final softmax from the output nodes when logits are wanted. The
+  # nodes are R lists, so editing the local `model` copy leaves the caller's
+  # model definition (and therefore inference) untouched. Node identity is by
+  # $id, which is preserved.
+  if (logits_output) {
+    model$outputs <- lapply(model$outputs, function(n) {
+      if (identical(n$config$activation, "softmax")) n$config$activation <- NULL
+      n
+    })
+  }
 
   # Topological sort -- inputs first, outputs last
   nodes_sorted <- nn_topo_sort(model$outputs)
@@ -1278,7 +1442,8 @@ nn_build_functional_graph <- function(model, batch_size, training = FALSE) {
       ggml_backend_tensor_set_data(w$mask, rep(1.0, n))
       # mask is NOT a param -- not trained, updated externally each epoch
     }
-    # input / flatten / add / concatenate / max_pooling_2d / det.dropout have no weights
+    # input / flatten / add / concatenate / custom / max_pooling_2d / det.dropout
+    # have no weights
   }
 
   # Collect input/output ggml tensors (always lists)
@@ -1327,6 +1492,8 @@ ggml_compile.ggml_functional_model <- function(model,
                                                 loss = "categorical_crossentropy",
                                                 metrics = c("accuracy"),
                                                 backend = "auto") {
+  nn_validate_compilation(optimizer, loss, metrics)
+
   # Backend selection (same logic as Sequential)
   use_vulkan <- FALSE
   if (backend == "auto") {
@@ -1437,18 +1604,33 @@ nn_prepare_x <- function(model, x) {
 # batch_size: number of samples in this batch
 # samp_start: 0-based index of first sample in this batch
 nn_fill_inputs <- function(x_ggml, ne_per_input, input_tensors, batch_size, samp_start) {
+  nn_fill_inputs_idx(x_ggml, ne_per_input, input_tensors,
+                     samp_start + seq_len(batch_size) - 1L)
+}
+
+# As nn_fill_inputs(), but taking explicit 0-based sample indices instead of a
+# contiguous run. The multi-input path has no ggml_opt_dataset to permute, so
+# shuffling there is done by handing this function a permuted index vector.
+nn_fill_inputs_idx <- function(x_ggml, ne_per_input, input_tensors, samp_idx) {
   ne_total <- sum(ne_per_input)
   for (i in seq_along(input_tensors)) {
     ne_i <- ne_per_input[i]
     # offsets of this input's block within each sample's interleaved row
     inp_offset <- sum(ne_per_input[seq_len(i - 1L)])
-    # collect ne_i values for each of the batch_size samples
-    chunk <- unlist(lapply(seq_len(batch_size) - 1L, function(s) {
-      base <- (samp_start + s) * ne_total + inp_offset
+    # collect ne_i values for each requested sample
+    chunk <- unlist(lapply(samp_idx, function(s) {
+      base <- s * ne_total + inp_offset
       x_ggml[(base + 1L):(base + ne_i)]
     }), use.names = FALSE)
     ggml_backend_tensor_set_data(input_tensors[[i]], chunk)
   }
+}
+
+# Gather the label rows for a set of 0-based sample indices.
+nn_gather_labels <- function(y_ggml, ne_label, samp_idx) {
+  unlist(lapply(samp_idx, function(s) {
+    y_ggml[(s * ne_label + 1L):((s + 1L) * ne_label)]
+  }), use.names = FALSE)
 }
 
 # ============================================================================
@@ -1464,6 +1646,15 @@ nn_fill_inputs <- function(x_ggml, ne_per_input, input_tensors, batch_size, samp
 #' @param validation_split Fraction of data for validation (default: 0).
 #' @param validation_data Optional list(x_val, y_val). Overrides validation_split.
 #' @param verbose 0 = silent, 1 = progress (default: 1).
+#' @param shuffle Shuffle the data (default \code{TRUE}).  The dataset is
+#'   shuffled once before the train/validation split, then the training portion
+#'   is reshuffled each epoch while the validation portion stays fixed.  Set to
+#'   \code{FALSE} for time series or exactly reproducible runs.
+#' @param callbacks List of callback objects, e.g.
+#'   \code{\link{ggml_callback_early_stopping}} or an LR scheduler.  Each is a
+#'   list with \code{on_epoch_begin(epoch, logs, state)} and/or
+#'   \code{on_epoch_end(epoch, logs, state)}; setting \code{state$stop <- TRUE}
+#'   stops training.
 #' @param ... Additional arguments (ignored).
 #' @export
 ggml_fit.ggml_functional_model <- function(model, x, y,
@@ -1472,6 +1663,8 @@ ggml_fit.ggml_functional_model <- function(model, x, y,
                                             validation_split = 0.0,
                                             validation_data = NULL,
                                             verbose = 1L,
+                                            shuffle = TRUE,
+                                            callbacks = list(),
                                             ...) {
   if (!model$compiled) {
     stop("Model must be compiled before training. Call ggml_compile() first.")
@@ -1485,6 +1678,10 @@ ggml_fit.ggml_functional_model <- function(model, x, y,
   ne_datapoint  <- sum(ne_per_input)   # total elements per sample across all inputs
 
   # Handle validation_data
+  # Shuffling before the split is only safe when the split is a fraction we
+  # choose; an explicit validation_data set is positional and must stay put.
+  shuffle_all <- shuffle
+
   if (!is.null(validation_data)) {
     if (!is.list(validation_data) || length(validation_data) < 2L) {
       stop("validation_data must be a list: list(x_val, y_val)")
@@ -1497,6 +1694,10 @@ ggml_fit.ggml_functional_model <- function(model, x, y,
     x_ggml  <- c(x_ggml, xp_val$x_ggml)
     y       <- rbind(y, y_val)
     validation_split <- n_val / (n_train + n_val)
+    # The split is positional: these rows ARE the user's validation set. A
+    # pre-split shuffle would mix them back into training, so it is suppressed
+    # here. Per-epoch shuffling of the training portion is unaffected.
+    shuffle_all <- FALSE
   }
 
   n_samples <- length(x_ggml) %/% ne_datapoint
@@ -1528,13 +1729,18 @@ ggml_fit.ggml_functional_model <- function(model, x, y,
   optimizer_type <- switch(model$compilation$optimizer,
     "adam" = , "adamw" = ggml_opt_optimizer_type_adamw(),
     "sgd"  = ggml_opt_optimizer_type_sgd(),
-    ggml_opt_optimizer_type_adamw()
+    stop("Unsupported optimizer: ", model$compilation$optimizer, call. = FALSE)
   )
   loss_type <- switch(model$compilation$loss,
-    "categorical_crossentropy" = , "crossentropy" = ggml_opt_loss_type_cross_entropy(),
+    "categorical_crossentropy" = , "crossentropy" = , "cross_entropy" = ggml_opt_loss_type_cross_entropy(),
     "mse" = , "mean_squared_error" = ggml_opt_loss_type_mse(),
-    ggml_opt_loss_type_cross_entropy()
+    stop("Unsupported loss: ", model$compilation$loss, call. = FALSE)
   )
+
+  # Must agree with the switch above: cross-entropy training needs logits
+  # because ggml_cross_entropy_loss() softmaxes its own input.
+  use_ce_loss <- model$compilation$loss %in%
+    c("categorical_crossentropy", "crossentropy", "cross_entropy")
 
   train_loss_vec <- numeric(epochs)
   train_acc_vec  <- numeric(epochs)
@@ -1557,14 +1763,17 @@ ggml_fit.ggml_functional_model <- function(model, x, y,
     ggml_backend_tensor_set_data(ggml_opt_dataset_data(dataset),   x_ggml)
     ggml_backend_tensor_set_data(ggml_opt_dataset_labels(dataset), y_ggml)
 
-    graph_info <- nn_build_functional_graph(model, batch_size, training = TRUE)
+    graph_info <- nn_build_functional_graph(model, batch_size, training = TRUE,
+                                            logits_output = use_ce_loss)
     fit_input  <- graph_info$inputs[[1L]]
     fit_output <- graph_info$outputs[[length(graph_info$outputs)]]
 
     has_stochastic_dropout <- length(graph_info$dropout_masks) > 0L
 
     if (!has_stochastic_dropout) {
-      history_raw <- ggml_opt_fit(
+      # R-side epoch loop (ggml_fit_opt), not the single C call (ggml_opt_fit),
+      # so callbacks get a hook between epochs.
+      history_raw <- ggml_fit_opt(
         sched          = model$compilation$sched,
         ctx_compute    = graph_info$ctx_compute,
         inputs         = fit_input,
@@ -1575,12 +1784,16 @@ ggml_fit.ggml_functional_model <- function(model, x, y,
         nepoch         = epochs,
         nbatch_logical = batch_size,
         val_split      = validation_split,
+        shuffle        = shuffle,
+        shuffle_all    = shuffle_all,
+        callbacks      = callbacks,
         silent         = (verbose == 0L)
       )
       train_loss_vec <- history_raw$train_loss
       train_acc_vec  <- history_raw$train_accuracy
       val_loss_vec   <- history_raw$val_loss
       val_acc_vec    <- history_raw$val_accuracy
+      epochs_run     <- nrow(history_raw)
 
     } else {
       n_batches_log <- n_samples %/% batch_size
@@ -1597,10 +1810,35 @@ ggml_fit.ggml_functional_model <- function(model, x, y,
       )
       opt_ctx <- init_info$opt_ctx
 
+      # Same shuffling contract as ggml_fit_opt(): the whole dataset once,
+      # before the split, so the validation tail is a random sample rather than
+      # the end of the input; then the training portion each epoch.
+      if (shuffle_all && batch_size < n_samples) {
+        ggml_opt_dataset_shuffle(opt_ctx, dataset, -1)
+      }
+
       result_train <- ggml_opt_result_init()
       result_val   <- ggml_opt_result_init()
 
+      # Mutable state shared with callbacks -- same contract as ggml_fit_opt().
+      cb_state <- new.env(parent = emptyenv())
+      cb_state$stop   <- FALSE
+      cb_state$lr_ud  <- init_info$lr_ud
+      cb_state$nepoch <- as.integer(epochs)
+
+      epochs_run <- 0L
       for (ep in seq_len(epochs)) {
+        logs <- list()
+        for (cb in callbacks) {
+          if (is.function(cb$on_epoch_begin)) cb$on_epoch_begin(ep, logs, cb_state)
+          if (isTRUE(cb_state$stop)) break
+        }
+        if (isTRUE(cb_state$stop)) break
+
+        if (shuffle && batch_size < idata_split) {
+          ggml_opt_dataset_shuffle(opt_ctx, dataset, idata_split)
+        }
+
         for (dm in graph_info$dropout_masks) {
           keep_prob <- 1.0 - dm$rate
           mask_vals <- as.numeric(runif(dm$ne) < keep_prob)
@@ -1621,6 +1859,26 @@ ggml_fit.ggml_functional_model <- function(model, x, y,
         train_acc_vec[ep]  <- ta[["accuracy"]]
         val_loss_vec[ep]   <- if (validation_split > 0) vl[["loss"]] else NA_real_
         val_acc_vec[ep]    <- if (validation_split > 0) va[["accuracy"]] else NA_real_
+        epochs_run <- ep
+
+        logs$train_loss     <- train_loss_vec[ep]
+        logs$train_accuracy <- train_acc_vec[ep]
+        logs$val_loss       <- val_loss_vec[ep]
+        logs$val_accuracy   <- val_acc_vec[ep]
+        for (cb in callbacks) {
+          if (is.function(cb$on_epoch_end)) cb$on_epoch_end(ep, logs, cb_state)
+          if (isTRUE(cb_state$stop)) break
+        }
+        if (isTRUE(cb_state$stop)) break
+      }
+
+      # Drop the tail of epochs a callback cut short.
+      if (epochs_run < epochs) {
+        keep <- seq_len(epochs_run)
+        train_loss_vec <- train_loss_vec[keep]
+        train_acc_vec  <- train_acc_vec[keep]
+        val_loss_vec   <- val_loss_vec[keep]
+        val_acc_vec    <- val_acc_vec[keep]
       }
 
       ggml_opt_result_free(result_train)
@@ -1638,11 +1896,14 @@ ggml_fit.ggml_functional_model <- function(model, x, y,
     # -----------------------------------------------------------------------
     # Multi-input path — manual batch loop filling each input tensor
     # -----------------------------------------------------------------------
-    # Split into train / val portions (no shuffle for simplicity)
+    # Split into train / val portions.  Which samples land in each is decided by
+    # `perm` below, so with shuffle = TRUE the validation portion is a random
+    # subset rather than whatever sits at the end of the input.
     n_train_samples <- as.integer(floor((1.0 - validation_split) * n_samples %/% batch_size) * batch_size)
     if (n_train_samples == 0L) n_train_samples <- n_samples
 
-    graph_info <- nn_build_functional_graph(model, batch_size, training = TRUE)
+    graph_info <- nn_build_functional_graph(model, batch_size, training = TRUE,
+                                            logits_output = use_ce_loss)
     fit_output <- graph_info$outputs[[length(graph_info$outputs)]]
 
     init_info <- ggml_opt_init_for_fit(
@@ -1663,7 +1924,37 @@ ggml_fit.ggml_functional_model <- function(model, x, y,
     n_batches_train <- n_train_samples %/% batch_size
     n_batches_val   <- (n_samples - n_train_samples) %/% batch_size
 
+    # Mutable state shared with callbacks -- same contract as ggml_fit_opt().
+    cb_state <- new.env(parent = emptyenv())
+    cb_state$stop   <- FALSE
+    cb_state$lr_ud  <- init_info$lr_ud
+    cb_state$nepoch <- as.integer(epochs)
+
+    # There is no ggml_opt_dataset on this path, so shuffling is a permutation
+    # of 0-based sample indices. Same contract as ggml_fit_opt(): permute
+    # everything once before the split, then only the training portion each
+    # epoch, leaving the validation samples fixed.
+    perm <- seq_len(n_samples) - 1L
+    if (shuffle_all) perm <- sample(perm)
+
+    epochs_run <- 0L
     for (ep in seq_len(epochs)) {
+      logs <- list()
+      for (cb in callbacks) {
+        if (is.function(cb$on_epoch_begin)) cb$on_epoch_begin(ep, logs, cb_state)
+        if (isTRUE(cb_state$stop)) break
+      }
+      if (isTRUE(cb_state$stop)) break
+
+      # Reshuffle the training portion only; perm[1:n_train_samples] are the
+      # training samples, the tail stays put so validation is comparable
+      # across epochs.
+      if (shuffle && n_train_samples > 1L && n_train_samples < n_samples) {
+        perm[seq_len(n_train_samples)] <- sample(perm[seq_len(n_train_samples)])
+      } else if (shuffle && n_train_samples == n_samples && n_samples > 1L) {
+        perm <- sample(perm)
+      }
+
       # Regenerate dropout masks
       for (dm in graph_info$dropout_masks) {
         keep_prob <- 1.0 - dm$rate
@@ -1678,13 +1969,10 @@ ggml_fit.ggml_functional_model <- function(model, x, y,
 
       # Training batches
       for (ib in seq_len(n_batches_train)) {
-        samp_start <- (ib - 1L) * batch_size
-        nn_fill_inputs(x_ggml, ne_per_input, graph_info$inputs, batch_size, samp_start)
-
-        # Fill labels for this batch
-        lab_start <- samp_start * ne_label + 1L
-        lab_end   <- lab_start + batch_size * ne_label - 1L
-        ggml_backend_tensor_set_data(labels_tensor, y_ggml[lab_start:lab_end])
+        idx <- perm[(ib - 1L) * batch_size + seq_len(batch_size)]
+        nn_fill_inputs_idx(x_ggml, ne_per_input, graph_info$inputs, idx)
+        ggml_backend_tensor_set_data(labels_tensor,
+                                     nn_gather_labels(y_ggml, ne_label, idx))
 
         ggml_opt_alloc(opt_ctx, backward = TRUE)
         ggml_opt_eval(opt_ctx, result_train)
@@ -1693,12 +1981,10 @@ ggml_fit.ggml_functional_model <- function(model, x, y,
       # Validation batches (forward only)
       if (n_batches_val > 0L) {
         for (ib in seq_len(n_batches_val)) {
-          samp_start <- n_train_samples + (ib - 1L) * batch_size
-          nn_fill_inputs(x_ggml, ne_per_input, graph_info$inputs, batch_size, samp_start)
-
-          lab_start <- samp_start * ne_label + 1L
-          lab_end   <- lab_start + batch_size * ne_label - 1L
-          ggml_backend_tensor_set_data(labels_tensor, y_ggml[lab_start:lab_end])
+          idx <- perm[n_train_samples + (ib - 1L) * batch_size + seq_len(batch_size)]
+          nn_fill_inputs_idx(x_ggml, ne_per_input, graph_info$inputs, idx)
+          ggml_backend_tensor_set_data(labels_tensor,
+                                       nn_gather_labels(y_ggml, ne_label, idx))
 
           ggml_opt_alloc(opt_ctx, backward = FALSE)
           ggml_opt_eval(opt_ctx, result_val)
@@ -1723,6 +2009,26 @@ ggml_fit.ggml_functional_model <- function(model, x, y,
                       val_loss_vec[ep], val_acc_vec[ep]))
         cat("\n")
       }
+      epochs_run <- ep
+
+      logs$train_loss     <- train_loss_vec[ep]
+      logs$train_accuracy <- train_acc_vec[ep]
+      logs$val_loss       <- val_loss_vec[ep]
+      logs$val_accuracy   <- val_acc_vec[ep]
+      for (cb in callbacks) {
+        if (is.function(cb$on_epoch_end)) cb$on_epoch_end(ep, logs, cb_state)
+        if (isTRUE(cb_state$stop)) break
+      }
+      if (isTRUE(cb_state$stop)) break
+    }
+
+    # Drop the tail of epochs a callback cut short.
+    if (epochs_run < epochs) {
+      keep <- seq_len(epochs_run)
+      train_loss_vec <- train_loss_vec[keep]
+      train_acc_vec  <- train_acc_vec[keep]
+      val_loss_vec   <- val_loss_vec[keep]
+      val_acc_vec    <- val_acc_vec[keep]
     }
 
     ggml_opt_result_free(result_train)
@@ -1735,13 +2041,15 @@ ggml_fit.ggml_functional_model <- function(model, x, y,
     ggml_free(graph_info$ctx_compute)
   }
 
+  # Length of the metric vectors, not `epochs`: a callback may have stopped
+  # training early, in which case every branch above truncated them.
   model$history <- structure(
     list(
       train_loss     = train_loss_vec,
       train_accuracy = train_acc_vec,
       val_loss       = val_loss_vec,
       val_accuracy   = val_acc_vec,
-      epochs         = seq_len(epochs)
+      epochs         = seq_along(train_loss_vec)
     ),
     class = "ggml_history"
   )
@@ -1769,7 +2077,7 @@ ggml_evaluate.ggml_functional_model <- function(model, x, y,
 
   # Compute loss
   loss_name <- model$compilation$loss
-  if (loss_name %in% c("categorical_crossentropy", "crossentropy")) {
+  if (loss_name %in% c("categorical_crossentropy", "crossentropy", "cross_entropy")) {
     eps <- 1e-7
     preds_clipped <- pmax(pmin(preds_mat, 1 - eps), eps)
     loss_val <- -mean(rowSums(y * log(preds_clipped)))
@@ -1859,9 +2167,17 @@ ggml_predict.ggml_functional_model <- function(model, x, batch_size = 32L, ...) 
   n_outputs  <- length(graph_info$outputs)
   sched      <- model$compilation$sched
 
-  # Build forward graph covering all outputs
+  # Build forward graph covering all outputs.
+  # Expanding from the last output alone is not enough: with several INDEPENDENT
+  # branches (a multi-input model whose outputs share a layer but not an input)
+  # the other outputs are unreachable from that root, so they never enter the
+  # graph, the scheduler never assigns them a buffer, and reading them back
+  # fails. Expand every output into the same graph.
   graph <- ggml_build_forward_expand(graph_info$ctx_compute,
-                                     graph_info$outputs[[n_outputs]])
+                                     graph_info$outputs[[1L]])
+  for (io in seq_len(n_outputs)[-1L]) {
+    ggml_graph_expand(graph, graph_info$outputs[[io]])
+  }
 
   out_shapes     <- lapply(model$outputs, function(o) graph_info$shapes[[o$id]])
   ne_outputs_vec <- vapply(out_shapes, prod, numeric(1))

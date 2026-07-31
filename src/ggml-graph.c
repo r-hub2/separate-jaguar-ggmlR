@@ -725,6 +725,10 @@ static void ggml_compute_backward(
             }
         } break;
         case GGML_OP_CONCAT: {
+            // DIVERGENCE from upstream: upstream has no backward pass for CONCAT
+            // at all (it falls through to the "not implemented" abort), which makes
+            // any concatenated branch untrainable. The gradient of a concat is just
+            // the matching slice of the incoming grad routed back to each source.
             const int dim = ggml_get_op_params_i32(tensor, 0);
             // grad has shape [ne0, ne1, ne2, ne3] with natural contiguous strides
             // src0 occupies [0 .. src0->ne[dim]) along dimension dim

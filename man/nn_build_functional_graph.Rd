@@ -4,7 +4,12 @@
 \alias{nn_build_functional_graph}
 \title{Build ggml computation graph for a functional model}
 \usage{
-nn_build_functional_graph(model, batch_size, training = FALSE)
+nn_build_functional_graph(
+  model,
+  batch_size,
+  training = FALSE,
+  logits_output = FALSE
+)
 }
 \arguments{
 \item{model}{A ggml_functional_model}

@@ -21,33 +21,59 @@
 AG_SAVE_FORMAT  <- "ggmlR.ag_state"
 AG_SAVE_VERSION <- 1L
 
-# Collect non-parameter persistent buffers from an ag_sequential, keyed with the
-# same "layer{i}_" prefix scheme used by ag_sequential$parameters().
-.ag_collect_buffers <- function(model) {
+# Is `x` a layer-like object (environment module, or a plain-list layer such as
+# ag_linear exposing $params()/$parameters())?  Used to tell a genuine list of
+# sublayers apart from the fields of a single layer: ag_sequential() with one
+# list-based layer stores that layer's fields directly in $layers, so a naive
+# descent would recurse into its closures.
+.ag_is_layer <- function(x) {
+  if (is.environment(x)) return(inherits(x, "ag_layer") || is.function(x$forward))
+  is.list(x) && (is.function(x[["params"]]) || is.function(x[["parameters"]]))
+}
+
+# Sublayers of a module, or an empty list when it has none.
+.ag_sublayers <- function(model) {
+  layers <- model$layers
+  if (is.null(layers) || !is.list(layers)) return(list())
+  if (!all(vapply(layers, .ag_is_layer, logical(1L)))) return(list())
+  layers
+}
+
+# Collect non-parameter persistent buffers, keyed with the same nested
+# "layer{i}_" prefix scheme used by ag_sequential$parameters(): the recursion
+# descends into nested ag_sequential modules and accumulates the prefix, so a
+# batch_norm at layers[[2]]$layers[[1]] is keyed "layer2_layer1_running_mean".
+# Keys for flat modules are unchanged, so files written by earlier versions
+# still load.
+.ag_collect_buffers <- function(model, prefix = "") {
   buffers <- list()
-  layers <- if (!is.null(model$layers)) model$layers else list(model)
+  if (is.environment(model) && inherits(model, "ag_batch_norm")) {
+    buffers[[paste0(prefix, "running_mean")]] <- model$running_mean
+    buffers[[paste0(prefix, "running_var")]]  <- model$running_var
+    return(buffers)
+  }
+  layers <- .ag_sublayers(model)
   for (i in seq_along(layers)) {
-    lyr <- layers[[i]]
-    if (is.environment(lyr) && inherits(lyr, "ag_batch_norm")) {
-      buffers[[paste0("layer", i, "_running_mean")]] <- lyr$running_mean
-      buffers[[paste0("layer", i, "_running_var")]]  <- lyr$running_var
-    }
+    nested <- .ag_collect_buffers(layers[[i]], paste0(prefix, "layer", i, "_"))
+    for (nm in names(nested)) buffers[[nm]] <- nested[[nm]]
   }
   buffers
 }
 
-# Write collected buffers back into a freshly-rebuilt module (by name).
-.ag_restore_buffers <- function(model, buffers) {
+# Write collected buffers back into a freshly-rebuilt module (by name), using
+# the same nested key scheme as .ag_collect_buffers().
+.ag_restore_buffers <- function(model, buffers, prefix = "") {
   if (length(buffers) == 0L) return(invisible(model))
-  layers <- if (!is.null(model$layers)) model$layers else list(model)
+  if (is.environment(model) && inherits(model, "ag_batch_norm")) {
+    rm_key <- paste0(prefix, "running_mean")
+    rv_key <- paste0(prefix, "running_var")
+    if (!is.null(buffers[[rm_key]])) model$running_mean <- buffers[[rm_key]]
+    if (!is.null(buffers[[rv_key]])) model$running_var  <- buffers[[rv_key]]
+    return(invisible(model))
+  }
+  layers <- .ag_sublayers(model)
   for (i in seq_along(layers)) {
-    lyr <- layers[[i]]
-    if (is.environment(lyr) && inherits(lyr, "ag_batch_norm")) {
-      rm_key <- paste0("layer", i, "_running_mean")
-      rv_key <- paste0("layer", i, "_running_var")
-      if (!is.null(buffers[[rm_key]])) lyr$running_mean <- buffers[[rm_key]]
-      if (!is.null(buffers[[rv_key]])) lyr$running_var  <- buffers[[rv_key]]
-    }
+    .ag_restore_buffers(layers[[i]], buffers, paste0(prefix, "layer", i, "_"))
   }
   invisible(model)
 }
@@ -126,6 +152,19 @@ ag_save_model <- function(model, path, model_fn = NULL) {
 #' @param device Optional device for the rebuilt module (\code{"cpu"} or
 #'   \code{"gpu"}). If \code{NULL} (default), the current \code{ag_device()} is
 #'   used by the rebuild.
+#' @param dtype Optional GPU upload precision for the restored parameters
+#'   (\code{"f32"}, \code{"f16"}, or \code{"bf16"}). If \code{NULL} (default),
+#'   the dtype recorded in the file is restored, so a module saved under
+#'   \code{ag_dtype("f16")} keeps computing in f16 regardless of the loading
+#'   session's default. Pass an explicit value to override the file. Files
+#'   written before dtypes were recorded fall back to whatever
+#'   \code{model_fn} builds.
+#'
+#'   Note that this is an \emph{upload/compute} precision, not a storage
+#'   precision: parameter values always live in \code{$data} as full-precision
+#'   R numeric matrices (that is what backward needs), and \code{dtype} only
+#'   controls the precision they are uploaded to the GPU with. Saving therefore
+#'   never rounds the weights, whatever dtype is in effect.
 #' @return The reconstructed module with restored weights, in eval mode.
 #' @seealso \code{\link{ag_save_model}}
 #' @export
@@ -136,7 +175,7 @@ ag_save_model <- function(model, path, model_fn = NULL) {
 #' ag_save_model(build(), f, model_fn = build)
 #' model <- ag_load_model(f)
 #' }
-ag_load_model <- function(path, model_fn = NULL, device = NULL) {
+ag_load_model <- function(path, model_fn = NULL, device = NULL, dtype = NULL) {
   container <- readRDS(path)
 
   if (!is.list(container) || !identical(container$format, AG_SAVE_FORMAT)) {
@@ -153,6 +192,7 @@ ag_load_model <- function(path, model_fn = NULL, device = NULL) {
          "argument, or re-save the model with `model_fn` so it is stored in ",
          "the file.")
   }
+  if (!is.null(dtype)) dtype <- match.arg(dtype, c("f32", "f16", "bf16"))
 
   # Rebuild architecture (optionally on a specific device).
   if (!is.null(device)) {
@@ -189,6 +229,14 @@ ag_load_model <- function(path, model_fn = NULL, device = NULL) {
            paste(dim(new_data), collapse = "x"), ".")
     }
     p$data <- new_data
+    # dtype resolution: an explicit `dtype` argument wins; otherwise restore
+    # what the file recorded, so a module trained under ag_dtype("f16") keeps
+    # computing in f16 no matter what the loading session's default is. Files
+    # written before param_dtypes existed leave the rebuilt dtype untouched.
+    saved_dtype <- unname(container$param_dtypes[nm])
+    if (length(saved_dtype) != 1L || is.na(saved_dtype)) saved_dtype <- NULL
+    resolved <- dtype %||% saved_dtype
+    if (!is.null(resolved)) p$dtype <- resolved
     # Drop any stale GPU pointer so the next forward re-uploads $data.
     if (!is.null(p$ptr)) p$ptr <- NULL
   }

@@ -14,6 +14,10 @@
 #include <omp.h>
 #endif
 
+// r_interface_custom.c -- CPU-only guard for GGML_OP_CUSTOM nodes.
+extern const char * ggmlR_custom_check_backend(struct ggml_cgraph * graph,
+                                               ggml_backend_t backend);
+
 // ============================================================================
 // Graph-based Operations - These create computation nodes
 // ============================================================================
@@ -207,6 +211,25 @@ SEXP R_ggml_build_forward_expand(SEXP ctx_ptr, SEXP tensor_ptr) {
 
     SEXP ret = R_MakeExternalPtr(graph, R_NilValue, R_NilValue);
     return ret;
+}
+
+// Add another root to an EXISTING graph.
+//
+// R_ggml_build_forward_expand() above always allocates a fresh graph, so it can
+// only ever express a single root. A model with several independent output
+// branches (e.g. a multi-input functional model where the outputs share a layer
+// but not an input) needs every output expanded into the SAME graph -- an output
+// that is unreachable from the one root never enters the graph, so the scheduler
+// never assigns it a buffer and reading it back fails.
+//
+// This wraps upstream ggml_build_forward_expand(cgraph, tensor), which appends
+// the tensor and its ancestors to a graph that already exists.
+SEXP R_ggml_graph_expand(SEXP graph_ptr, SEXP tensor_ptr) {
+    struct ggml_cgraph * graph = (struct ggml_cgraph *) r_ptr_required(graph_ptr, "graph");
+    struct ggml_tensor * tensor = (struct ggml_tensor *) r_ptr_required(tensor_ptr, "tensor");
+
+    ggml_build_forward_expand(graph, tensor);
+    return R_NilValue;
 }
 
 // Global thread count for backend (default: use all available via OpenMP)
@@ -3120,6 +3143,15 @@ SEXP R_ggml_backend_graph_compute(SEXP backend_ptr, SEXP graph_ptr) {
 
     if (backend == NULL || graph == NULL) {
         error("Invalid pointer");
+    }
+
+    // GGML_OP_CUSTOM runs a host function pointer -- CPU backend only.
+    const char * bad = ggmlR_custom_check_backend(graph, backend);
+    if (bad != NULL) {
+        error("Custom op node '%s' cannot run on backend '%s': "
+              "ggml_custom() kernels are CPU-only. Compute this graph on the "
+              "CPU backend, or keep the custom node out of the GPU graph.",
+              bad, ggml_backend_name(backend));
     }
 
     enum ggml_status status = ggml_backend_graph_compute(backend, graph);

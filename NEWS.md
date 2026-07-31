@@ -1,3 +1,14 @@
+# ggmlR 0.8.3
+
+* **Custom operations** — `ggml_custom()` / `ggml_custom_inplace()` add a graph node computed by a C kernel, addressed by name rather than by a raw function pointer; downstream packages register their own via the `ggmlR_register_custom_op` C callable (`inst/include/ggmlR.h`). Built in: `"row_median"`, `"row_permute"` (reorders elements *within* a row, unlike `ggml_get_rows()`), `"clip_inplace"`. `ggml_custom_ops()` lists the registry. CPU-only — a custom node on a GPU backend is an error, not a backend failure.
+* **`ggml_layer_concatenate()` is trainable** — concatenated branches now receive gradients. `GGML_OP_CONCAT` has a backward pass (absent upstream, where it aborts), so multi-branch models fuse features and train end-to-end; previously only the forward graph was exercised. See `inst/examples/functional_concatenate.R`.
+* **`ggml_vulkan_status()` returns its status** — invisibly yields `list(available, n_devices, devices)` instead of `NULL`, so device discovery no longer requires re-querying with `ggml_vulkan_available()` / `ggml_vulkan_device_count()`. Console output is unchanged.
+* **`ag_layer_norm()`** — LayerNorm for the autograd engine: normalizes each example over its features (rather than each feature over the batch), with learnable `gamma`/`beta` and an exact backward pass that accounts for the mean and variance terms. No running statistics, so training and evaluation behave identically.
+* **`clip_grad_value()`** — element-wise gradient clipping into `[-clip_value, clip_value]`.
+* **`check_grad_anomaly()`** — post-`backward()` hook reporting `NaN`/`Inf` (and optionally oversized) gradients per parameter, with `action = "warn" / "stop" / "silent"`.
+* **New LR schedulers** — `lr_scheduler_onecycle()` (1cycle policy, cycles SGD momentum / Adam `beta1` inversely to the LR), `lr_scheduler_cyclic()` (triangular, `triangular2`, `exp_range`) and `lr_scheduler_warmup_cosine()` (linear warmup then cosine decay).
+* **`lr_scheduler_cosine(T_mult = )`** — full SGDR warm restarts: each cycle is `T_mult` times longer than the previous one. The default `T_mult = 1` keeps the previous constant-period behaviour.
+
 # ggmlR 0.8.2
 
 * **Fixed a global device-state leak** — the internal GPU paths (`ggml_matmul*()`, single-cell PCA / normalize / scale / UMAP) switched the process-wide `ag_device()` to `"gpu"` and never restored it, so every later `ag_*` operation silently ran on the GPU (and in its dtype). They now restore the caller's device on exit.

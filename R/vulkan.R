@@ -553,12 +553,25 @@ ggml_vulkan_device_caps <- function(device = 0L) {
 
 #' Print Vulkan status
 #'
-#' Prints information about Vulkan availability and devices.
+#' Prints information about Vulkan availability and devices, and returns the
+#' same information as a list so it can be used programmatically.
 #'
-#' @return NULL (invisible), prints status to console
+#' @return Invisibly, a list with components:
+#'   \describe{
+#'     \item{available}{Logical, whether Vulkan support is compiled in and usable}
+#'     \item{n_devices}{Integer, number of Vulkan devices (0 if unavailable)}
+#'     \item{devices}{List of per-device property lists as returned by
+#'       \code{\link{ggml_vulkan_list_devices}}; an empty list if there are none}
+#'   }
+#'   Status is also printed to the console.
 #' @export
 #' @examples
 #' ggml_vulkan_status()
+#'
+#' st <- ggml_vulkan_status()
+#' if (st$available && st$n_devices > 0) {
+#'   print(st$devices[[1]]$name)
+#' }
 ggml_vulkan_status <- function() {
   available <- ggml_vulkan_available()
 
@@ -566,13 +579,14 @@ ggml_vulkan_status <- function() {
     cat("Vulkan: NOT AVAILABLE\n")
     cat("  To enable: install libvulkan-dev and glslc, then reinstall ggmlR\n")
     cat("  Ubuntu/Debian: sudo apt install libvulkan-dev glslc\n")
-    return(invisible(NULL))
+    return(invisible(list(available = FALSE, n_devices = 0L, devices = list())))
   }
 
   count <- ggml_vulkan_device_count()
   cat("Vulkan: AVAILABLE\n")
   cat("  Devices:", count, "\n")
 
+  devices <- list()
   if (count > 0) {
     devices <- ggml_vulkan_list_devices()
     for (i in seq_along(devices)) {
@@ -583,5 +597,7 @@ ggml_vulkan_status <- function() {
     }
   }
 
-  invisible(NULL)
+  invisible(list(available = TRUE,
+                 n_devices = as.integer(count),
+                 devices = devices))
 }

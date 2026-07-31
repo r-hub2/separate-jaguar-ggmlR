@@ -292,6 +292,42 @@ ggml_compile <- function(model, optimizer = "adam",
   UseMethod("ggml_compile")
 }
 
+# Supported names, shared by both compile() methods. The training code maps
+# these with switch() statements whose fallback is cross-entropy/adamw, so an
+# unrecognised name would otherwise be silently substituted -- and
+# ggml_evaluate(), which has no such fallback, would then report loss = NA for
+# the very same model.
+NN_LOSSES <- c("categorical_crossentropy", "crossentropy", "cross_entropy",
+               "mse", "mean_squared_error")
+NN_OPTIMIZERS <- c("adam", "adamw", "sgd")
+NN_METRICS <- c("accuracy")
+
+nn_validate_compilation <- function(optimizer, loss, metrics) {
+  if (!is.character(loss) || length(loss) != 1L || !(loss %in% NN_LOSSES)) {
+    stop("Unsupported loss: ", paste(format(loss), collapse = ", "),
+         ". Supported: ", paste(NN_LOSSES, collapse = ", "),
+         ". (binary_crossentropy is not implemented; for two classes use ",
+         "categorical_crossentropy with one-hot labels.)", call. = FALSE)
+  }
+  if (!is.character(optimizer) || length(optimizer) != 1L ||
+      !(optimizer %in% NN_OPTIMIZERS)) {
+    stop("Unsupported optimizer: ", paste(format(optimizer), collapse = ", "),
+         ". Supported: ", paste(NN_OPTIMIZERS, collapse = ", "), call. = FALSE)
+  }
+  # metrics is accepted for keras compatibility. Accuracy is always computed
+  # for multi-class outputs, so anything else would be silently ignored.
+  if (!is.null(metrics)) {
+    unknown <- setdiff(as.character(metrics), NN_METRICS)
+    if (length(unknown) > 0L) {
+      warning("Ignoring unsupported metric(s): ", paste(unknown, collapse = ", "),
+              ". Only ", paste(NN_METRICS, collapse = ", "),
+              " is computed; it is reported whether or not it is requested.",
+              call. = FALSE)
+    }
+  }
+  invisible(TRUE)
+}
+
 #' @rdname ggml_compile
 #' @export
 ggml_compile.ggml_sequential_model <- function(model, optimizer = "adam",
@@ -301,6 +337,7 @@ ggml_compile.ggml_sequential_model <- function(model, optimizer = "adam",
   if (length(model$layers) == 0) {
     stop("Model has no layers. Add layers before compiling.")
   }
+  nn_validate_compilation(optimizer, loss, metrics)
 
   # 1. Shape inference
   model <- nn_infer_shapes(model)
@@ -373,7 +410,14 @@ ggml_compile.ggml_sequential_model <- function(model, optimizer = "adam",
 #' @param batch_size Batch size
 #' @return List with ctx_weights, ctx_compute, inputs, outputs, buffer
 #' @keywords internal
-nn_build_graph <- function(model, batch_size, training = TRUE) {
+# logits_output: drop a final softmax from the graph, leaving the last layer's
+# raw logits as the output. ggml_cross_entropy_loss() applies log_softmax to its
+# own input, so feeding it softmax probabilities would apply softmax twice --
+# that flattens the distribution, understates the reported loss and weakens the
+# gradient. Training with a cross-entropy loss therefore builds the graph with
+# logits_output = TRUE; inference leaves it FALSE and keeps the probabilities.
+nn_build_graph <- function(model, batch_size, training = TRUE,
+                           logits_output = FALSE) {
   input_shape <- model$input_shape
   ne_datapoint <- prod(input_shape)
   backend <- model$compilation$backend
@@ -710,13 +754,30 @@ nn_build_graph <- function(model, batch_size, training = TRUE) {
                      ne_datapoint * batch_size * 4 * 20)
   ctx_compute <- ggml_init(compute_mem, no_alloc = TRUE)
 
-  # Build forward graph
+  # Build forward graph.  When the caller wants logits, strip the softmax from
+  # the last layer for the duration of the build; layers_built is a local copy,
+  # so the model's own definition is untouched and inference still sees it.
+  n_layers <- length(layers_built)
+  softmax_stripped <- FALSE
+  if (logits_output && n_layers > 0L) {
+    last_act <- layers_built[[n_layers]]$config$activation
+    if (identical(last_act, "softmax")) {
+      layers_built[[n_layers]]$config$activation <- NULL
+      softmax_stripped <- TRUE
+    }
+  }
+
   current <- inputs
   for (i in seq_along(layers_built)) {
     current <- nn_build_layer(ctx_compute, current, layers_built[[i]],
                               training = training)
   }
   outputs <- current
+
+  # Restore the activation so the returned layers still describe the model.
+  if (softmax_stripped) {
+    layers_built[[n_layers]]$config$activation <- "softmax"
+  }
   ggml_set_output(outputs)
 
   list(
@@ -853,6 +914,11 @@ nn_bn_calibrate <- function(model, x) {
 #'   \item{class_weight}{Named vector of weights per class, e.g. c("0"=1, "1"=10). Cannot be used with sample_weight.}
 #'   \item{sample_weight}{Numeric vector of per-sample weights (length = nrow(x)). Cannot be used with class_weight.}
 #'   \item{verbose}{0 = silent, 1 = progress (default: 1)}
+#'   \item{shuffle}{Shuffle the data (default: TRUE). Shuffled once before the
+#'     train/validation split, then the training portion each epoch; the
+#'     validation portion stays fixed. FALSE for time series or exactly
+#'     reproducible runs.}
+#'   \item{callbacks}{List of callback objects (early stopping, LR schedules)}
 #' }
 #'
 #' \strong{Low-level (optimizer loop):}
@@ -867,6 +933,7 @@ nn_bn_calibrate <- function(model, x) {
 #'   \item{nepoch}{Number of epochs (default: 10)}
 #'   \item{nbatch_logical}{Logical batch size (default: 32)}
 #'   \item{val_split}{Validation fraction (default: 0)}
+#'   \item{shuffle}{Shuffle the data (default: TRUE)}
 #'   \item{callbacks}{List of callback objects}
 #'   \item{silent}{Suppress output (default: FALSE)}
 #' }
@@ -937,7 +1004,8 @@ ggml_fit.default <- function(model, ...) {
 ggml_fit_sequential <- function(model, x, y, epochs = 1, batch_size = 32,
                                 validation_split = 0.0, validation_data = NULL,
                                 class_weight = NULL, sample_weight = NULL,
-                                verbose = 1, callbacks = list()) {
+                                verbose = 1, shuffle = TRUE,
+                                callbacks = list()) {
   if (!model$compiled) {
     stop("Model must be compiled before training. Call ggml_compile() first.")
   }
@@ -972,6 +1040,10 @@ ggml_fit_sequential <- function(model, x, y, epochs = 1, batch_size = 32,
     }
   }
 
+  # Shuffling before the split is only safe when the split is a fraction we
+  # choose; an explicit validation_data set is positional and must stay put.
+  shuffle_all <- shuffle
+
   if (!is.null(validation_data)) {
     if (!is.list(validation_data) || length(validation_data) < 2) {
       stop("validation_data must be a list: list(x_val, y_val)")
@@ -993,6 +1065,10 @@ ggml_fit_sequential <- function(model, x, y, epochs = 1, batch_size = 32,
       sample_weight <- c(sample_weight, rep(1.0, n_val))
     }
     validation_split <- n_val / (n_train + n_val)
+    # The split is positional now: these rows ARE the user's validation set, so
+    # a pre-split shuffle would mix them back into training. Per-epoch shuffling
+    # of the training portion is unaffected.
+    shuffle_all <- FALSE
   }
 
   input_shape <- model$input_shape
@@ -1057,28 +1133,45 @@ ggml_fit_sequential <- function(model, x, y, epochs = 1, batch_size = 32,
     ggml_backend_tensor_set_data(weights_tensor, as.numeric(sample_weight))
   }
 
-  # Build graph (creates contexts, weights, inputs, outputs)
-  graph_info <- nn_build_graph(model, batch_size)
+  # Build graph (creates contexts, weights, inputs, outputs).
+  # Cross-entropy training needs logits, not probabilities -- see the note on
+  # nn_build_graph(). Weighted MSE goes through a different loss node and wants
+  # the model's actual output.
+  # Must agree with the loss_type switch below; both reject anything else.
+  use_ce_loss <- !use_weighted_mse &&
+    model$compilation$loss %in% c("categorical_crossentropy", "crossentropy", "cross_entropy")
+  graph_info <- nn_build_graph(model, batch_size, logits_output = use_ce_loss)
 
   # Map optimizer and loss
   optimizer_type <- switch(model$compilation$optimizer,
     "adam" = , "adamw" = ggml_opt_optimizer_type_adamw(),
     "sgd" = ggml_opt_optimizer_type_sgd(),
-    ggml_opt_optimizer_type_adamw()
+    stop("Unsupported optimizer: ", model$compilation$optimizer, call. = FALSE)
   )
 
   loss_type <- if (use_weighted_mse) {
     ggml_opt_loss_type_weighted_mse()
   } else {
     switch(model$compilation$loss,
-      "categorical_crossentropy" = , "crossentropy" = ggml_opt_loss_type_cross_entropy(),
+      "categorical_crossentropy" = , "crossentropy" = , "cross_entropy" = ggml_opt_loss_type_cross_entropy(),
       "mse" = , "mean_squared_error" = ggml_opt_loss_type_mse(),
-      ggml_opt_loss_type_cross_entropy()
+      stop("Unsupported loss: ", model$compilation$loss, call. = FALSE)
     )
   }
 
-  # Train (returns history list from C)
-  history_raw <- ggml_opt_fit(
+  # Train.  Uses the R-side epoch loop (ggml_fit_opt) rather than the single
+  # C call (ggml_opt_fit) so that callbacks get an on_epoch_begin/on_epoch_end
+  # hook between epochs; early stopping can also cut the run short, so the
+  # history may be shorter than `epochs`.
+  #
+  # Behaviour matches the old C path: shuffling is identical (whole dataset
+  # once, then the training split each epoch), and the LR is unchanged --
+  # ggml_opt_get_default_optimizer_params() ignores its userdata and returns
+  # hard-coded constants (adamw.alpha = 0.001), which is exactly what
+  # ggml_opt_init_for_fit() seeds its LR userdata with.  The difference is only
+  # that the LR is now reachable: a ggml_schedule_* callback can change it
+  # between epochs via ggml_opt_set_lr().
+  history_raw <- ggml_fit_opt(
     sched = model$compilation$sched,
     ctx_compute = graph_info$ctx_compute,
     inputs = graph_info$inputs,
@@ -1089,6 +1182,9 @@ ggml_fit_sequential <- function(model, x, y, epochs = 1, batch_size = 32,
     nepoch = epochs,
     nbatch_logical = batch_size,
     val_split = validation_split,
+    shuffle = shuffle,
+    shuffle_all = shuffle_all,
+    callbacks = callbacks,
     silent = (verbose == 0)
   )
 
@@ -1100,26 +1196,27 @@ ggml_fit_sequential <- function(model, x, y, epochs = 1, batch_size = 32,
   # Calibrate batch_norm running statistics for inference.
   #
   # These have to come from a forward pass over the training data with the final
-  # weights, and ggml_opt_fit() runs every epoch inside a single C call with no
-  # R-visible hook between steps -- the intermediate mean/variance tensors it
-  # allocates are also not addressable from here. So instead of folding an EMA
-  # in per batch, the statistics are computed once, after training, from the
-  # activations feeding each batch_norm layer. The result is the exact mean and
-  # variance over the training set rather than an exponentially-weighted
-  # approximation of it, which is what inference actually wants.
+  # weights. The epoch loop above is R-side, but a single epoch still runs as one
+  # C call and the intermediate mean/variance tensors it allocates are not
+  # addressable from here. So instead of folding an EMA in per batch, the
+  # statistics are computed once, after training, from the activations feeding
+  # each batch_norm layer. The result is the exact mean and variance over the
+  # training set rather than an exponentially-weighted approximation of it,
+  # which is what inference actually wants.
   #
   # Must run after ctx_weights/buffer are attached: it calls ggml_predict(),
   # which rebuilds the graph from model$compilation.
   model <- nn_bn_calibrate(model, x)
 
-  # Build history object
+  # Build history object.  ggml_fit_opt() returns one row per epoch actually
+  # run, which is fewer than `epochs` when a callback stopped training early.
   model$history <- structure(
     list(
       train_loss     = history_raw$train_loss,
       train_accuracy = history_raw$train_accuracy,
       val_loss       = history_raw$val_loss,
       val_accuracy   = history_raw$val_accuracy,
-      epochs         = seq_len(epochs)
+      epochs         = seq_len(nrow(history_raw))
     ),
     class = "ggml_history"
   )
@@ -1210,7 +1307,7 @@ ggml_evaluate.ggml_sequential_model <- function(model, x, y, batch_size = 32,
 
   # Compute loss
   loss_name <- model$compilation$loss
-  if (loss_name %in% c("categorical_crossentropy", "crossentropy")) {
+  if (loss_name %in% c("categorical_crossentropy", "crossentropy", "cross_entropy")) {
     # Cross-entropy: -sum(y * log(p)) / n
     eps <- 1e-7
     preds_clipped <- pmax(pmin(preds, 1 - eps), eps)

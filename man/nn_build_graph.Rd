@@ -4,7 +4,7 @@
 \alias{nn_build_graph}
 \title{Build computation graph with allocated weights and inputs}
 \usage{
-nn_build_graph(model, batch_size, training = TRUE)
+nn_build_graph(model, batch_size, training = TRUE, logits_output = FALSE)
 }
 \arguments{
 \item{model}{Compiled model}

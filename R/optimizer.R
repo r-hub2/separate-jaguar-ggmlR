@@ -660,6 +660,14 @@ ggml_opt_get_lr <- function(lr_ud) {
 #' @param nepoch Number of epochs
 #' @param nbatch_logical Logical batch size (for gradient accumulation)
 #' @param val_split Fraction of data for validation (0.0 to 1.0)
+#' @param shuffle Shuffle the training portion each epoch (default
+#'   \code{TRUE}).  Set to \code{FALSE} for time series or to make a run
+#'   exactly reproducible.
+#' @param shuffle_all Shuffle the whole dataset once before the
+#'   train/validation split is taken, so the validation portion is a random
+#'   sample rather than the tail of the input.  Defaults to \code{shuffle}.
+#'   Callers that append an explicit validation set to the data pass
+#'   \code{FALSE}, since there the split is positional and must be preserved.
 #' @param callbacks List of callback lists. Each element may have
 #'   `on_epoch_begin(epoch, logs, state)` and/or `on_epoch_end(epoch, logs, state)`.
 #'   Built-in factories: `ggml_callback_early_stopping()`,
@@ -686,6 +694,8 @@ ggml_fit_opt <- function(sched, ctx_compute, inputs, outputs, dataset,
                      nepoch      = 10L,
                      nbatch_logical = 32L,
                      val_split   = 0.0,
+                     shuffle     = TRUE,
+                     shuffle_all = shuffle,
                      callbacks   = list(),
                      silent      = FALSE) {
 
@@ -716,7 +726,9 @@ ggml_fit_opt <- function(sched, ctx_compute, inputs, outputs, dataset,
   }, add = TRUE)
 
   # --- shuffle all data once at start ---
-  if (nbatch_logical < ndata) {
+  # Done before the train/val split is applied, so the validation portion is a
+  # random sample rather than whatever happened to sit at the end of the input.
+  if (shuffle_all && nbatch_logical < ndata) {
     ggml_opt_dataset_shuffle(opt_ctx, dataset, -1)
   }
 
@@ -737,8 +749,8 @@ ggml_fit_opt <- function(sched, ctx_compute, inputs, outputs, dataset,
   hist <- vector("list", nepoch)
 
   for (epoch in seq_len(nepoch)) {
-    # shuffle training portion
-    if (nbatch_logical < idata_split) {
+    # shuffle training portion (leaves the validation tail untouched)
+    if (shuffle && nbatch_logical < idata_split) {
       ggml_opt_dataset_shuffle(opt_ctx, dataset, idata_split)
     }
 

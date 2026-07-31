@@ -4,16 +4,19 @@
 \alias{lr_scheduler_cosine}
 \title{Cosine-annealing learning rate scheduler}
 \usage{
-lr_scheduler_cosine(optimizer, T_max, lr_min = 0, restart = FALSE)
+lr_scheduler_cosine(optimizer, T_max, lr_min = 0, restart = FALSE, T_mult = 1)
 }
 \arguments{
 \item{optimizer}{Optimizer environment.}
 
-\item{T_max}{Number of steps for one cosine cycle.}
+\item{T_max}{Number of steps for the first cosine cycle.}
 
 \item{lr_min}{Minimum learning rate (default 0).}
 
-\item{restart}{Logical; if \code{TRUE} restart after \code{T_max} steps.}
+\item{restart}{Logical; if \code{TRUE} restart after each cycle.}
+
+\item{T_mult}{Cycle-length multiplier applied after every restart (default
+1, i.e. constant period).  Only meaningful when \code{restart = TRUE}.}
 }
 \value{
 An \code{lr_scheduler_cosine} environment
@@ -23,11 +26,27 @@ Varies the learning rate following a cosine curve from \code{lr_max} down to
 \code{lr_min} over \code{T_max} steps.  Restarts (SGDR-style) if
 \code{restart = TRUE}.
 }
+\details{
+With \code{restart = TRUE} and \code{T_mult > 1} this is the full
+\emph{CosineAnnealingWarmRestarts} (SGDR) schedule: the first cycle lasts
+\code{T_max} steps and every subsequent cycle is \code{T_mult} times longer
+than the previous one.  \code{T_mult = 1} (the default) keeps every cycle the
+same length.
+}
 \examples{
 \donttest{
 w   <- ag_param(matrix(runif(4), 2, 2))
 opt <- optimizer_adam(list(w = w), lr = 0.1)
 sch <- lr_scheduler_cosine(opt, T_max = 50L)
 for (epoch in 1:50) sch$step()
+
+# SGDR with doubling cycle length: 10, 20, 40, ...
+opt2 <- optimizer_adam(list(w = w), lr = 0.1)
+sch2 <- lr_scheduler_cosine(opt2, T_max = 10L, restart = TRUE, T_mult = 2)
+for (epoch in 1:70) sch2$step()
 }
+}
+\references{
+Loshchilov, I. & Hutter, F. (2017). SGDR: Stochastic Gradient
+  Descent with Warm Restarts. ICLR.
 }

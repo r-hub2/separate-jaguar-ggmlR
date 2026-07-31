@@ -189,3 +189,181 @@ onnx_device_info <- function(model) {
   stopifnot(inherits(model, "onnx_model"))
   .Call("R_onnx_device_info", model$ptr)
 }
+
+# ============================================================================
+# predict() -- keras-compatible entry point for ONNX models
+# ============================================================================
+
+# Split an array along its first (sample) axis, returning rows start:end.
+# ONNX arrays are row-major with the batch dimension first, matching R's
+# convention for the leading index but not its column-major storage, so the
+# slice is expressed with indices rather than raw offsets.
+onnx_slice_samples <- function(a, idx) {
+  d <- dim(a)
+  if (is.null(d) || length(d) == 1L) return(a[idx])
+  args <- rep(list(quote(expr = )), length(d))
+  args[[1L]] <- idx
+  do.call(`[`, c(list(a), args, list(drop = FALSE)))
+}
+
+# R arrays are column-major, ONNX buffers are row-major with the batch
+# dimension first.  onnx_run() takes and returns flat buffers in ONNX order, so
+# the two directions need an explicit reversal of the axes -- the same thing the
+# tests do by hand with as.vector(t(x)) in the 2D case.
+onnx_flatten_rowmajor <- function(a) {
+  d <- dim(a)
+  if (is.null(d) || length(d) == 1L) return(as.vector(a))
+  as.vector(aperm(a, rev(seq_along(d))))
+}
+
+# Inverse of onnx_flatten_rowmajor(): read a row-major buffer into an R array
+# with the given ONNX dimensions.
+onnx_array_rowmajor <- function(v, dims) {
+  if (length(dims) <= 1L) return(as.vector(v))
+  aperm(array(as.vector(v), dim = rev(dims)), rev(seq_along(dims)))
+}
+
+# Bind a list of same-shaped arrays along the first axis.
+onnx_bind_samples <- function(parts) {
+  if (length(parts) == 1L) return(parts[[1L]])
+  d <- dim(parts[[1L]])
+  if (is.null(d) || length(d) <= 2L) return(do.call(rbind, parts))
+
+  # >2D: concatenating along the first axis means interleaving in storage
+  # order, so go through a permutation that puts the sample axis last.
+  perm     <- c(seq.int(2L, length(d)), 1L)
+  permuted <- lapply(parts, function(p) aperm(p, perm))
+  out      <- array(unlist(permuted, use.names = FALSE),
+                    dim = c(d[-1L], sum(vapply(parts, function(p) dim(p)[1L], 1L))))
+  aperm(out, order(perm))
+}
+
+#' Predict with an ONNX Model
+#'
+#' Runs inference over \code{x}, batching it to the fixed input shape the
+#' model was loaded with.  This is the keras-compatible entry point: together
+#' with the \code{ggml_sequential_model} and \code{ggml_functional_model}
+#' methods it gives ggmlR and ONNX models a single \code{predict()} interface.
+#'
+#' Unlike \code{\link{onnx_run}}, which takes a named list of inputs and always
+#' returns a named list of outputs, this method takes an array (or a named list
+#' for multi-input models) and unwraps a single output.  The output keeps the
+#' dimensions the model produced: a 2D output comes back as a matrix, a 4D
+#' output stays 4D.
+#'
+#' An ONNX graph is built for one fixed batch size at \code{\link{onnx_load}}
+#' time and cannot be resized afterwards, so \code{x} is split into chunks of
+#' that size.  A trailing partial chunk is padded to a full batch and the
+#' padding is dropped from the result.
+#'
+#' @param object An \code{onnx_model} from \code{\link{onnx_load}}.
+#' @param x Input data: an array or matrix whose first dimension indexes
+#'   samples, or a named list of such arrays for multi-input models.
+#' @param batch_size Ignored, with a warning if not \code{NULL}.  The batch
+#'   size is fixed when the model is loaded; pass \code{input_shapes} to
+#'   \code{\link{onnx_load}} to change it.  The argument exists so the
+#'   signature matches the other \code{predict()} methods.
+#' @param ... Ignored.
+#' @return For a single-output model, an array with the model's output
+#'   dimensions and \code{nrow(x)} samples in the first one (a matrix when the
+#'   output is 2D).  For a multi-output model, a named list of such arrays.
+#' @seealso \code{\link{onnx_run}} for the lower-level named-list interface.
+#' @export
+predict.onnx_model <- function(object, x, batch_size = NULL, ...) {
+  stopifnot(inherits(object, "onnx_model"))
+  if (!is.null(batch_size)) {
+    warning("ONNX models have a fixed batch size chosen at onnx_load(); ",
+            "ignoring batch_size. Use onnx_load(input_shapes = ...) instead.",
+            call. = FALSE)
+  }
+
+  spec     <- onnx_inputs(object)
+  in_names <- names(spec)
+
+  # Normalise x to a named list of arrays, one per model input.
+  if (!is.list(x)) {
+    if (length(in_names) != 1L) {
+      stop("Model has ", length(in_names), " inputs (",
+           paste(in_names, collapse = ", "),
+           "); pass a named list, not a single array.", call. = FALSE)
+    }
+    x <- stats::setNames(list(x), in_names)
+  } else {
+    if (is.null(names(x))) {
+      stop("Input list must be named. Expected: ",
+           paste(in_names, collapse = ", "), call. = FALSE)
+    }
+    missing_in <- setdiff(in_names, names(x))
+    if (length(missing_in) > 0L) {
+      stop("Missing input(s): ", paste(missing_in, collapse = ", "),
+           call. = FALSE)
+    }
+    x <- x[in_names]
+  }
+
+  # The batch each input was built for, and the per-sample shape after it.
+  batch_of  <- vapply(spec, function(s) as.integer(s[1L]), 1L)
+  model_bs  <- batch_of[[1L]]
+  if (any(batch_of != model_bs)) {
+    stop("Inputs disagree on batch size (",
+         paste(sprintf("%s=%d", in_names, batch_of), collapse = ", "),
+         "); cannot batch automatically. Use onnx_run() directly.",
+         call. = FALSE)
+  }
+
+  # Sample count, and a per-input view whose first dimension is the batch.
+  as_batched <- function(a, s) {
+    per_sample <- s[-1L]
+    if (is.null(dim(a))) {
+      # A bare vector is one sample when it matches the per-sample size,
+      # otherwise a stack of them.
+      n_per <- max(prod(per_sample), 1L)
+      dim(a) <- c(length(a) %/% n_per, per_sample)
+    }
+    a
+  }
+  x <- Map(as_batched, x, spec)
+
+  n_samples <- unique(vapply(x, function(a) dim(a)[1L], 1L))
+  if (length(n_samples) != 1L) {
+    stop("Inputs disagree on sample count: ",
+         paste(vapply(x, function(a) dim(a)[1L], 1L), collapse = ", "),
+         call. = FALSE)
+  }
+  if (n_samples == 0L) stop("No samples provided.", call. = FALSE)
+
+  starts <- seq.int(1L, n_samples, by = model_bs)
+  chunks <- vector("list", length(starts))
+
+  for (k in seq_along(starts)) {
+    from <- starts[[k]]
+    to   <- min(from + model_bs - 1L, n_samples)
+    idx  <- seq.int(from, to)
+    pad  <- model_bs - length(idx)
+    # Repeat the last sample to fill a short final batch; the padded rows are
+    # discarded below, so the values only need to be valid, not meaningful.
+    if (pad > 0L) idx <- c(idx, rep(idx[length(idx)], pad))
+
+    batch_in <- lapply(x, function(a) onnx_flatten_rowmajor(onnx_slice_samples(a, idx)))
+    res      <- onnx_run(object, batch_in)
+    # onnx_run() sets dim in ONNX order but the data is row-major, so
+    # reinterpret rather than trusting the array as R laid it out.
+    res <- lapply(res, function(o) {
+      d <- dim(o)
+      if (is.null(d)) o else onnx_array_rowmajor(o, d)
+    })
+    if (pad > 0L) {
+      res <- lapply(res, function(o) onnx_slice_samples(o, seq_len(model_bs - pad)))
+    }
+    chunks[[k]] <- res
+  }
+
+  out_names <- names(chunks[[1L]])
+  out <- lapply(out_names, function(nm) {
+    onnx_bind_samples(lapply(chunks, function(cc) cc[[nm]]))
+  })
+  names(out) <- out_names
+
+  # Single output: hand back the array itself rather than a one-element list.
+  if (length(out) == 1L) out[[1L]] else out
+}

@@ -16,6 +16,24 @@ test_that("ggml_vulkan_status runs without error", {
   expect_no_error(ggml_vulkan_status())
 })
 
+test_that("ggml_vulkan_status returns status invisibly", {
+  expect_output(st <- ggml_vulkan_status())
+
+  expect_type(st, "list")
+  expect_named(st, c("available", "n_devices", "devices"))
+  expect_type(st$available, "logical")
+  expect_type(st$n_devices, "integer")
+  expect_type(st$devices, "list")
+
+  expect_identical(st$available, ggml_vulkan_available())
+  expect_gte(st$n_devices, 0L)
+  expect_length(st$devices, st$n_devices)
+
+  if (!st$available) {
+    expect_identical(st$n_devices, 0L)
+  }
+})
+
 # Conditional tests that only run if Vulkan is available
 if (ggml_vulkan_available() && ggml_vulkan_device_count() > 0) {
 

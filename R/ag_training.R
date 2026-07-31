@@ -171,11 +171,21 @@ print.lr_scheduler_step <- function(x, ...) {
 #' \code{lr_min} over \code{T_max} steps.  Restarts (SGDR-style) if
 #' \code{restart = TRUE}.
 #'
+#' With \code{restart = TRUE} and \code{T_mult > 1} this is the full
+#' \emph{CosineAnnealingWarmRestarts} (SGDR) schedule: the first cycle lasts
+#' \code{T_max} steps and every subsequent cycle is \code{T_mult} times longer
+#' than the previous one.  \code{T_mult = 1} (the default) keeps every cycle the
+#' same length.
+#'
 #' @param optimizer Optimizer environment.
-#' @param T_max Number of steps for one cosine cycle.
+#' @param T_max Number of steps for the first cosine cycle.
 #' @param lr_min Minimum learning rate (default 0).
-#' @param restart Logical; if \code{TRUE} restart after \code{T_max} steps.
+#' @param restart Logical; if \code{TRUE} restart after each cycle.
+#' @param T_mult Cycle-length multiplier applied after every restart (default
+#'   1, i.e. constant period).  Only meaningful when \code{restart = TRUE}.
 #' @return An \code{lr_scheduler_cosine} environment
+#' @references Loshchilov, I. & Hutter, F. (2017). SGDR: Stochastic Gradient
+#'   Descent with Warm Restarts. ICLR.
 #' @export
 #' @examples
 #' \donttest{
@@ -183,26 +193,55 @@ print.lr_scheduler_step <- function(x, ...) {
 #' opt <- optimizer_adam(list(w = w), lr = 0.1)
 #' sch <- lr_scheduler_cosine(opt, T_max = 50L)
 #' for (epoch in 1:50) sch$step()
+#'
+#' # SGDR with doubling cycle length: 10, 20, 40, ...
+#' opt2 <- optimizer_adam(list(w = w), lr = 0.1)
+#' sch2 <- lr_scheduler_cosine(opt2, T_max = 10L, restart = TRUE, T_mult = 2)
+#' for (epoch in 1:70) sch2$step()
 #' }
-lr_scheduler_cosine <- function(optimizer, T_max, lr_min = 0, restart = FALSE) {
+lr_scheduler_cosine <- function(optimizer, T_max, lr_min = 0, restart = FALSE,
+                                T_mult = 1) {
   T_max <- as.integer(T_max)
+  if (T_max < 1L) stop("T_max must be >= 1")
+  if (!is.numeric(T_mult) || length(T_mult) != 1L || T_mult < 1) {
+    stop("T_mult must be a single number >= 1")
+  }
   env <- new.env(parent = emptyenv())
   env$optimizer  <- optimizer
   env$T_max      <- T_max
   env$lr_min     <- lr_min
   env$lr_max     <- optimizer$lr   # initial lr is the max
   env$restart    <- restart
+  env$T_mult     <- T_mult
   env$last_epoch <- 0L
+  # SGDR state: length of the current cycle and step index inside it
+  env$T_cur      <- T_max
+  env$cycle_pos  <- 0L
 
   env$step <- function() {
     env$last_epoch <- env$last_epoch + 1L
-    t <- if (env$restart) {
-      (env$last_epoch - 1L) %% env$T_max
+
+    if (env$restart) {
+      # position and period of the cycle we are currently in
+      t      <- env$cycle_pos
+      period <- env$T_cur
     } else {
-      min(env$last_epoch - 1L, env$T_max - 1L)
+      t      <- min(env$last_epoch - 1L, env$T_max - 1L)
+      period <- env$T_max
     }
+
     new_lr <- env$lr_min + 0.5 * (env$lr_max - env$lr_min) *
-                (1 + cos(pi * t / env$T_max))
+                (1 + cos(pi * t / period))
+
+    if (env$restart) {
+      # advance only after the LR for this step has been computed, so the
+      # closing step of a cycle still uses that cycle's period
+      env$cycle_pos <- env$cycle_pos + 1L
+      if (env$cycle_pos >= env$T_cur) {
+        env$cycle_pos <- 0L
+        env$T_cur     <- max(1L, as.integer(round(env$T_cur * env$T_mult)))
+      }
+    }
     env$optimizer$lr <- new_lr
     invisible(new_lr)
   }
@@ -508,4 +547,454 @@ dp_train <- function(make_model,
     loss_history = loss_history,
     model        = replicas[[1L]]
   )
+}
+
+# ============================================================================
+# Gradient clipping by value
+# ============================================================================
+
+#' Clip gradients element-wise by value
+#'
+#' Clamps every gradient element into
+#' \code{[-clip_value, clip_value]}.  Unlike \code{\link{clip_grad_norm}} this
+#' does not preserve the gradient direction — each element is treated
+#' independently.  Modifies the \code{grads} environment in-place.
+#'
+#' Call this \strong{after} \code{backward()} and \strong{before}
+#' \code{optimizer$step()}.
+#'
+#' @param params Named list of ag_param tensors (same as passed to optimizer).
+#' @param grads Gradient environment returned by \code{backward()}.
+#' @param clip_value Positive numeric; maximum absolute value per element.
+#' @return Numeric: the largest absolute gradient value before clipping
+#'   (invisibly).  Returns 0 when no gradients were found.
+#' @seealso \code{\link{clip_grad_norm}}
+#' @export
+#' @examples
+#' \donttest{
+#' w  <- ag_param(matrix(runif(4), 2, 2))
+#' x  <- ag_tensor(matrix(c(1, 1), 2, 1))
+#' with_grad_tape({
+#'   out  <- ag_matmul(w, x)
+#'   loss <- ag_mse_loss(out, matrix(0, 2, 1))
+#' })
+#' grads <- backward(loss)
+#' clip_grad_value(list(w = w), grads, clip_value = 0.5)
+#' }
+clip_grad_value <- function(params, grads, clip_value) {
+  if (!is.numeric(clip_value) || length(clip_value) != 1L ||
+      !is.finite(clip_value) || clip_value <= 0) {
+    stop("clip_value must be a single positive finite number")
+  }
+
+  max_abs <- 0
+
+  for (nm in names(params)) {
+    p   <- params[[nm]]
+    key <- as.character(p$id)
+    g   <- get0(key, envir = grads)
+    if (is.null(g)) next
+
+    finite_g <- g[is.finite(g)]
+    if (length(finite_g)) max_abs <- max(max_abs, max(abs(finite_g)))
+
+    clipped <- pmin(pmax(g, -clip_value), clip_value)
+    # pmin/pmax drop the dim attribute on some inputs — restore it
+    dim(clipped) <- dim(g)
+    assign(key, clipped, envir = grads)
+  }
+
+  invisible(max_abs)
+}
+
+# ============================================================================
+# Gradient anomaly detection
+# ============================================================================
+
+#' Detect NaN / Inf gradients
+#'
+#' Scans the gradient environment produced by \code{backward()} and reports
+#' every parameter whose gradient contains \code{NaN} or \code{Inf} values.
+#' Useful as a debugging hook right after \code{backward()} — it pinpoints the
+#' offending layer instead of leaving you with a model that silently turns to
+#' \code{NaN} several epochs later.
+#'
+#' @param params Named list of ag_param tensors (same as passed to optimizer).
+#' @param grads Gradient environment returned by \code{backward()}.
+#' @param action One of \code{"warn"} (default), \code{"stop"} or
+#'   \code{"silent"} — what to do when an anomaly is found.
+#' @param max_abs Optional numeric threshold; gradients whose maximum absolute
+#'   finite value exceeds it are also reported (as \code{"large"}).
+#'   \code{NULL} (default) disables this check.
+#' @return A data frame (invisibly) with one row per parameter that has a
+#'   gradient, containing columns \code{param}, \code{n_nan}, \code{n_inf},
+#'   \code{max_abs} and \code{status}.  \code{status} is one of \code{"ok"},
+#'   \code{"nan"}, \code{"inf"}, \code{"nan+inf"} or \code{"large"}.
+#'   Parameters without a gradient are reported with \code{status = "missing"}.
+#' @export
+#' @examples
+#' \donttest{
+#' w  <- ag_param(matrix(runif(4), 2, 2))
+#' x  <- ag_tensor(matrix(c(1, 1), 2, 1))
+#' with_grad_tape({
+#'   out  <- ag_matmul(w, x)
+#'   loss <- ag_mse_loss(out, matrix(0, 2, 1))
+#' })
+#' grads <- backward(loss)
+#' check_grad_anomaly(list(w = w), grads)
+#' }
+check_grad_anomaly <- function(params, grads, action = c("warn", "stop", "silent"),
+                               max_abs = NULL) {
+  action <- match.arg(action)
+
+  rows <- list()
+
+  for (nm in names(params)) {
+    p   <- params[[nm]]
+    key <- as.character(p$id)
+    g   <- get0(key, envir = grads)
+
+    if (is.null(g)) {
+      rows[[length(rows) + 1L]] <- data.frame(
+        param = nm, n_nan = NA_integer_, n_inf = NA_integer_,
+        max_abs = NA_real_, status = "missing",
+        stringsAsFactors = FALSE
+      )
+      next
+    }
+
+    n_nan <- sum(is.nan(g))
+    n_inf <- sum(is.infinite(g))
+    finite_g <- g[is.finite(g)]
+    g_max <- if (length(finite_g)) max(abs(finite_g)) else NA_real_
+
+    status <- if (n_nan > 0 && n_inf > 0) {
+      "nan+inf"
+    } else if (n_nan > 0) {
+      "nan"
+    } else if (n_inf > 0) {
+      "inf"
+    } else if (!is.null(max_abs) && !is.na(g_max) && g_max > max_abs) {
+      "large"
+    } else {
+      "ok"
+    }
+
+    rows[[length(rows) + 1L]] <- data.frame(
+      param = nm, n_nan = as.integer(n_nan), n_inf = as.integer(n_inf),
+      max_abs = g_max, status = status,
+      stringsAsFactors = FALSE
+    )
+  }
+
+  report <- if (length(rows)) {
+    do.call(rbind, rows)
+  } else {
+    data.frame(param = character(0), n_nan = integer(0), n_inf = integer(0),
+               max_abs = numeric(0), status = character(0),
+               stringsAsFactors = FALSE)
+  }
+
+  bad <- report[!report$status %in% c("ok", "missing"), , drop = FALSE]
+
+  if (nrow(bad) && action != "silent") {
+    msg <- paste0(
+      "gradient anomaly detected in ", nrow(bad), " parameter(s):\n",
+      paste(sprintf("  %-20s status=%-8s n_nan=%d n_inf=%d max_abs=%s",
+                    bad$param, bad$status, bad$n_nan, bad$n_inf,
+                    format(bad$max_abs, digits = 4)),
+            collapse = "\n")
+    )
+    if (action == "stop") stop(msg, call. = FALSE) else warning(msg, call. = FALSE)
+  }
+
+  invisible(report)
+}
+
+# ============================================================================
+# Additional learning rate schedulers
+# ============================================================================
+
+# Internal: read/write the momentum-like field of an optimizer.
+# SGD cycles $momentum, Adam cycles $beta1.  Returns NULL when the optimizer
+# has no cyclable field.
+.ag_momentum_field <- function(optimizer) {
+  if (inherits(optimizer, "ag_optimizer_sgd"))  return("momentum")
+  if (inherits(optimizer, "ag_optimizer_adam")) return("beta1")
+  NULL
+}
+
+#' Cyclical learning rate scheduler
+#'
+#' Cycles the learning rate linearly between \code{base_lr} and \code{max_lr}
+#' over a triangular cycle of \code{2 * step_size_up} steps (Smith, 2017).
+#' Each call to \code{$step()} advances one step — call it \strong{per batch},
+#' not per epoch.
+#'
+#' @param optimizer Optimizer environment.
+#' @param base_lr Lower learning rate bound.
+#' @param max_lr Upper learning rate bound.
+#' @param step_size_up Steps in the increasing half of a cycle (default 2000).
+#' @param step_size_down Steps in the decreasing half.  \code{NULL} (default)
+#'   mirrors \code{step_size_up}.
+#' @param mode One of \code{"triangular"} (default), \code{"triangular2"}
+#'   (amplitude halved each cycle) or \code{"exp_range"} (amplitude scaled by
+#'   \code{gamma^step}).
+#' @param gamma Decay factor for \code{mode = "exp_range"} (default 1.0).
+#' @return An \code{lr_scheduler_cyclic} environment with \code{$step()} and
+#'   \code{$get_lr()}.
+#' @references Smith, L. N. (2017). Cyclical Learning Rates for Training Neural
+#'   Networks. WACV.
+#' @export
+#' @examples
+#' \donttest{
+#' w   <- ag_param(matrix(runif(4), 2, 2))
+#' opt <- optimizer_sgd(list(w = w), lr = 0.01)
+#' sch <- lr_scheduler_cyclic(opt, base_lr = 0.001, max_lr = 0.01,
+#'                            step_size_up = 10L)
+#' for (i in 1:40) sch$step()
+#' }
+lr_scheduler_cyclic <- function(optimizer, base_lr, max_lr, step_size_up = 2000L,
+                                step_size_down = NULL,
+                                mode = c("triangular", "triangular2", "exp_range"),
+                                gamma = 1.0) {
+  mode <- match.arg(mode)
+  step_size_up <- as.integer(step_size_up)
+  if (step_size_up < 1L) stop("step_size_up must be >= 1")
+  step_size_down <- if (is.null(step_size_down)) step_size_up else as.integer(step_size_down)
+  if (step_size_down < 1L) stop("step_size_down must be >= 1")
+  if (max_lr < base_lr) stop("max_lr must be >= base_lr")
+
+  env <- new.env(parent = emptyenv())
+  env$optimizer      <- optimizer
+  env$base_lr        <- base_lr
+  env$max_lr         <- max_lr
+  env$step_size_up   <- step_size_up
+  env$step_size_down <- step_size_down
+  env$mode           <- mode
+  env$gamma          <- gamma
+  env$last_step      <- 0L
+
+  # start at base_lr
+  optimizer$lr <- base_lr
+
+  env$step <- function() {
+    env$last_step <- env$last_step + 1L
+    total  <- env$step_size_up + env$step_size_down
+    cycle  <- floor(env$last_step / total)
+    pos    <- env$last_step - cycle * total
+
+    frac <- if (pos <= env$step_size_up) {
+      pos / env$step_size_up
+    } else {
+      1 - (pos - env$step_size_up) / env$step_size_down
+    }
+
+    amp <- env$max_lr - env$base_lr
+    amp <- switch(env$mode,
+      triangular  = amp,
+      triangular2 = amp / (2^cycle),
+      exp_range   = amp * env$gamma^env$last_step
+    )
+
+    new_lr <- env$base_lr + amp * frac
+    env$optimizer$lr <- new_lr
+    invisible(new_lr)
+  }
+
+  env$get_lr <- function() env$optimizer$lr
+
+  class(env) <- "lr_scheduler_cyclic"
+  env
+}
+
+#' @export
+print.lr_scheduler_cyclic <- function(x, ...) {
+  cat(sprintf("lr_scheduler_cyclic | mode=%s | base_lr=%.6f | max_lr=%.6f | step=%d | lr=%.6f\n",
+              x$mode, x$base_lr, x$max_lr, x$last_step, x$get_lr()))
+  invisible(x)
+}
+
+#' One-cycle learning rate scheduler
+#'
+#' Implements the 1cycle policy (Smith, 2018): the learning rate rises from
+#' \code{max_lr / div_factor} to \code{max_lr} during the first
+#' \code{pct_start} fraction of training, then anneals down to
+#' \code{max_lr / final_div_factor}.  Call \code{$step()} \strong{per batch};
+#' \code{total_steps} is the total number of batches over the whole run
+#' (\code{epochs * batches_per_epoch}).
+#'
+#' When \code{cycle_momentum = TRUE} the momentum-like hyper-parameter moves
+#' inversely to the learning rate: \code{$momentum} for SGD, \code{$beta1} for
+#' Adam.  For other optimizers momentum cycling is skipped.
+#'
+#' @param optimizer Optimizer environment.
+#' @param max_lr Peak learning rate.
+#' @param total_steps Total number of \code{$step()} calls for the whole run.
+#' @param pct_start Fraction of \code{total_steps} spent increasing the LR
+#'   (default 0.3).
+#' @param div_factor Initial LR is \code{max_lr / div_factor} (default 25).
+#' @param final_div_factor Final LR is \code{max_lr / final_div_factor}
+#'   (default 1e4).
+#' @param anneal_strategy \code{"cos"} (default) or \code{"linear"}.
+#' @param cycle_momentum Logical; cycle momentum inversely to LR (default
+#'   \code{TRUE}).
+#' @param base_momentum,max_momentum Momentum bounds used when
+#'   \code{cycle_momentum = TRUE} (defaults 0.85 / 0.95).
+#' @return An \code{lr_scheduler_onecycle} environment with \code{$step()} and
+#'   \code{$get_lr()}.
+#' @references Smith, L. N. (2018). A disciplined approach to neural network
+#'   hyper-parameters. arXiv:1803.09820.
+#' @export
+#' @examples
+#' \donttest{
+#' w   <- ag_param(matrix(runif(4), 2, 2))
+#' opt <- optimizer_sgd(list(w = w), lr = 0.01, momentum = 0.9)
+#' sch <- lr_scheduler_onecycle(opt, max_lr = 0.1, total_steps = 100L)
+#' for (i in 1:100) sch$step()
+#' }
+lr_scheduler_onecycle <- function(optimizer, max_lr, total_steps,
+                                  pct_start = 0.3, div_factor = 25,
+                                  final_div_factor = 1e4,
+                                  anneal_strategy = c("cos", "linear"),
+                                  cycle_momentum = TRUE,
+                                  base_momentum = 0.85, max_momentum = 0.95) {
+  anneal_strategy <- match.arg(anneal_strategy)
+  total_steps <- as.integer(total_steps)
+  if (total_steps < 2L) stop("total_steps must be >= 2")
+  if (pct_start <= 0 || pct_start >= 1) stop("pct_start must be in (0, 1)")
+
+  env <- new.env(parent = emptyenv())
+  env$optimizer       <- optimizer
+  env$max_lr          <- max_lr
+  env$total_steps     <- total_steps
+  env$initial_lr      <- max_lr / div_factor
+  env$final_lr        <- max_lr / final_div_factor
+  env$anneal_strategy <- anneal_strategy
+  env$step_up         <- max(1L, as.integer(round(pct_start * total_steps)))
+  env$last_step       <- 0L
+
+  env$mom_field <- if (isTRUE(cycle_momentum)) .ag_momentum_field(optimizer) else NULL
+  env$base_momentum <- base_momentum
+  env$max_momentum  <- max_momentum
+
+  # anneal from a to b, progress p in [0, 1]
+  env$anneal <- function(a, b, p) {
+    if (env$anneal_strategy == "cos") {
+      b + (a - b) * (1 + cos(pi * p)) / 2
+    } else {
+      a + (b - a) * p
+    }
+  }
+
+  optimizer$lr <- env$initial_lr
+  if (!is.null(env$mom_field)) {
+    assign(env$mom_field, max_momentum, envir = optimizer)
+  }
+
+  env$step <- function() {
+    env$last_step <- min(env$last_step + 1L, env$total_steps)
+    s <- env$last_step
+
+    if (s <= env$step_up) {
+      p      <- s / env$step_up
+      new_lr <- env$anneal(env$initial_lr, env$max_lr, p)
+      new_mom <- env$anneal(env$max_momentum, env$base_momentum, p)
+    } else {
+      down_len <- max(1L, env$total_steps - env$step_up)
+      p        <- min(1, (s - env$step_up) / down_len)
+      new_lr   <- env$anneal(env$max_lr, env$final_lr, p)
+      new_mom  <- env$anneal(env$base_momentum, env$max_momentum, p)
+    }
+
+    env$optimizer$lr <- new_lr
+    if (!is.null(env$mom_field)) {
+      assign(env$mom_field, new_mom, envir = env$optimizer)
+    }
+    invisible(new_lr)
+  }
+
+  env$get_lr <- function() env$optimizer$lr
+
+  class(env) <- "lr_scheduler_onecycle"
+  env
+}
+
+#' @export
+print.lr_scheduler_onecycle <- function(x, ...) {
+  cat(sprintf("lr_scheduler_onecycle | max_lr=%.6f | total_steps=%d | step=%d | lr=%.6f\n",
+              x$max_lr, x$total_steps, x$last_step, x$get_lr()))
+  invisible(x)
+}
+
+#' Linear warmup followed by cosine annealing
+#'
+#' Raises the learning rate linearly from \code{warmup_start_lr} to the
+#' optimizer's initial \code{lr} over \code{warmup_steps} steps, then anneals it
+#' to \code{lr_min} following a cosine curve over the remaining
+#' \code{total_steps - warmup_steps} steps.  This is the standard transformer
+#' training schedule.  Call \code{$step()} \strong{per batch}.
+#'
+#' @param optimizer Optimizer environment.  Its current \code{lr} is taken as
+#'   the peak learning rate.
+#' @param warmup_steps Number of linear warmup steps.
+#' @param total_steps Total number of \code{$step()} calls (warmup included).
+#' @param lr_min Final learning rate after annealing (default 0).
+#' @param warmup_start_lr Learning rate at step 0 (default 0).
+#' @return An \code{lr_scheduler_warmup_cosine} environment with \code{$step()}
+#'   and \code{$get_lr()}.
+#' @export
+#' @examples
+#' \donttest{
+#' w   <- ag_param(matrix(runif(4), 2, 2))
+#' opt <- optimizer_adam(list(w = w), lr = 1e-3)
+#' sch <- lr_scheduler_warmup_cosine(opt, warmup_steps = 10L, total_steps = 100L)
+#' for (i in 1:100) sch$step()
+#' }
+lr_scheduler_warmup_cosine <- function(optimizer, warmup_steps, total_steps,
+                                       lr_min = 0, warmup_start_lr = 0) {
+  warmup_steps <- as.integer(warmup_steps)
+  total_steps  <- as.integer(total_steps)
+  if (warmup_steps < 0L) stop("warmup_steps must be >= 0")
+  if (total_steps <= warmup_steps) stop("total_steps must be > warmup_steps")
+
+  env <- new.env(parent = emptyenv())
+  env$optimizer       <- optimizer
+  env$warmup_steps    <- warmup_steps
+  env$total_steps     <- total_steps
+  env$lr_max          <- optimizer$lr   # current lr is the peak
+  env$lr_min          <- lr_min
+  env$warmup_start_lr <- warmup_start_lr
+  env$last_step       <- 0L
+
+  optimizer$lr <- if (warmup_steps > 0L) warmup_start_lr else env$lr_max
+
+  env$step <- function() {
+    env$last_step <- min(env$last_step + 1L, env$total_steps)
+    s <- env$last_step
+
+    new_lr <- if (s <= env$warmup_steps) {
+      env$warmup_start_lr +
+        (env$lr_max - env$warmup_start_lr) * s / env$warmup_steps
+    } else {
+      denom <- env$total_steps - env$warmup_steps
+      p     <- (s - env$warmup_steps) / denom
+      env$lr_min + 0.5 * (env$lr_max - env$lr_min) * (1 + cos(pi * p))
+    }
+
+    env$optimizer$lr <- new_lr
+    invisible(new_lr)
+  }
+
+  env$get_lr <- function() env$optimizer$lr
+
+  class(env) <- "lr_scheduler_warmup_cosine"
+  env
+}
+
+#' @export
+print.lr_scheduler_warmup_cosine <- function(x, ...) {
+  cat(sprintf("lr_scheduler_warmup_cosine | warmup=%d | total=%d | lr_max=%.6f | step=%d | lr=%.6f\n",
+              x$warmup_steps, x$total_steps, x$lr_max, x$last_step, x$get_lr()))
+  invisible(x)
 }

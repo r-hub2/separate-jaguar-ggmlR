@@ -336,6 +336,151 @@ ag_train.ag_batch_norm <- function(model) { model$training <- TRUE;  invisible(m
 ag_eval.ag_batch_norm  <- function(model) { model$training <- FALSE; invisible(model) }
 
 # ============================================================================
+# ag_layer_norm
+# ============================================================================
+
+#' Create a Layer Normalization layer
+#'
+#' Normalizes each example independently over its \code{normalized_shape}
+#' features, then applies a learnable per-feature scale (\code{gamma}) and shift
+#' (\code{beta}):  \code{y = gamma * (x - mu) / sqrt(var + eps) + beta}.
+#'
+#' Unlike \code{\link{ag_batch_norm}}, which normalizes each feature across the
+#' batch, LayerNorm normalizes each column (example) across its features.  It
+#' therefore has no running statistics and behaves identically in training and
+#' evaluation mode, which makes it the usual choice for transformers and for
+#' small or varying batch sizes.
+#'
+#' The backward pass is exact: because \code{mu} and \code{sigma} are computed
+#' from the same example being normalized, their contribution to the gradient is
+#' included rather than treated as constant.
+#'
+#' @param normalized_shape Number of features to normalize over (the number of
+#'   rows of the input).
+#' @param eps Small constant added to the variance for numerical stability
+#'   (default 1e-5).
+#' @param elementwise_affine Logical; when \code{TRUE} (default) the layer
+#'   learns \code{gamma} and \code{beta}.  When \code{FALSE} it normalizes only
+#'   and has no parameters.
+#' @return An \code{ag_layer_norm} environment with \code{$forward()} and
+#'   \code{$parameters()}.
+#' @seealso \code{\link{ag_batch_norm}}
+#' @export
+#' @examples
+#' \donttest{
+#' ln <- ag_layer_norm(4L)
+#' x  <- ag_param(matrix(rnorm(8), 4, 2))   # [features, batch]
+#' with_grad_tape({
+#'   y    <- ln$forward(x)
+#'   loss <- ag_mse_loss(y, matrix(0, 4, 2))
+#' })
+#' grads <- backward(loss)
+#' }
+ag_layer_norm <- function(normalized_shape, eps = 1e-5,
+                          elementwise_affine = TRUE) {
+  normalized_shape <- as.integer(normalized_shape)
+  if (length(normalized_shape) != 1L || is.na(normalized_shape) ||
+      normalized_shape < 1L) {
+    stop("normalized_shape must be a single positive integer")
+  }
+
+  env <- new.env(parent = emptyenv())
+  env$normalized_shape   <- normalized_shape
+  env$eps                <- eps
+  env$elementwise_affine <- isTRUE(elementwise_affine)
+  env$training           <- TRUE
+  env$name               <- paste0("layer_norm(", normalized_shape, ")")
+
+  if (env$elementwise_affine) {
+    env$gamma <- ag_param(matrix(1.0, normalized_shape, 1L))
+    env$beta  <- ag_param(matrix(0.0, normalized_shape, 1L))
+  } else {
+    env$gamma <- NULL
+    env$beta  <- NULL
+  }
+
+  env$forward <- function(x) {
+    x_data <- if (is_ag_tensor(x)) x$data else x
+    if (!is.matrix(x_data)) x_data <- matrix(x_data, ncol = 1L)
+    d <- nrow(x_data)
+    n <- ncol(x_data)
+    if (d != env$normalized_shape) {
+      stop(sprintf("ag_layer_norm: expected %d features, got %d",
+                   env$normalized_shape, d))
+    }
+
+    # Statistics per column (per example), over the feature axis
+    mu    <- colMeans(x_data)
+    var   <- colMeans((x_data - rep(mu, each = d))^2)
+    sd    <- sqrt(var + env$eps)
+    x_hat <- (x_data - rep(mu, each = d)) / rep(sd, each = d)
+
+    g_data <- if (env$elementwise_affine) as.numeric(env$gamma$data) else rep(1.0, d)
+    b_data <- if (env$elementwise_affine) as.numeric(env$beta$data)  else rep(0.0, d)
+    y_data <- g_data * x_hat + b_data
+
+    out <- ag_tensor(y_data)
+
+    inputs <- list(x = x)
+    if (env$elementwise_affine) {
+      inputs$gamma <- env$gamma
+      inputs$beta  <- env$beta
+    }
+    needs_grad <- any(vapply(inputs, function(i) {
+      is_ag_tensor(i) && isTRUE(i$requires_grad)
+    }, logical(1)))
+    out$requires_grad <- needs_grad
+
+    if (needs_grad) {
+      # snapshot forward values for the closure
+      xh_snap <- x_hat
+      sd_snap <- sd
+      g_snap  <- g_data
+      affine  <- env$elementwise_affine
+
+      grad_fn <- function(grad_out) {
+        res <- list()
+        if (affine) {
+          # dgamma = sum_n grad_out * x_hat ; dbeta = sum_n grad_out
+          res$gamma <- matrix(rowSums(grad_out * xh_snap), d, 1L)
+          res$beta  <- matrix(rowSums(grad_out), d, 1L)
+        }
+        # dx = (g - mean(g) - x_hat * mean(g * x_hat)) / sd,  g = grad_out * gamma
+        g  <- grad_out * g_snap
+        res$x <- (g - rep(colMeans(g), each = d) -
+                    xh_snap * rep(colMeans(g * xh_snap), each = d)) /
+                 rep(sd_snap, each = d)
+        res
+      }
+
+      out$grad_fn <- grad_fn
+      ag_record(out, grad_fn, inputs)
+    }
+
+    out
+  }
+
+  env$parameters <- function() {
+    if (env$elementwise_affine) list(gamma = env$gamma, beta = env$beta) else list()
+  }
+
+  class(env) <- c("ag_layer_norm", "ag_layer")
+  env
+}
+
+#' @export
+print.ag_layer_norm <- function(x, ...) {
+  cat(sprintf("ag_layer_norm(%d) | eps=%g | affine=%s\n",
+              x$normalized_shape, x$eps, x$elementwise_affine))
+  invisible(x)
+}
+
+#' @export
+ag_train.ag_layer_norm <- function(model) { model$training <- TRUE;  invisible(model) }
+#' @export
+ag_eval.ag_layer_norm  <- function(model) { model$training <- FALSE; invisible(model) }
+
+# ============================================================================
 # ag_embedding
 # ============================================================================
 

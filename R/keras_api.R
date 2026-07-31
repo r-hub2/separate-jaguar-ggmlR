@@ -13,9 +13,37 @@ generics::compile
 #' @export
 generics::fit
 
-#' @importFrom generics evaluate
+#' Evaluate a Model
+#'
+#' Generic for computing loss and metrics on test data.
+#'
+#' @section Relationship to the generics package:
+#' \code{generics::evaluate} declares its first argument as \code{x}, so S3
+#' dispatch happens on whatever is bound to \code{x}.  With the keras3 argument
+#' order \code{evaluate(model, x, y)} that works positionally, but naming the
+#' data explicitly -- \code{evaluate(model, x = x, y = y)} -- binds the *data*
+#' to \code{x}, dispatches on it, and fails with "no applicable method".
+#' Declaring the generic here with \code{object} as its first argument fixes
+#' that and also resolves the S3 generic/method consistency warning from
+#' \code{R CMD check}.
+#'
+#' The trade-off: attaching both ggmlR and keras3 makes the two \code{evaluate}
+#' generics mask one another, and the later-attached package wins.  Qualify the
+#' call (\code{ggmlR::evaluate(...)}) if both are loaded.  \code{compile()} and
+#' \code{fit()} are unaffected -- \code{generics} declares those with
+#' \code{object} first, so they are still re-exported from there.
+#'
+#' @rdname evaluate
 #' @export
-generics::evaluate
+evaluate <- function(object, ...) {
+  UseMethod("evaluate")
+}
+
+# keras3 documents batch_size = NULL as "defaults to 32".  The underlying
+# ggml_* implementations require a concrete size, so resolve it here.
+keras_batch_size <- function(batch_size, default = 32L) {
+  if (is.null(batch_size)) default else as.integer(batch_size)
+}
 
 # ============================================================================
 # compile()
@@ -76,6 +104,8 @@ compile.ggml_functional_model <- function(object, optimizer = "adam",
 #' @param validation_split Fraction of data for validation (default 0).
 #' @param validation_data Optional \code{list(x_val, y_val)}.
 #' @param verbose 0 = silent, 1 = progress (default 1).
+#' @param shuffle Shuffle the training data (default \code{TRUE}, as in keras3).
+#'   Set to \code{FALSE} for time series or exactly reproducible runs.
 #' @param callbacks List of callback objects (default \code{list()}).
 #' @param ... Additional arguments passed to \code{\link{ggml_fit}}.
 #' @return The trained model (invisibly), with \code{model$history}.
@@ -95,10 +125,11 @@ fit.ggml_sequential_model <- function(object, x, y, epochs = 1L,
                                        validation_split = 0.0,
                                        validation_data = NULL,
                                        verbose = 1L,
+                                       shuffle = TRUE,
                                        callbacks = list(), ...) {
   ggml_fit(object, x = x, y = y, epochs = epochs, batch_size = batch_size,
            validation_split = validation_split, validation_data = validation_data,
-           verbose = verbose, callbacks = callbacks, ...)
+           verbose = verbose, shuffle = shuffle, callbacks = callbacks, ...)
 }
 
 #' @rdname fit
@@ -108,39 +139,42 @@ fit.ggml_functional_model <- function(object, x, y, epochs = 1L,
                                        validation_split = 0.0,
                                        validation_data = NULL,
                                        verbose = 1L,
+                                       shuffle = TRUE,
                                        callbacks = list(), ...) {
   ggml_fit(object, x = x, y = y, epochs = epochs, batch_size = batch_size,
            validation_split = validation_split, validation_data = validation_data,
-           verbose = verbose, ...)
+           verbose = verbose, shuffle = shuffle, callbacks = callbacks, ...)
 }
 
 # ============================================================================
 # evaluate()
 # ============================================================================
 
-#' Evaluate a Model
+#' These methods are the keras-compatible interface; they delegate to
+#' \code{\link{ggml_evaluate}}.  The argument order is keras3's: the model
+#' first, then \code{x}/\code{y} for the data.  Both
+#' \code{evaluate(model, x, y)} and \code{evaluate(model, x = x, y = y)} work.
 #'
-#' Computes loss and metrics on test data.  This is the keras-compatible
-#' interface; it delegates to \code{\link{ggml_evaluate}}.
-#'
-#' @param x A trained model object.
-#' @param test_x Test data.
-#' @param test_y Test labels.
-#' @param batch_size Batch size (default 32).
+#' @param object A trained model object.
+#' @param x Test data.
+#' @param y Test labels.
+#' @param batch_size Batch size.  \code{NULL} (default) uses 32, as in keras3.
 #' @param ... Additional arguments passed to \code{\link{ggml_evaluate}}.
 #' @return A named list with \code{loss} and metric values.
 #' @rdname evaluate
 #' @export
-evaluate.ggml_sequential_model <- function(x, test_x, test_y,
-                                            batch_size = 32L, ...) {
-  ggml_evaluate(x, x = test_x, y = test_y, batch_size = batch_size, ...)
+evaluate.ggml_sequential_model <- function(object, x, y,
+                                            batch_size = NULL, ...) {
+  ggml_evaluate(object, x = x, y = y,
+                batch_size = keras_batch_size(batch_size), ...)
 }
 
 #' @rdname evaluate
 #' @export
-evaluate.ggml_functional_model <- function(x, test_x, test_y,
-                                            batch_size = 32L, ...) {
-  ggml_evaluate(x, x = test_x, y = test_y, batch_size = batch_size, ...)
+evaluate.ggml_functional_model <- function(object, x, y,
+                                            batch_size = NULL, ...) {
+  ggml_evaluate(object, x = x, y = y,
+                batch_size = keras_batch_size(batch_size), ...)
 }
 
 # ============================================================================
@@ -155,16 +189,19 @@ evaluate.ggml_functional_model <- function(x, test_x, test_y,
 #'
 #' @param object A trained model object.
 #' @param x Input data (matrix, array, or list for multi-input models).
-#' @param batch_size Batch size for inference (default 32).
+#' @param batch_size Batch size for inference.  \code{NULL} (default) uses 32,
+#'   as in keras3.
 #' @param ... Additional arguments (ignored).
 #' @return Matrix of predictions.
 #' @export
-predict.ggml_sequential_model <- function(object, x, batch_size = 32L, ...) {
-  ggml_predict(object, x = x, batch_size = batch_size, ...)
+predict.ggml_sequential_model <- function(object, x, batch_size = NULL, ...) {
+  ggml_predict(object, x = x,
+               batch_size = keras_batch_size(batch_size), ...)
 }
 
 #' @rdname predict.ggml_sequential_model
 #' @export
-predict.ggml_functional_model <- function(object, x, batch_size = 32L, ...) {
-  ggml_predict(object, x = x, batch_size = batch_size, ...)
+predict.ggml_functional_model <- function(object, x, batch_size = NULL, ...) {
+  ggml_predict(object, x = x,
+               batch_size = keras_batch_size(batch_size), ...)
 }

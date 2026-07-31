@@ -10,6 +10,10 @@
 
 extern int ggmlR_get_n_threads(void);
 
+// r_interface_custom.c -- CPU-only guard for GGML_OP_CUSTOM nodes.
+extern const char * ggmlR_custom_check_sched(struct ggml_cgraph * graph,
+                                             ggml_backend_sched_t sched);
+
 // ============================================================================
 // Backend Scheduler Functions
 // ============================================================================
@@ -345,6 +349,13 @@ SEXP R_ggml_backend_sched_graph_compute(SEXP sched_ptr, SEXP graph_ptr) {
         error("Invalid graph pointer");
     }
 
+    const char * bad = ggmlR_custom_check_sched(graph, sched);
+    if (bad != NULL) {
+        error("Custom op node '%s' cannot run: ggml_custom() kernels are "
+              "CPU-only and this scheduler has no CPU backend to fall back to. "
+              "Include a CPU backend when creating the scheduler.", bad);
+    }
+
     sched_sync_cpu_threads(sched);
     enum ggml_status status = ggml_backend_sched_graph_compute(sched, graph);
 
@@ -361,6 +372,13 @@ SEXP R_ggml_backend_sched_graph_compute_async(SEXP sched_ptr, SEXP graph_ptr) {
     }
     if (graph == NULL) {
         error("Invalid graph pointer");
+    }
+
+    const char * bad = ggmlR_custom_check_sched(graph, sched);
+    if (bad != NULL) {
+        error("Custom op node '%s' cannot run: ggml_custom() kernels are "
+              "CPU-only and this scheduler has no CPU backend to fall back to. "
+              "Include a CPU backend when creating the scheduler.", bad);
     }
 
     sched_sync_cpu_threads(sched);

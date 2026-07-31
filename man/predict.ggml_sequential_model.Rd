@@ -5,16 +5,17 @@
 \alias{predict.ggml_functional_model}
 \title{Predict with a Trained Model}
 \usage{
-\method{predict}{ggml_sequential_model}(object, x, batch_size = 32L, ...)
+\method{predict}{ggml_sequential_model}(object, x, batch_size = NULL, ...)
 
-\method{predict}{ggml_functional_model}(object, x, batch_size = 32L, ...)
+\method{predict}{ggml_functional_model}(object, x, batch_size = NULL, ...)
 }
 \arguments{
 \item{object}{A trained model object.}
 
 \item{x}{Input data (matrix, array, or list for multi-input models).}
 
-\item{batch_size}{Batch size for inference (default 32).}
+\item{batch_size}{Batch size for inference.  \code{NULL} (default) uses 32,
+as in keras3.}
 
 \item{...}{Additional arguments (ignored).}
 }

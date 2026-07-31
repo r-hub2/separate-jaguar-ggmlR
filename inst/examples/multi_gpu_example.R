@@ -3,14 +3,14 @@
 
 library(ggmlR)
 
-# Check if Vulkan is available
-if (!ggml_vulkan_available()) {
+# Check Vulkan availability and devices (prints the status and returns it)
+status <- ggml_vulkan_status()
+
+if (!status$available) {
   stop("Vulkan is not available. Install libvulkan-dev and glslc, then reinstall ggmlR.")
 }
 
-# Check available devices
-ggml_vulkan_status()
-n_devices <- ggml_vulkan_device_count()
+n_devices <- status$n_devices
 
 if (n_devices == 0) {
   stop("No Vulkan devices found")

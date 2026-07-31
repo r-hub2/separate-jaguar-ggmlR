@@ -7,11 +7,24 @@
 ggml_vulkan_status()
 }
 \value{
-NULL (invisible), prints status to console
+Invisibly, a list with components:
+  \describe{
+    \item{available}{Logical, whether Vulkan support is compiled in and usable}
+    \item{n_devices}{Integer, number of Vulkan devices (0 if unavailable)}
+    \item{devices}{List of per-device property lists as returned by
+      \code{\link{ggml_vulkan_list_devices}}; an empty list if there are none}
+  }
+  Status is also printed to the console.
 }
 \description{
-Prints information about Vulkan availability and devices.
+Prints information about Vulkan availability and devices, and returns the
+same information as a list so it can be used programmatically.
 }
 \examples{
 ggml_vulkan_status()
+
+st <- ggml_vulkan_status()
+if (st$available && st$n_devices > 0) {
+  print(st$devices[[1]]$name)
+}
 }

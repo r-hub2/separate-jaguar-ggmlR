@@ -252,8 +252,7 @@ test_that("ggml_layer_concatenate invalid axis raises error at build time", {
   on.exit(cleanup_functional_model(m))
 })
 
-test_that("ggml_layer_concatenate with 3 inputs compiles (forward-only; no backward for concat)", {
-  # ggml_concat does not implement backward pass — test compile only
+test_that("ggml_layer_concatenate with 3 inputs compiles", {
   inp <- ggml_input(shape = 8L)
   a   <- inp |> ggml_layer_dense(4L, activation = "relu")
   b   <- inp |> ggml_layer_dense(4L, activation = "relu")
@@ -403,9 +402,6 @@ test_that("ggml_fit trains a model with residual add", {
 # ============================================================================
 
 test_that("ggml_model with concatenate compiles and graph builds", {
-  # Note: ggml_concat does not support backward pass, so we only test that
-  # the model can be compiled (graph structure is valid).  Training would
-  # require a custom backward implementation in ggml.
   inp <- ggml_input(shape = 8L)
   a   <- inp |> ggml_layer_dense(4L, activation = "relu")
   b   <- inp |> ggml_layer_dense(4L, activation = "relu")
@@ -420,6 +416,169 @@ test_that("ggml_model with concatenate compiles and graph builds", {
   expect_true(m$compiled)
 
   on.exit(cleanup_functional_model(m))
+})
+
+test_that("concatenate trains: loss decreases and grads reach both branches", {
+  # GGML_OP_CONCAT has a backward implementation in src/ggml-graph.c, so a
+  # concatenated model must actually train and update BOTH concatenated
+  # branches (each branch owns a distinct slice of the concat output).
+  set.seed(42)
+  n <- 128L
+  x <- matrix(runif(n * 8L), nrow = n)
+  y <- matrix(0.0, nrow = n, ncol = 2L)
+  for (i in seq_len(n)) y[i, if (sum(x[i, ]) > 4) 1L else 2L] <- 1.0
+
+  inp <- ggml_input(shape = 8L)
+  a   <- inp |> ggml_layer_dense(4L, activation = "relu")
+  b   <- inp |> ggml_layer_dense(4L, activation = "relu")
+  mid <- ggml_layer_concatenate(list(a, b), axis = 0L)
+  out <- mid |> ggml_layer_dense(2L, activation = "softmax")
+
+  m <- ggml_model(inputs = inp, outputs = out)
+  m <- ggml_compile(m, optimizer = "adam", loss = "categorical_crossentropy")
+  on.exit(cleanup_functional_model(m))
+
+  # node_weights is only populated after a fit, so snapshot after one epoch
+  # and compare against a longer continued fit.
+  m <- ggml_fit(m, x, y, epochs = 1L, batch_size = 32L, verbose = 0L)
+  snapshot <- function(model) {
+    lapply(model$node_weights,
+           function(w) lapply(w, ggml_backend_tensor_get_data))
+  }
+  before <- snapshot(m)
+
+  m <- ggml_fit(m, x, y, epochs = 8L, batch_size = 32L, verbose = 0L)
+  after <- snapshot(m)
+
+  # Both concatenated branches must have received non-zero gradients.
+  for (nid in c(a$id, b$id)) {
+    expect_false(is.null(after[[nid]]))
+    for (k in names(after[[nid]])) {
+      delta <- max(abs(after[[nid]][[k]] - before[[nid]][[k]]))
+      expect_gt(delta, 1e-8)
+    }
+  }
+
+  loss <- m$history$train_loss
+  expect_true(all(is.finite(loss)))
+  expect_lt(loss[length(loss)], loss[1])
+})
+
+# ============================================================================
+# ggml_layer_custom()
+# ============================================================================
+
+test_that("ggml_layer_custom returns a layer function", {
+  layer <- ggml_layer_custom(forward = function(ctx, x) ggml_relu(ctx, x))
+  expect_type(layer, "closure")
+})
+
+test_that("ggml_layer_custom creates a custom node with the given name", {
+  layer <- ggml_layer_custom(name = "my_act",
+                             forward = function(ctx, x) ggml_relu(ctx, x))
+  x <- ggml_input(shape = 8L)
+  z <- layer(x)
+
+  expect_s3_class(z, "ggml_tensor_node")
+  expect_equal(z$node_type, "custom")
+  expect_match(z$config$name, "^my_act_\\d+$")
+  expect_identical(z$parents[[1]]$id, x$id)
+})
+
+test_that("ggml_layer_custom accepts a per-application name override", {
+  layer <- ggml_layer_custom(forward = function(ctx, x) ggml_relu(ctx, x))
+  z <- layer(ggml_input(shape = 4L), name = "explicit")
+  expect_equal(z$config$name, "explicit")
+})
+
+test_that("ggml_layer_custom rejects an invalid forward function", {
+  expect_error(ggml_layer_custom(forward = "not a function"),
+               "must be a function")
+  # ggml ops all take ctx first, so a 1-argument forward is a user error
+  expect_error(ggml_layer_custom(forward = function(x) x),
+               "must accept two arguments")
+})
+
+test_that("ggml_layer_custom rejects a non-node input", {
+  layer <- ggml_layer_custom(forward = function(ctx, x) ggml_relu(ctx, x))
+  expect_error(layer(42), "must be applied to a ggml_tensor_node")
+})
+
+test_that("ggml_layer_custom preserves input shape by default", {
+  layer <- ggml_layer_custom(forward = function(ctx, x) ggml_relu(ctx, x))
+  node  <- layer(ggml_input(shape = 8L))
+  expect_equal(ggmlR:::nn_functional_output_shape(node, list(8L)), 8L)
+})
+
+test_that("ggml_layer_custom honours output_shape as vector and as function", {
+  fixed <- ggml_layer_custom(forward = function(ctx, x) x, output_shape = 3L)
+  expect_equal(ggmlR:::nn_functional_output_shape(fixed(ggml_input(shape = 8L)), list(8L)),
+               3L)
+
+  derived <- ggml_layer_custom(forward = function(ctx, x) x,
+                               output_shape = function(insh) insh[1] * 2L)
+  expect_equal(ggmlR:::nn_functional_output_shape(derived(ggml_input(shape = 8L)), list(8L)),
+               16L)
+})
+
+test_that("ggml_layer_custom rejects an invalid output_shape", {
+  expect_error(
+    ggml_layer_custom(forward = function(ctx, x) x, output_shape = "wide"),
+    "must be NULL, an integer vector, or a function"
+  )
+})
+
+test_that("custom layer trains end-to-end and passes gradients through", {
+  # Mish: x * tanh(softplus(x)) -- a composition with a full backward pass.
+  set.seed(7)
+  n <- 128L
+  x <- matrix(runif(n * 8L), nrow = n)
+  y <- matrix(0.0, nrow = n, ncol = 2L)
+  for (i in seq_len(n)) y[i, if (sum(x[i, ]) > 4) 1L else 2L] <- 1.0
+
+  layer_mish <- ggml_layer_custom(
+    name    = "mish",
+    forward = function(ctx, x) ggml_mul(ctx, x, ggml_tanh(ctx, ggml_softplus(ctx, x)))
+  )
+
+  inp <- ggml_input(shape = 8L)
+  hidden <- inp |> ggml_layer_dense(16L)
+  out <- hidden |> layer_mish() |> ggml_layer_dense(2L, activation = "softmax")
+
+  m <- ggml_model(inputs = inp, outputs = out)
+  m <- ggml_compile(m, optimizer = "adam", loss = "categorical_crossentropy")
+  on.exit(cleanup_functional_model(m))
+
+  m <- ggml_fit(m, x, y, epochs = 1L, batch_size = 32L, verbose = 0L)
+  before <- lapply(m$node_weights[[hidden$id]], ggml_backend_tensor_get_data)
+
+  m <- ggml_fit(m, x, y, epochs = 8L, batch_size = 32L, verbose = 0L)
+  after <- lapply(m$node_weights[[hidden$id]], ggml_backend_tensor_get_data)
+
+  # The layer feeding the custom node must still receive gradients.
+  for (k in names(after)) {
+    expect_gt(max(abs(after[[k]] - before[[k]])), 1e-8)
+  }
+
+  loss <- m$history$train_loss
+  expect_true(all(is.finite(loss)))
+  expect_lt(loss[length(loss)], loss[1])
+})
+
+test_that("custom layer returning NULL raises an informative error", {
+  bad <- ggml_layer_custom(name = "bad", forward = function(ctx, x) NULL)
+  inp <- ggml_input(shape = 4L)
+  out <- inp |> bad() |> ggml_layer_dense(2L, activation = "softmax")
+  m   <- ggml_model(inputs = inp, outputs = out)
+  m   <- ggml_compile(m, optimizer = "adam", loss = "categorical_crossentropy")
+
+  # The graph is built lazily, so the failure surfaces on the first fit.
+  x <- matrix(runif(32L * 4L), nrow = 32L)
+  y <- matrix(c(1, 0), nrow = 32L, ncol = 2L, byrow = TRUE)
+  expect_error(
+    ggml_fit(m, x, y, epochs = 1L, batch_size = 32L, verbose = 0L),
+    "returned NULL"
+  )
 })
 
 # ============================================================================

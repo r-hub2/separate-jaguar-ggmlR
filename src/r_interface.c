@@ -5,6 +5,13 @@
 #include "ggml-cpu.h"
 #include "r_ptr_check.h"
 
+// Custom-op registry (defined in r_interface_custom.c); exported to downstream
+// packages via R_RegisterCCallable in R_init_ggmlR.
+extern void ggmlR_register_custom_op(const char * name, ggml_custom_op_t fun);
+
+// Built-in demo/utility kernels (r_custom_kernels.c).
+extern void ggmlR_register_builtin_custom_ops(void);
+
 // Vulkan functions (defined in r_interface_vulkan.c)
 extern SEXP R_ggml_vulkan_is_available(void);
 extern SEXP R_ggml_vulkan_device_count(void);
@@ -786,6 +793,7 @@ SEXP R_ggml_add1(SEXP ctx_ptr, SEXP a_ptr, SEXP b_ptr);
 SEXP R_ggml_sgn(SEXP ctx_ptr, SEXP a_ptr);
 SEXP R_ggml_step(SEXP ctx_ptr, SEXP a_ptr);
 SEXP R_ggml_build_forward_expand(SEXP ctx_ptr, SEXP tensor_ptr);
+SEXP R_ggml_graph_expand(SEXP graph_ptr, SEXP tensor_ptr);
 SEXP R_ggml_graph_compute(SEXP ctx_ptr, SEXP graph_ptr);
 SEXP R_ggml_graph_n_nodes(SEXP graph_ptr);
 SEXP R_ggml_graph_print(SEXP graph_ptr);
@@ -965,6 +973,13 @@ SEXP R_ggml_rope_ext_back(SEXP ctx_ptr, SEXP a_ptr, SEXP b_ptr, SEXP c_ptr,
 
 // Concatenation
 SEXP R_ggml_concat(SEXP ctx_ptr, SEXP a_ptr, SEXP b_ptr, SEXP dim);
+
+// Custom operations (r_interface_custom.c)
+SEXP R_ggml_custom_4d(SEXP ctx_ptr, SEXP type, SEXP ne0, SEXP ne1, SEXP ne2, SEXP ne3,
+                      SEXP args_list, SEXP fun_name, SEXP n_tasks);
+SEXP R_ggml_custom_inplace(SEXP ctx_ptr, SEXP a_ptr, SEXP args_list,
+                           SEXP fun_name, SEXP n_tasks);
+SEXP R_ggml_custom_ops(void);
 
 // Sequence/Token operations
 SEXP R_ggml_pad(SEXP ctx_ptr, SEXP a_ptr, SEXP p0, SEXP p1, SEXP p2, SEXP p3);
@@ -1320,6 +1335,7 @@ static const R_CallMethodDef CallEntries[] = {
 
     // Graph building and execution
     {"R_ggml_build_forward_expand", (DL_FUNC) &R_ggml_build_forward_expand, 2},
+    {"R_ggml_graph_expand",         (DL_FUNC) &R_ggml_graph_expand,         2},
     {"R_ggml_graph_compute",        (DL_FUNC) &R_ggml_graph_compute,        2},
     {"R_ggml_graph_n_nodes",        (DL_FUNC) &R_ggml_graph_n_nodes,        1},
     {"R_ggml_graph_print",          (DL_FUNC) &R_ggml_graph_print,          1},
@@ -1501,6 +1517,11 @@ static const R_CallMethodDef CallEntries[] = {
 
     // Concatenation
     {"R_ggml_concat",         (DL_FUNC) &R_ggml_concat,         4},
+
+    // Custom operations
+    {"R_ggml_custom_4d",      (DL_FUNC) &R_ggml_custom_4d,      9},
+    {"R_ggml_custom_inplace", (DL_FUNC) &R_ggml_custom_inplace, 5},
+    {"R_ggml_custom_ops",     (DL_FUNC) &R_ggml_custom_ops,     0},
 
     // Sequence/Token operations
     {"R_ggml_pad",            (DL_FUNC) &R_ggml_pad,            6},
@@ -1961,4 +1982,11 @@ static const R_CallMethodDef CallEntries[] = {
 void R_init_ggmlR(DllInfo *dll) {
     R_registerRoutines(dll, NULL, CallEntries, NULL, NULL);
     R_useDynamicSymbols(dll, FALSE);
+
+    // Let downstream C code register custom-op kernels by name. See
+    // inst/include/ggmlR.h and r_interface_custom.c.
+    R_RegisterCCallable("ggmlR", "ggmlR_register_custom_op",
+                        (DL_FUNC) &ggmlR_register_custom_op);
+
+    ggmlR_register_builtin_custom_ops();
 }

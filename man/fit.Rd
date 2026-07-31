@@ -14,6 +14,7 @@
   validation_split = 0,
   validation_data = NULL,
   verbose = 1L,
+  shuffle = TRUE,
   callbacks = list(),
   ...
 )
@@ -27,6 +28,7 @@
   validation_split = 0,
   validation_data = NULL,
   verbose = 1L,
+  shuffle = TRUE,
   callbacks = list(),
   ...
 )
@@ -47,6 +49,9 @@
 \item{validation_data}{Optional \code{list(x_val, y_val)}.}
 
 \item{verbose}{0 = silent, 1 = progress (default 1).}
+
+\item{shuffle}{Shuffle the training data (default \code{TRUE}, as in keras3).
+Set to \code{FALSE} for time series or exactly reproducible runs.}
 
 \item{callbacks}{List of callback objects (default \code{list()}).}
 

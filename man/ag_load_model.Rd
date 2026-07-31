@@ -4,7 +4,7 @@
 \alias{ag_load_model}
 \title{Load an autograd module from a saved state}
 \usage{
-ag_load_model(path, model_fn = NULL, device = NULL)
+ag_load_model(path, model_fn = NULL, device = NULL, dtype = NULL)
 }
 \arguments{
 \item{path}{File path written by \code{\link{ag_save_model}}.}
@@ -16,6 +16,20 @@ takes precedence.}
 \item{device}{Optional device for the rebuilt module (\code{"cpu"} or
 \code{"gpu"}). If \code{NULL} (default), the current \code{ag_device()} is
 used by the rebuild.}
+
+\item{dtype}{Optional GPU upload precision for the restored parameters
+  (\code{"f32"}, \code{"f16"}, or \code{"bf16"}). If \code{NULL} (default),
+  the dtype recorded in the file is restored, so a module saved under
+  \code{ag_dtype("f16")} keeps computing in f16 regardless of the loading
+  session's default. Pass an explicit value to override the file. Files
+  written before dtypes were recorded fall back to whatever
+  \code{model_fn} builds.
+
+  Note that this is an \emph{upload/compute} precision, not a storage
+  precision: parameter values always live in \code{$data} as full-precision
+  R numeric matrices (that is what backward needs), and \code{dtype} only
+  controls the precision they are uploaded to the GPU with. Saving therefore
+  never rounds the weights, whatever dtype is in effect.}
 }
 \value{
 The reconstructed module with restored weights, in eval mode.
