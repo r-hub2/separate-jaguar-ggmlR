@@ -703,6 +703,13 @@ struct vk_device_struct {
     bool shader_64b_indexing;
 
     bool integer_dot_product;
+
+    // ggmlR extension: VK_EXT_shader_atomic_float with shaderBufferFloat32AtomicAdd.
+    // Backward kernels that accumulate into shared gradients (ssm_scan_back, and
+    // scatter_elements in add mode) need it; supports_op refuses those ops rather
+    // than dispatching a shader whose atomicAdd would not compile or, worse,
+    // would silently drop the accumulation.
+    bool atomic_float_add;
     // 0: default, 1: force mmvq, -1: disable mmvq
     int32_t mmvq_mode;
 
@@ -926,6 +933,8 @@ struct vk_device_struct {
     vk_pipeline pipeline_ssm_scan_f32_d128;
     vk_pipeline pipeline_ssm_scan_f32_d256;
     vk_pipeline pipeline_ssm_conv_f32;
+    // ggmlR extension: backward of ssm_conv (no upstream Vulkan shader).
+    vk_pipeline pipeline_ssm_conv_back_f32;
     vk_pipeline pipeline_out_prod_f32;   // ggmlR: backward of mul_mat
     vk_pipeline pipeline_cross_entropy_loss_back_f32;   // ggmlR
     vk_pipeline pipeline_opt_step_adamw_f32;
@@ -1763,6 +1772,17 @@ struct vk_op_ssm_conv_push_constants {
     uint32_t nb11;
     uint32_t dst_nb0, dst_nb1, dst_nb2;
     uint32_t nc, ncs, nr, n_t, n_s;
+};
+
+// ggmlR extension: backward of ssm_conv. Strides are byte counts; the shader
+// divides by sizeof(float). d_c_off is where the packed [d_sx | d_c] output
+// switches from one gradient to the other.
+struct vk_op_ssm_conv_back_push_constants {
+    uint32_t nb01, nb02;
+    uint32_t nb11;
+    uint32_t g_nb1, g_nb2;
+    uint32_t nc, ncs, nr, n_t, n_s;
+    uint32_t d_c_off;
 };
 
 // ggmlR extension: GGML_OP_OUT_PROD on the GPU (no upstream Vulkan shader).

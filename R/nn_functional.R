@@ -777,13 +777,6 @@ ggml_layer_custom <- function(forward, name = NULL, output_shape = NULL) {
 # Topological sort
 # ============================================================================
 
-#' Topologically sort nodes reachable from output nodes
-#' @param outputs List of output ggml_tensor_node objects
-#' @return Named list: nodes in topological order (inputs first, outputs last)
-#' @export
-# Names of a functional model's output heads, used to match `loss`/`loss_weights`
-# entries by name and to label the per-head training history. Falls back to the
-# node id when a layer was created without an explicit name.
 # Loss of one output head, computed on the R side for evaluate(). Mirrors the
 # formulas the ggml graph uses, so evaluate() and fit() report comparable
 # numbers for the same loss name.
@@ -835,6 +828,9 @@ nn_add_extra_metrics <- function(out, metrics, preds_mat, y) {
   out
 }
 
+# Names of a functional model's output heads, used to match `loss`/`loss_weights`
+# entries by name and to label the per-head training history. Falls back to the
+# node id when a layer was created without an explicit name.
 nn_output_names <- function(model) {
   vapply(model$outputs, function(n) {
     nm <- n$config$name
@@ -842,6 +838,11 @@ nn_output_names <- function(model) {
   }, character(1))
 }
 
+#' Topologically sort nodes reachable from output nodes
+#'
+#' @param outputs List of output ggml_tensor_node objects
+#' @return Named list: nodes in topological order (inputs first, outputs last)
+#' @export
 nn_topo_sort <- function(outputs) {
   visited <- list()
   ordered <- list()

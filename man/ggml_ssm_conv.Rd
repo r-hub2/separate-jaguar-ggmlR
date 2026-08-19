@@ -50,6 +50,7 @@ Other state-space:
 \code{\link{ggml_rwkv_wkv7_back}()},
 \code{\link{ggml_ssm_conv_back}()},
 \code{\link{ggml_ssm_scan}()},
+\code{\link{ggml_ssm_scan_back}()},
 \code{\link{ggml_ssm_scan_output}()}
 }
 \concept{state-space}

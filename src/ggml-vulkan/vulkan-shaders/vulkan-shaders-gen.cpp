@@ -1118,6 +1118,11 @@ void process_shaders() {
     string_to_spv("ssm_scan_subgroup_f32", "ssm_scan.comp", {{"A_TYPE", "float"}, {"USE_SUBGROUP_ADD", "1"}});
 
     string_to_spv("ssm_conv_f32", "ssm_conv.comp", {{"A_TYPE", "float"}});
+
+    // ggmlR extension: no upstream Vulkan shader exists for the SSM backward
+    // ops, so every training step through a Mamba block used to fall back to
+    // the CPU.
+    string_to_spv("ssm_conv_back_f32", "ssm_conv_back.comp", {{"A_TYPE", "float"}});
     // ggmlR: OUT_PROD, the op both mul_mat gradients are built from.
     string_to_spv("out_prod_f32", "out_prod.comp", {{"A_TYPE", "float"}});
     string_to_spv("cross_entropy_loss_back_f32", "cross_entropy_loss_back.comp", {{"A_TYPE", "float"}});

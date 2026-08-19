@@ -35,6 +35,7 @@ that \code{g} gates, and \code{scale} multiplies the query.
 \code{state} holds \code{S * S * H * n_seqs} elements.  The result is
 \code{[S * H, n_tokens + S * n_seqs]}, outputs then final state -- see
 \code{\link{ggml_rwkv_output}}.
+
 \code{n_tokens} counts the tokens of \emph{all} sequences together, so it
 must be a multiple of \code{n_seqs}.
 }
@@ -59,6 +60,7 @@ Other state-space:
 \code{\link{ggml_ssm_conv}()},
 \code{\link{ggml_ssm_conv_back}()},
 \code{\link{ggml_ssm_scan}()},
+\code{\link{ggml_ssm_scan_back}()},
 \code{\link{ggml_ssm_scan_output}()}
 }
 \concept{state-space}

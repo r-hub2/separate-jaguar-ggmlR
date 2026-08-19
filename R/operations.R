@@ -4607,32 +4607,38 @@ ggml_ssm_conv_back <- function(ctx, sx, c, grad) {
 }
 
 #' Backward Pass of the Selective State-Space Scan
-#.
+#'
 #' Gradients of \code{\link{ggml_ssm_scan}} with respect to all six of its
 #' differentiable inputs, given \code{grad}, the gradient of the loss with
-#' respect to the scan.s packed forward result.
-#.
+#' respect to the scan's packed forward result.
+#'
 #' Training reaches this automatically through the backward graph. It is
 #' exported so the gradient can be checked directly against a numeric one.
-#.
-#'  Packed result:
+#'
+#' @section Packed result:
 #' All six gradients come back in one flat tensor, in the same order the scan
 #' takes its inputs: \code{[d_s | d_x | d_dt | d_A | d_B | d_C]}. \code{ids} is
 #' integer and has no gradient. A single op returns a single tensor, and packing
 #' them keeps the recurrence from being replayed once per input.
-#.
-#'  Cost:
+#'
+#' @section Cost:
 #' The forward pass does not keep its intermediate states, so this replays the
 #' recurrence before walking it back -- roughly twice the forward work, and no
 #' extra memory beyond one state buffer.
-#.
-#'  ctx GGML context
-#'  s,x,dt,A,B,C,ids The tensors passed to the forward scan
-#'  grad Gradient w.r.t. the packed forward result
-#'  A flat tensor holding the six gradients, concatenated
-#'  \code{\link{ggml_ssm_scan}}
-#' 
-#'  state-space
+#'
+#' @param ctx GGML context
+#' @param s Initial states, as passed to the forward scan
+#' @param x Inputs, as passed to the forward scan
+#' @param dt Per-token timestep, as passed to the forward scan
+#' @param A State decay, as passed to the forward scan
+#' @param B Input projection, as passed to the forward scan
+#' @param C Output projection, as passed to the forward scan
+#' @param ids Sequence-to-state mapping, as passed to the forward scan
+#' @param grad Gradient w.r.t. the packed forward result
+#' @return A flat tensor holding the six gradients, concatenated
+#' @seealso \code{\link{ggml_ssm_scan}}
+#' @export
+#' @family state-space
 ggml_ssm_scan_back <- function(ctx, s, x, dt, A, B, C, ids, grad) {
   .Call("R_ggml_ssm_scan_back", ctx, s, x, dt, A, B, C, ids, grad,
         PACKAGE = "ggmlR")
@@ -4794,7 +4800,7 @@ ggml_rwkv_wkv6 <- function(ctx, k, v, r, tf, td, state) {
 #' elements.  All must be contiguous.  The result is
 #' \code{[S * H, n_tokens + S * n_seqs]}, outputs then final state -- see
 #' \code{\link{ggml_rwkv_output}}.
-#.
+#'
 #' \code{n_tokens} counts the tokens of \emph{all} sequences together, so it
 #' must be a multiple of \code{n_seqs}.
 #'
@@ -4828,7 +4834,7 @@ ggml_rwkv_wkv7 <- function(ctx, r, w, k, v, a, b, state) {
 #' \code{state} holds \code{S * S * H * n_seqs} elements.  The result is
 #' \code{[S * H, n_tokens + S * n_seqs]}, outputs then final state -- see
 #' \code{\link{ggml_rwkv_output}}.
-#.
+#'
 #' \code{n_tokens} counts the tokens of \emph{all} sequences together, so it
 #' must be a multiple of \code{n_seqs}.
 #'

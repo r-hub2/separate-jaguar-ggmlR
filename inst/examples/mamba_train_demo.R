@@ -36,15 +36,29 @@ set.seed(20260819)
 # also what real GPU-first training uses: it assigns each node to a backend that
 # supports it and copies tensors across as needed.
 
-want_gpu <- !identical(tolower(Sys.getenv("GGMLR_DEMO_BACKEND")), "cpu")
-use_gpu  <- want_gpu && ggml_vulkan_available() && ggml_vulkan_device_count() > 0L
+# The demo runs the same training twice -- once entirely on the CPU, once with
+# Vulkan -- and compares the two at the end. Running one and eyeballing the
+# curve cannot tell a backend bug from a bad hyperparameter; running both from
+# identical weights on identical batches can, because then the only difference
+# left between the two columns is where the nodes executed.
+#
+# `use_gpu` is set per run by the loop at the bottom; step_grads() reads it.
+use_gpu <- FALSE
+# Set back to FALSE at the start of each run so both runs announce their backend.
+.demo_backend_reported <- FALSE
+# Trace the first step of each run: inputs, per-stage outputs, gradients.
+# GGMLR_DEMO_TRACE=0 turns it off.
+.demo_trace <- !identical(Sys.getenv("GGMLR_DEMO_TRACE"), "0")
 
-if (use_gpu) {
-  cat("Backend: Vulkan (backward nodes fall back to CPU via the scheduler)\n")
-} else if (want_gpu) {
-  cat("Backend: CPU (no Vulkan device found)\n")
+have_gpu <- ggml_vulkan_available() && ggml_vulkan_device_count() > 0L
+runs <- if (identical(tolower(Sys.getenv("GGMLR_DEMO_BACKEND")), "cpu")) {
+  list(list(name = "CPU", gpu = FALSE))
+} else if (have_gpu) {
+  list(list(name = "CPU",    gpu = FALSE),
+       list(name = "Vulkan", gpu = TRUE))
 } else {
-  cat("Backend: CPU (requested)\n")
+  cat("No Vulkan device found -- running the CPU pass only.\n")
+  list(list(name = "CPU", gpu = FALSE))
 }
 
 # ---- problem -------------------------------------------------------------
@@ -58,7 +72,12 @@ if (use_gpu) {
 # that runs in a second, for a quick check.
 small <- identical(Sys.getenv("GGMLR_DEMO_SMALL"), "1")
 
-d_state  <- if (small)  4L else  16L   # SSM state width (Mamba uses 16)
+# SSM state width. The Vulkan ssm_scan shader accepts d_state 128 or 256 only
+# (see GGML_OP_SSM_SCAN in ggml_backend_vk_device_supports_op) -- with Mamba-1's
+# d_state=16 the op is refused, the scheduler puts the whole scan on the CPU,
+# and the "GPU" run below is silently identical to the CPU one. 128 is the
+# Mamba-2 width and is what actually exercises the shader.
+d_state  <- if (small)  4L else 128L
 head_dim <- if (small)  2L else  64L   # channels per head
 n_head   <- if (small)  2L else  16L   # heads -> d_inner = 1024
 n_tok    <- if (small)  6L else  64L   # tokens per sequence
@@ -83,13 +102,24 @@ make_batch <- function() {
 
 batches <- lapply(seq_len(n_samples), function(i) make_batch())
 
+# What a block that learned nothing would score. The loss is a sum of squares
+# against the target, so predicting a flat zero costs sum(y^2) -- and a
+# recurrence whose B and C have been driven to zero predicts exactly that.
+# Comparing the final loss against the first epoch cannot tell the two apart
+# (a run that starts by exploding beats its own first epoch while collapsing),
+# so the verdict below is against this number instead.
+baseline <- mean(vapply(batches, function(b) mean(b$y^2), numeric(1)))
+
 # ---- trainable parameters -------------------------------------------------
 # Kept as plain R vectors between steps; each step rebuilds the graph, uploads
 # these, computes the gradient, and applies it. That is slower than a persistent
 # optimizer context, but it keeps the script readable and exercises exactly the
 # path a training loop would.
 
-params <- list(
+# Drawn once, before either run. Both backends start from this same copy --
+# re-drawing them per run would put an RNG difference into the comparison and
+# make any backend discrepancy unreadable.
+params0 <- list(
   # ssm_conv kernel, [d_conv, d_inner]
   conv = runif(d_conv * d_inner, -0.3, 0.3),
   # ssm_scan projections
@@ -97,7 +127,12 @@ params <- list(
   C    = runif(d_state * 1L * n_tok * n_seqs, -0.3, 0.3),
   # per-head decay; negative keeps the recurrence stable
   A    = -runif(n_head, 0.2, 1.0),
-  dt   = runif(n_head * n_tok * n_seqs, -0.5, 0.5)
+  # Step size. The recurrence contracts only when dt * A < 0, so with A < 0 the
+  # step has to stay positive -- Mamba itself never uses a raw dt, it passes it
+  # through softplus for exactly this reason. Seeding dt symmetric around zero
+  # instead makes exp(dt * A) > 1 for half the heads and the state blows up
+  # exponentially over the sequence (a starting loss around 1e16 at these sizes).
+  dt   = runif(n_head * n_tok * n_seqs, 0.01, 0.1)
 )
 
 # ---- one forward+backward pass -------------------------------------------
@@ -113,10 +148,15 @@ step_grads <- function(p, batch) {
   # sequence fed to ssm_conv is longer than the token count.
   conv_len <- d_conv - 1L + n_tok
   sx <- ggml_new_tensor_3d(ctx, GGML_TYPE_F32, conv_len, d_inner, n_seqs)
-  ggml_set_input(sx)
+  # None of these are marked with ggml_set_input(). That flag tells the
+  # scheduler the tensor is fed from outside, which pins it to the CPU -- and
+  # since a node inherits the backend of its sources, one flagged input drags
+  # the whole graph off the GPU. Uploading with ggml_backend_tensor_set_data()
+  # after sched_alloc_graph() works either way, so the flag buys nothing here
+  # and costs the entire Vulkan path.
 
   cw <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, d_conv, d_inner)
-  ggml_set_input(cw)
+
   ggml_set_param(cw)
 
   # conv branch: [d_inner, n_tok, n_seqs]
@@ -127,33 +167,48 @@ step_grads <- function(p, batch) {
   x_scan <- ggml_reshape_4d(ctx, conv_out, head_dim, n_head, n_tok, n_seqs)
 
   s0 <- ggml_new_tensor_4d(ctx, GGML_TYPE_F32, d_state, head_dim, n_head, n_seqs)
-  ggml_set_input(s0)
 
   dt <- ggml_new_tensor_3d(ctx, GGML_TYPE_F32, n_head, n_tok, n_seqs)
-  ggml_set_input(dt); ggml_set_param(dt)
+  ggml_set_param(dt)
 
   A <- ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 1L, n_head)
-  ggml_set_input(A); ggml_set_param(A)
+  ggml_set_param(A)
 
   B <- ggml_new_tensor_4d(ctx, GGML_TYPE_F32, d_state, 1L, n_tok, n_seqs)
-  ggml_set_input(B); ggml_set_param(B)
+  ggml_set_param(B)
 
   C <- ggml_new_tensor_4d(ctx, GGML_TYPE_F32, d_state, 1L, n_tok, n_seqs)
-  ggml_set_input(C); ggml_set_param(C)
+  ggml_set_param(C)
 
   ids <- ggml_new_tensor_1d(ctx, GGML_TYPE_I32, n_seqs)
-  ggml_set_input(ids)
 
   scan <- ggml_ssm_scan(ctx, s0, x_scan, dt, A, B, C, ids)
   # The scan packs outputs then final state; only the outputs are scored.
   y_hat <- ggml_ssm_scan_output(ctx, scan, x_scan)
 
   target <- ggml_new_tensor_4d(ctx, GGML_TYPE_F32, head_dim, n_head, n_tok, n_seqs)
-  ggml_set_input(target)
 
   diff <- ggml_sub(ctx, y_hat, target)
-  loss <- ggml_sum(ctx, ggml_sqr(ctx, diff))
+  # Mean squared error, as sum/n rather than ggml_mean(): GGML_OP_MEAN reduces
+  # along ne[0] only, so on a 4D tensor it returns [1, n_head, n_tok, n_seqs]
+  # rather than a scalar, and the loss has to be a scalar. Scaling the sum is
+  # what makes the gradient independent of the element count -- with a raw sum
+  # a step size tuned at one size diverges at another, which is what the "* 24"
+  # fudge on lr and the sqrt(length)-scaled gradient clip were compensating for.
+  n_out_elem <- head_dim * n_head * n_tok * n_seqs
+  loss <- ggml_scale(ctx, ggml_sum(ctx, ggml_sqr(ctx, diff)), 1 / n_out_elem)
   ggml_set_output(loss)
+
+  # Keep the intermediates readable. Without ggml_set_output() the scheduler is
+  # free to reuse their buffers for later nodes, and the trace below would read
+  # whatever happened to land there instead of the layer's own output.
+  if (isTRUE(.demo_trace)) {
+    ggml_set_output(conv_out)
+    # `scan`, not the y_hat view into it: flagging a view leaves the underlying
+    # buffer unflagged, and on Vulkan the trace then reads back zeros for a
+    # tensor the shader computed correctly.
+    ggml_set_output(scan)
+  }
   ggml_set_loss(loss)
 
   # The full low-level autodiff sequence. ggml_graph_reset() is not optional:
@@ -165,6 +220,26 @@ step_grads <- function(p, batch) {
   # Allocate on the chosen backend, then upload. The order matters: with
   # no_alloc the tensors have no storage until the backend provides it.
   backend <- if (use_gpu) ggml_vulkan_init(0L) else ggml_backend_cpu_init()
+  # Report where the work actually landed, once per run. Creating a Vulkan
+  # backend proves nothing: the scheduler assigns each node to a backend that
+  # accepts it, and an op the shader refuses (ssm_scan outside d_state 128/256,
+  # or any of the backward kernels, which have no shader at all) falls back to
+  # the CPU without a word. Asking the scheduler which backend holds the scan
+  # output is the difference between "a GPU was present" and "the GPU ran it".
+  report_placement <- function(sched) {
+    if (isTRUE(.demo_backend_reported)) return(invisible(NULL))
+    .demo_backend_reported <<- TRUE
+    where <- function(t) {
+      b <- tryCatch(ggml_backend_sched_get_tensor_backend(sched, t),
+                    error = function(e) NULL)
+      if (is.null(b)) "unassigned" else ggml_vulkan_backend_name(b)
+    }
+    cat(sprintf("  backend created: %s, splits=%d\n",
+                ggml_vulkan_backend_name(backend),
+                ggml_backend_sched_get_n_splits(sched)))
+    cat(sprintf("  ssm_conv out -> %s | ssm_scan out -> %s | loss -> %s\n",
+                where(conv_out), where(scan), where(loss)))
+  }
   on.exit(ggml_backend_free(backend), add = TRUE)
   # The scheduler appends a CPU backend of its own, which is what lets the
   # backward nodes Vulkan cannot run fall back rather than fail.
@@ -173,6 +248,9 @@ step_grads <- function(p, batch) {
 
   ggml_backend_sched_reset(sched)
   ggml_backend_sched_alloc_graph(sched, graph)
+  # After allocation, not before: the assignment does not exist until the
+  # scheduler has walked the graph.
+  report_placement(sched)
 
   ggml_backend_tensor_set_data(sx, c(rep(0, (d_conv - 1L) * d_inner * n_seqs), batch$x))
   ggml_backend_tensor_set_data(cw, p$conv)
@@ -187,6 +265,49 @@ step_grads <- function(p, batch) {
   ggml_graph_reset(graph)
   ggml_backend_sched_graph_compute(sched, graph)
 
+  # ---- trace ---------------------------------------------------------------
+  # One pass over the graph, printed once per run: what went in, what each stage
+  # produced, and what came back as gradients. Summary statistics rather than
+  # the tensors themselves -- with d_inner=1024 the interesting question is
+  # whether a stage is saturating or exploding, and min/max/rms answers it.
+  if (isTRUE(.demo_trace)) {
+    .demo_trace <<- FALSE
+    stat <- function(label, v) {
+      finite <- v[is.finite(v)]
+      cat(sprintf("  %-16s n=%-8d min %11.4g  max %11.4g  rms %11.4g%s\n",
+                  label, length(v),
+                  if (length(finite)) min(finite) else NA_real_,
+                  if (length(finite)) max(finite) else NA_real_,
+                  if (length(finite)) sqrt(mean(finite^2)) else NA_real_,
+                  if (length(finite) < length(v))
+                    sprintf("  [%d non-finite]", length(v) - length(finite)) else ""))
+    }
+    cat("\n  -- forward ------------------------------------------------\n")
+    stat("x (input)",   batch$x)
+    stat("target",      batch$y)
+    stat("conv w",      p$conv)
+    stat("ssm_conv out", ggml_backend_tensor_get_data(conv_out))
+    # The scan packs outputs then final states; slice the output half off the
+    # parent tensor rather than reading the view.
+    scan_all <- ggml_backend_tensor_get_data(scan)
+    n_out    <- head_dim * n_head * n_tok * n_seqs
+    stat("ssm_scan out",   scan_all[seq_len(n_out)])
+    stat("ssm_scan state", scan_all[-seq_len(n_out)])
+    cat("  -- parameters ---------------------------------------------\n")
+    stat("A",  p$A);  stat("dt", p$dt)
+    stat("B",  p$B);  stat("C",  p$C)
+    cat(sprintf("  %-16s %.6g\n", "loss",
+                ggml_backend_tensor_get_data(loss)[1]))
+    cat("  -- gradients ----------------------------------------------\n")
+    for (nm in c("conv", "dt", "A", "B", "C")) {
+      tn <- switch(nm, conv = cw, dt = dt, A = A, B = B, C = C)
+      gg <- ggml_graph_get_grad(graph, tn)
+      if (is.null(gg)) cat(sprintf("  %-16s (no gradient node)\n", nm))
+      else stat(paste0("d/d", nm), ggml_backend_tensor_get_data(gg))
+    }
+    cat("\n")
+  }
+
   grab <- function(t) {
     g <- ggml_graph_get_grad(graph, t)
     if (is.null(g)) rep(0, ggml_nelements(t)) else ggml_backend_tensor_get_data(g)
@@ -199,64 +320,131 @@ step_grads <- function(p, batch) {
 
 # ---- training loop --------------------------------------------------------
 
-# The loss is a SUM over every output element, so its gradient scales with the
-# tensor size -- a learning rate tuned on the toy sizes is far too small once
-# d_inner is 1024. Normalising by the element count keeps the step comparable
-# across both configurations.
-lr      <- 0.05 * (if (small) 1 else 24)
+# One learning rate for both sizes: the loss is a mean, so the gradient no
+# longer grows with d_inner and the size-dependent fudge factor is gone.
+lr      <- 0.05
 n_epoch <- if (small) 40L else 60L
-history <- numeric(n_epoch)
 
 cat("Training a Mamba-style block (ssm_conv -> ssm_scan)\n")
 cat(sprintf("  d_state=%d head_dim=%d n_head=%d d_inner=%d tokens=%d samples=%d\n",
             d_state, head_dim, n_head, d_inner, n_tok, n_samples))
-cat(sprintf("  scan work: %.1fM multiply-adds per step\n\n",
+cat(sprintf("  scan work: %.1fM multiply-adds per step\n",
             n_tok * n_head * head_dim * d_state / 1e6))
+cat(sprintf("  predicting zero scores %.4f -- the number to beat\n", baseline))
 
-t_start <- Sys.time()
+# One full training run on whichever backend `use_gpu` selects. Everything it
+# needs is passed in or drawn before it is called, so calling it twice runs the
+# same arithmetic on two backends rather than two different problems.
+train_once <- function(label) {
+  params  <- params0          # both runs start from the same weights
+  .demo_backend_reported <<- FALSE
+  .demo_trace            <<- !identical(Sys.getenv("GGMLR_DEMO_TRACE"), "0")
+  history <- numeric(n_epoch)
 
-for (epoch in seq_len(n_epoch)) {
-  epoch_loss <- 0
+  cat(sprintf("\n=== %s ===\n", label))
+  # Say out loud which backend the graph actually got. A run that silently fell
+  # back to the CPU would otherwise show up as a suspiciously perfect agreement
+  # in the comparison table rather than as an error.
+  cat(sprintf("  use_gpu=%s  vulkan devices=%d\n",
+              use_gpu, ggml_vulkan_device_count()))
+  t_start <- Sys.time()
 
-  for (b in batches) {
-    r <- step_grads(params, b)
-    epoch_loss <- epoch_loss + r$loss
+  for (epoch in seq_len(n_epoch)) {
+    epoch_loss <- 0
 
-    # Plain SGD. Gradients are clipped because the recurrence can amplify them
-    # early on, before A has settled into a decaying range.
-    for (nm in names(r$grads)) {
-      g <- r$grads[[nm]]
-      g[!is.finite(g)] <- 0
-      # Clip per parameter, with a threshold that grows with its size -- a fixed
-      # cap would throttle the 1024-wide conv kernel far harder than the
-      # per-head A vector, which is only n_head long.
-      gn  <- sqrt(sum(g^2))
-      cap <- 5 * sqrt(length(g))
-      if (gn > cap) g <- g * (cap / gn)
-      params[[nm]] <- params[[nm]] - lr * g
+    for (b in batches) {
+      r <- step_grads(params, b)
+      epoch_loss <- epoch_loss + r$loss
+
+      # Plain SGD. Gradients are clipped because the recurrence can amplify them
+      # early on, before A has settled into a decaying range.
+      for (nm in names(r$grads)) {
+        g <- r$grads[[nm]]
+        g[!is.finite(g)] <- 0
+        # Clip each parameter's gradient to unit norm. With a mean loss the
+        # gradients no longer scale with tensor size, so one flat cap suits all
+        # of them -- and A needs it: its gradient comes in two orders of
+        # magnitude above the rest (rms ~43 against ~1-3 for the others), enough
+        # to throw a 16-element vector of ~0.5 values clean out of range in a
+        # single step.
+        gn  <- sqrt(sum(g^2))
+        cap <- 1
+        if (gn > cap) g <- g * (cap / gn)
+        params[[nm]] <- params[[nm]] - lr * g
+      }
+      # Keep the decay stable: A must stay negative and dt positive for
+      # exp(dt*A) to contract. This is the projected-gradient stand-in for the
+      # softplus a real Mamba block puts on dt.
+      params$A  <- pmin(params$A, -0.05)
+      params$dt <- pmax(params$dt, 1e-3)
     }
-    # Keep the decay stable: A must stay negative for exp(dt*A) to contract.
-    params$A <- pmin(params$A, -0.05)
+
+    history[epoch] <- epoch_loss / length(batches)
+    if (epoch %% max(1L, n_epoch %/% 8L) == 0L || epoch == 1L) {
+      cat(sprintf("  epoch %2d   loss %.5f\n", epoch, history[epoch]))
+    }
   }
 
-  history[epoch] <- epoch_loss / length(batches)
-  if (epoch %% max(1L, n_epoch %/% 8L) == 0L || epoch == 1L) {
-    cat(sprintf("  epoch %2d   loss %.5f\n", epoch, history[epoch]))
-  }
+  elapsed <- as.numeric(difftime(Sys.time(), t_start, units = "secs"))
+  cat(sprintf("  %.1f s total, %.2f s per epoch\n", elapsed, elapsed / n_epoch))
+
+  list(label = label, history = history, elapsed = elapsed, params = params)
 }
 
-elapsed <- as.numeric(difftime(Sys.time(), t_start, units = "secs"))
-cat(sprintf("\n%.1f s total, %.2f s per epoch\n",
-            elapsed, elapsed / n_epoch))
-first <- history[1]
-last  <- history[n_epoch]
-cat(sprintf("loss: %.5f -> %.5f  (%.1f%% of the starting value)\n",
-            first, last, 100 * last / first))
+results <- lapply(runs, function(run) {
+  use_gpu <<- run$gpu       # step_grads() picks its backend from this
+  train_once(run$name)
+})
+names(results) <- vapply(runs, function(r) r$name, character(1))
 
-if (!is.finite(last)) {
-  cat("FAIL: the loss is not finite -- a gradient went to NaN/Inf.\n")
-} else if (last < first) {
-  cat("OK: the block trains; gradients flow through ssm_conv and ssm_scan.\n")
-} else {
-  cat("FAIL: the loss did not fall.\n")
+# ---- comparison -----------------------------------------------------------
+
+verdict <- function(last) {
+  if (!is.finite(last)) "FAIL (not finite)"
+  else if (last >= baseline) "FAIL (no better than zero)"
+  else if (last > 0.5 * baseline) "WEAK"
+  else "OK"
+}
+
+fmt <- function(v) if (!is.finite(v)) "       n/a" else sprintf("%10.4f", v)
+
+cat("\n")
+cat("=== comparison ===============================================\n")
+cat(sprintf("%-10s %12s %12s %10s %8s  %s\n",
+            "backend", "first loss", "final loss", "% of zero", "sec", "verdict"))
+for (r in results) {
+  last <- r$history[n_epoch]
+  cat(sprintf("%-10s %12s %12s %9s%% %8.1f  %s\n",
+              r$label, fmt(r$history[1]), fmt(last),
+              if (is.finite(last)) sprintf("%9.1f", 100 * last / baseline) else "      n/a",
+              r$elapsed, verdict(last)))
+}
+
+# With both backends present the interesting number is not either curve but the
+# gap between them: same weights, same batches, same order of updates, so the
+# losses should track each other to within float noise. They will not match bit
+# for bit -- Vulkan reduces in a different order, and the backward nodes it
+# cannot run come back from the CPU -- but a divergence past a few percent is a
+# backend bug, not rounding.
+if (length(results) == 2L) {
+  hc <- results[["CPU"]]$history
+  hv <- results[["Vulkan"]]$history
+  ok <- is.finite(hc) & is.finite(hv)
+  scale <- pmax(abs(hc), abs(hv), 1e-12)
+  rel <- ifelse(ok, abs(hc - hv) / scale, NA_real_)
+
+  cat("\n")
+  cat(sprintf("per-epoch relative gap CPU vs Vulkan: max %.3g, median %.3g\n",
+              max(rel, na.rm = TRUE), median(rel, na.rm = TRUE)))
+  cat(sprintf("final loss   CPU %.5f   Vulkan %.5f   rel.diff %.3g\n",
+              hc[n_epoch], hv[n_epoch], rel[n_epoch]))
+
+  if (anyNA(rel)) {
+    cat("MISMATCH: one backend produced a non-finite loss where the other did not.\n")
+  } else if (max(rel) > 0.05) {
+    cat("MISMATCH: the two backends disagree by more than 5% -- suspect the\n")
+    cat("          Vulkan path, not the hyperparameters.\n")
+  } else {
+    cat("AGREE: both backends follow the same loss curve.\n")
+  }
 }

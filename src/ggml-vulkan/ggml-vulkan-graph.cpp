@@ -530,6 +530,11 @@ static bool ggml_vk_build_graph(ggml_backend_vk_context * ctx, ggml_cgraph * cgr
 
         break;
 
+    case GGML_OP_SSM_CONV_BACK:
+        ggml_vk_ssm_conv_back(ctx, compute_ctx, node);
+
+        break;
+
     case GGML_OP_OUT_PROD:
         ggml_vk_out_prod(ctx, compute_ctx, node);
 
@@ -2915,7 +2920,23 @@ static bool ggml_backend_vk_device_supports_op_impl(ggml_backend_dev_t dev, cons
                 }
             }
         case GGML_OP_SCATTER_ELEMENTS:
-            return op->type == GGML_TYPE_F32;
+            {
+                // ggmlR: the add reduction accumulates with atomicAdd on floats,
+                // which needs VK_EXT_shader_atomic_float. The plain scatter does
+                // not, so only the add mode is gated -- refusing both would send
+                // ordinary scatters to the CPU for no reason.
+                int32_t reduction;
+                memcpy(&reduction, op->op_params, sizeof(int32_t));
+                if (reduction == 1) {
+                    ggml_backend_vk_device_context * vk_ctx =
+                        (ggml_backend_vk_device_context *)dev->context;
+                    const vk_device& vk_dev = ggml_vk_get_device(vk_ctx->device);
+                    if (!vk_dev->atomic_float_add) {
+                        return false;
+                    }
+                }
+                return op->type == GGML_TYPE_F32;
+            }
         case GGML_OP_CONT:
         case GGML_OP_CPY:
         case GGML_OP_DUP:
@@ -3222,6 +3243,24 @@ static bool ggml_backend_vk_device_supports_op_impl(ggml_backend_dev_t dev, cons
             }
         case GGML_OP_SSM_CONV:
             return op->src[0]->type == GGML_TYPE_F32;
+        case GGML_OP_SSM_CONV_BACK:
+            // ggmlR extension: backward of ssm_conv. The shader keeps the
+            // kernel-sized d_c accumulator in registers, so d_conv is capped at
+            // the MAX_D_CONV the shader declares (Mamba uses 4); anything wider
+            // falls back to the CPU rather than reading past the array.
+            if (op->src[0] == nullptr || op->src[1] == nullptr || op->src[2] == nullptr) {
+                return false;
+            }
+            if (op->src[1]->ne[0] > 8) {
+                return false;
+            }
+            return op->type == GGML_TYPE_F32 &&
+                   op->src[0]->type == GGML_TYPE_F32 &&
+                   op->src[1]->type == GGML_TYPE_F32 &&
+                   op->src[2]->type == GGML_TYPE_F32 &&
+                   op->src[0]->nb[0] == sizeof(float) &&
+                   op->src[1]->nb[0] == sizeof(float) &&
+                   op->src[2]->nb[0] == sizeof(float);
         case GGML_OP_OUT_PROD:
             // ggmlR: dst and both sources must be F32, and the innermost stride
             // of src0 and dst must be the element size -- the same constraints

@@ -772,6 +772,53 @@ static void ggml_vk_ssm_conv(ggml_backend_vk_context * ctx, vk_context& subctx, 
     });
 }
 
+// ggmlR extension: backward of GGML_OP_SSM_CONV.
+//
+// One invocation per channel; the shader loops over tokens and sequences
+// itself, which is what keeps every write private to a channel and lets the
+// kernel run without atomics. The output is the packed [d_sx | d_c] pair the
+// builder allocates, so the split point goes in as an element offset.
+static void ggml_vk_ssm_conv_back(ggml_backend_vk_context * ctx, vk_context& subctx, ggml_tensor * dst) {
+    const ggml_tensor * src0 = dst->src[0];  // sx   {ncs, nr, n_s}
+    const ggml_tensor * src1 = dst->src[1];  // c    {nc, nr}
+    const ggml_tensor * src2 = dst->src[2];  // grad {nr, n_t, n_s}
+
+    GGML_ASSERT(dst->buffer != nullptr);
+
+    const uint32_t nc  = (uint32_t)src1->ne[0];
+    const uint32_t ncs = (uint32_t)src0->ne[0];
+    const uint32_t nr  = (uint32_t)src0->ne[1];
+    const uint32_t n_t = (uint32_t)src2->ne[1];
+    const uint32_t n_s = (uint32_t)src2->ne[2];
+
+    vk_pipeline pipeline = ggml_vk_op_get_pipeline(ctx, src0, src1, src2, dst, dst->op);
+    GGML_ASSERT(pipeline != nullptr);
+
+    ggml_pipeline_request_descriptor_sets(ctx, pipeline, 1);
+
+    const vk_op_ssm_conv_back_push_constants pc = {
+        (uint32_t)src0->nb[1], (uint32_t)src0->nb[2],
+        (uint32_t)src1->nb[1],
+        (uint32_t)src2->nb[1], (uint32_t)src2->nb[2],
+        nc, ncs, nr, n_t, n_s,
+        (uint32_t)ggml_nelements(src0),
+    };
+
+    vk_subbuffer dst_buf  = ggml_vk_tensor_subbuffer(ctx, dst);
+    vk_subbuffer src_buf0 = ggml_vk_tensor_subbuffer(ctx, src0);
+    vk_subbuffer src_buf1 = ggml_vk_tensor_subbuffer(ctx, src1);
+    vk_subbuffer src_buf2 = ggml_vk_tensor_subbuffer(ctx, src2);
+
+    // Work items, not workgroups: ggml_vk_dispatch_pipeline divides by the
+    // pipeline's workgroup size itself. Passing the already-divided count here
+    // launches 1/256 of the channels and silently leaves the rest at zero.
+    const std::array<uint32_t, 3> elements = { nr, 1, 1 };
+
+    ggml_vk_dispatch_pipeline(ctx, subctx, pipeline,
+        {src_buf0, src_buf1, src_buf2, dst_buf},
+        pc, elements);
+}
+
 // ggmlR extension: GGML_OP_OUT_PROD on the GPU.
 //
 // Both gradients of ggml_mul_mat() are built from out_prod, so without this
