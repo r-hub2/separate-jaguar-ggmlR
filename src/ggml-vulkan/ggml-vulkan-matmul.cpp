@@ -202,6 +202,22 @@ static void ggml_vk_cpy_to_contiguous(ggml_backend_vk_context * ctx, vk_context&
     }
 
     vk_op_unary_push_constants pc = vk_op_unary_push_constants_init(tensor, tensor, ne);
+
+    // DIVERGENCE: the destination of this copy is the contiguous repack buffer,
+    // not another view of `tensor`. Passing `tensor` as dst above gives the
+    // destination the SOURCE's strides, so when `tensor` is a strided view the
+    // shader writes rows nb11 apart into a buffer packed for ne00 -- the repack
+    // comes out scattered and the matmul that consumes it reads garbage.
+    // Caught by mul_mat_noncont in test-backend-ops-diff.R (nmse 9.7e-01 against
+    // the CPU; wrong from the first run, and only when the row stride is real
+    // and ne11 > 1, since ne11 == 1 never reaches this path).
+    // Overwrite the destination strides with the packed layout.
+    pc.nb10 = 1;
+    pc.nb11 = pc.ne10;
+    pc.nb12 = pc.ne10 * pc.ne11;
+    pc.nb13 = pc.ne10 * pc.ne11 * pc.ne12;
+    pc.nb14 = pc.ne10 * pc.ne11 * pc.ne12 * pc.ne13;
+
     init_pushconst_fastdiv(pc);
     ggml_vk_dispatch_pipeline(ctx, subctx, pipeline, { in, out }, pc, elements);
     ggml_vk_sync_buffers(ctx, subctx);

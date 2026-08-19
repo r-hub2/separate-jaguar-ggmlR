@@ -174,11 +174,22 @@ static run_result run_case(const test_case * tc, ggml_backend_t backend, unsigne
             free(f32);
             free(f16);
         } else if (t->type == GGML_TYPE_I32) {
+            // Index tensors must land inside whatever they index or the op
+            // asserts, and the bound differs per consumer: get_rows indexes the
+            // ROWS of its table (ne[1]), while mul_mat_id indexes the EXPERT
+            // dimension of its stack of matrices (ne[2]). Look the consumer up
+            // rather than guessing -- an unrecognised index tensor falls back to
+            // all-zeros below, which for mul_mat_id would route every token to
+            // expert 0 and quietly stop testing the routing at all.
             int64_t n_rows = 0;
             for (struct ggml_tensor * u = ggml_get_first_tensor(ctx); u != NULL;
                  u = ggml_get_next_tensor(ctx, u)) {
                 if (u->op == GGML_OP_GET_ROWS && u->src[1] == t && u->src[0] != NULL) {
                     n_rows = u->src[0]->ne[1];
+                    break;
+                }
+                if (u->op == GGML_OP_MUL_MAT_ID && u->src[2] == t && u->src[0] != NULL) {
+                    n_rows = u->src[0]->ne[2];
                     break;
                 }
             }
@@ -188,8 +199,11 @@ static run_result run_case(const test_case * tc, ggml_backend_t backend, unsigne
             const int64_t n = ggml_nelements(t);
             int32_t * idx = (int32_t *) malloc((size_t) n * sizeof(int32_t));
             if (idx) {
+                // Stride by a value coprime with the bound where possible, so
+                // consecutive slots do not all select the same expert and the
+                // selection actually varies across the tensor.
                 for (int64_t i = 0; i < n; i++) {
-                    idx[i] = (int32_t) (i % n_rows);
+                    idx[i] = (int32_t) ((i * 7 + i / 3) % n_rows);
                 }
                 ggml_backend_tensor_set(t, idx, 0, (size_t) n * sizeof(int32_t));
                 free(idx);
@@ -277,6 +291,129 @@ static struct ggml_tensor * bo_mul_mat_batched(struct ggml_context * ctx) {
     struct ggml_tensor * a = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, 16, 12, 4);
     struct ggml_tensor * b = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, 16, 8, 4);
     return ggml_mul_mat(ctx, a, b);
+}
+
+// F16 weights against F32 activations: the shape real inference takes, and a
+// different Vulkan pipeline from the all-F32 one above. Leaves of both types are
+// seeded identically on every backend, so the comparison stays exact.
+static struct ggml_tensor * bo_mul_mat_f16(struct ggml_context * ctx) {
+    struct ggml_tensor * a = ggml_new_tensor_2d(ctx, GGML_TYPE_F16, 32, 24);
+    struct ggml_tensor * b = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 32, 8);
+    return ggml_mul_mat(ctx, a, b);
+}
+
+// The 0213-permuted attention path: ggml_vk_mul_mat_vec_p021_f16_f32, selected
+// only when src0 is F16, BOTH operands are permuted, dst->ne[1] == 1, both
+// ne[3] == 1, and the strides are ordered nb[0] <= nb[2] <= nb[1] <= nb[3].
+// ggml_permute(ctx, x, 0, 2, 1, 3) produces exactly that ordering -- axis 1 and
+// axis 2 swap positions, which is what the "0213" in the kernel name refers to.
+//
+// Note the shapes are chosen so that dst->ne[1] == 1 AFTER the permute: dst
+// takes ne[1] from src1, so it is the permuted b whose ne[1] must be 1, which
+// makes the pre-permute b->ne[2] the constrained one. Getting this wrong does
+// not fail loudly -- the dispatcher just falls through to the generic path and
+// the case silently stops testing p021 at all.
+// The kernel reads ne02/ne12 from the tensors as handed to it, i.e. after the
+// permute: 8/8 here, so this exercises the gqa_ratio==1 pipeline.
+static struct ggml_tensor * bo_mul_mat_vec_p021(struct ggml_context * ctx) {
+    // head dim 32, 8 keys, 2 heads -> permuted to [32,2,8,1] x [32,1,8,1].
+    struct ggml_tensor * a = ggml_new_tensor_4d(ctx, GGML_TYPE_F16, 32, 8, 2, 1);
+    struct ggml_tensor * b = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, 32, 8, 1, 1);
+    return ggml_mul_mat(ctx, ggml_permute(ctx, a, 0, 2, 1, 3),
+                             ggml_permute(ctx, b, 0, 2, 1, 3));
+}
+
+// The non-contiguous-but-not-permuted vector path:
+// ggml_vk_mul_mat_vec_nc_f16_f32, selected when src0 is F16 and NOT contiguous
+// while neither operand is permuted or transposed, with dst->ne[1] == 1.
+// A view with a row gap satisfies that: it is strided, so !ggml_is_contiguous,
+// yet the axis order is untouched, so !ggml_is_permuted.
+static struct ggml_tensor * bo_mul_mat_vec_nc(struct ggml_context * ctx) {
+    struct ggml_tensor * wide = ggml_new_tensor_3d(ctx, GGML_TYPE_F16, 40, 12, 2);
+    // First 32 of each 40-element row; dim 0 stays packed, rows stay 40 apart.
+    struct ggml_tensor * a = ggml_view_3d(ctx, wide, 32, 12, 2,
+                                          wide->nb[1], wide->nb[2], 0);
+    struct ggml_tensor * b = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, 32, 1, 2);
+    return ggml_mul_mat(ctx, a, b);
+}
+
+// Large enough to leave the vector path and reach the tiled matmul kernels,
+// where the m/n thresholds in ggml_vk_guess_matmul_pipeline select the large
+// tile. The small cases above never get there.
+//
+// K is a multiple of every pipeline alignment, so this takes the ALIGNED
+// variant (mmp->a_l): the fast path with no remainder handling.
+static struct ggml_tensor * bo_mul_mat_large(struct ggml_context * ctx) {
+    struct ggml_tensor * a = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 512, 512);
+    struct ggml_tensor * b = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 512, 512);
+    return ggml_mul_mat(ctx, a, b);
+}
+
+// The same tiled kernels on a shape that divides evenly nowhere. K=509 is prime,
+// so ne10 != kpad and ggml_vk_guess_matmul_pipeline returns the UNALIGNED
+// variant (mmp->l rather than mmp->a_l) -- a different shader, reached only by
+// a K that is not a multiple of the pipeline alignment. Every other mul_mat
+// case here uses K in {16, 32, 512}, so without this one the unaligned tile
+// kernels and their remainder handling are never executed at all. M and N are
+// likewise off every tile boundary, so the partial edge tiles are covered too.
+static struct ggml_tensor * bo_mul_mat_unaligned(struct ggml_context * ctx) {
+    struct ggml_tensor * a = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 509, 511);
+    struct ggml_tensor * b = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 509, 513);
+    return ggml_mul_mat(ctx, a, b);
+}
+
+// Strided src[1]: a column-slice view of a wider matrix, so nb[1] is bigger
+// than the row it addresses and the kernel reads with a gap between rows.
+// This is the shape real graphs produce (sliced activations, KV-cache views)
+// and it exercises the strided read path rather than the packed one.
+//
+// Note what may NOT be done here: mul_mat requires BOTH operands to be
+// contiguous along dim 0 -- ggml-cpu-backend.c asserts
+// nb00/nb10 == ggml_type_size ("we don't support permuted src0 or src1").
+// Handing it a transposed operand aborts the process from inside the kernel,
+// and ggml_backend_supports_op does not catch it beforehand. A transposed
+// operand is materialised with ggml_cont() in real graphs, which is a
+// different op and no longer a mul_mat test.
+static struct ggml_tensor * bo_mul_mat_noncont(struct ggml_context * ctx) {
+    struct ggml_tensor * a = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 16, 24);
+    struct ggml_tensor * wide = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 40, 8);
+    // First 16 of each 40-element row: dim 0 stays packed, rows stay 40 apart.
+    struct ggml_tensor * b = ggml_view_2d(ctx, wide, 16, 8, wide->nb[1], 0);
+    return ggml_mul_mat(ctx, a, b);
+}
+
+// Broadcast: one weight matrix applied across a batch of activations, i.e. a
+// with ne[2]==1 against b with ne[2]==4. This is the dimension-matching rule
+// that ONNX models have already tripped over.
+static struct ggml_tensor * bo_mul_mat_broadcast(struct ggml_context * ctx) {
+    struct ggml_tensor * a = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, 16, 12, 1);
+    struct ggml_tensor * b = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, 16, 8, 4);
+    return ggml_mul_mat(ctx, a, b);
+}
+
+// MoE routing: a stack of expert matrices, a per-token expert selection, and
+// one row of activations per token. Constraints, all asserted by the builder:
+// as is 3d with ne[3]==1, b is 3d, ids is 2d I32, ids->ne[1] == b->ne[2] (one
+// expert list per b row), as->ne[0] == b->ne[0], and ids->ne[0] % b->ne[1] == 0.
+// This reaches ggml_vk_mul_mat_id_q_f16 -- one of the four functions whose
+// operand repack was wrong until mul_mat_noncont exposed it, and the only one
+// of them with no coverage here at all.
+static struct ggml_tensor * bo_mul_mat_id(struct ggml_context * ctx) {
+    // 4 experts of [16 x 12], 6 tokens, 2 experts chosen per token.
+    struct ggml_tensor * as  = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, 16, 12, 4);
+    struct ggml_tensor * b   = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, 16, 2, 6);
+    struct ggml_tensor * ids = ggml_new_tensor_2d(ctx, GGML_TYPE_I32, 2, 6);
+    return ggml_mul_mat_id(ctx, as, b, ids);
+}
+
+// The same op down the vector path: ne[1]==1 on b selects
+// ggml_vk_mul_mat_vec_id_q_f16 rather than the matrix kernel, which is a
+// separate dispatcher branch and the fourth function the repack bug touched.
+static struct ggml_tensor * bo_mul_mat_id_vec(struct ggml_context * ctx) {
+    struct ggml_tensor * as  = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, 16, 12, 4);
+    struct ggml_tensor * b   = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, 16, 1, 6);
+    struct ggml_tensor * ids = ggml_new_tensor_2d(ctx, GGML_TYPE_I32, 1, 6);
+    return ggml_mul_mat_id(ctx, as, b, ids);
 }
 
 static struct ggml_tensor * bo_add(struct ggml_context * ctx) {
@@ -622,6 +759,15 @@ static const test_case g_cases[] = {
     // --- ops ggmlR's layers build ---
     { "mul_mat",            bo_mul_mat            },
     { "mul_mat_batched",    bo_mul_mat_batched    },
+    { "mul_mat_f16",        bo_mul_mat_f16        },
+    { "mul_mat_large",      bo_mul_mat_large      },
+    { "mul_mat_unaligned",  bo_mul_mat_unaligned  },
+    { "mul_mat_noncont",    bo_mul_mat_noncont    },
+    { "mul_mat_id",         bo_mul_mat_id         },
+    { "mul_mat_id_vec",     bo_mul_mat_id_vec     },
+    { "mul_mat_vec_p021",   bo_mul_mat_vec_p021   },
+    { "mul_mat_vec_nc",     bo_mul_mat_vec_nc     },
+    { "mul_mat_broadcast",  bo_mul_mat_broadcast  },
     { "add",                bo_add                },
     { "add_broadcast",      bo_add_broadcast      },
     { "mul_broadcast",      bo_mul                },

@@ -1,7 +1,7 @@
 Package: ggmlR
 Type: Package
 Title: 'GGML' Tensor Operations for Machine Learning
-Version: 0.8.3
+Version: 0.8.4
 Authors@R: c(
     person("Yuri", "Baramykov",
         email = "lbsbmsu@mail.ru",
@@ -34,7 +34,7 @@ Description: Provides 'R' bindings to the 'GGML' tensor library for machine
     See <https://github.com/ggml-org/ggml> for more information about the
     underlying library.
 Depends: R (>= 4.1.0)
-Imports: generics, R6, methods, stats
+Imports: generics, R6, methods, stats, utils
 License: MIT + file LICENSE
 URL: https://github.com/Zabis13/ggmlR
 BugReports: https://github.com/Zabis13/ggmlR/issues
@@ -52,7 +52,7 @@ RoxygenNote: 7.3.3
 Config/testthat/edition: 3
 Config/build/clean-inst-doc: false
 NeedsCompilation: yes
-Packaged: 2026-07-31 06:15:32 UTC; yuri
+Packaged: 2026-08-19 18:14:06 UTC; yuri
 Author: Yuri Baramykov [aut, cre] (<https://orcid.org/0009-0000-7627-4217>),
   Georgi Gerganov [ctb, cph] (Author of the GGML library),
   Jeffrey Quesnelle [ctb, cph] (Contributor to ops.cpp),

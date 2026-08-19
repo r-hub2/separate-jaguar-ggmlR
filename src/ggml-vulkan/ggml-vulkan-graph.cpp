@@ -530,6 +530,16 @@ static bool ggml_vk_build_graph(ggml_backend_vk_context * ctx, ggml_cgraph * cgr
 
         break;
 
+    case GGML_OP_OUT_PROD:
+        ggml_vk_out_prod(ctx, compute_ctx, node);
+
+        break;
+
+    case GGML_OP_CROSS_ENTROPY_LOSS_BACK:
+        ggml_vk_cross_entropy_loss_back(ctx, compute_ctx, node);
+
+        break;
+
     case GGML_OP_OPT_STEP_ADAMW:
         ggml_vk_opt_step_adamw(ctx, compute_ctx, node);
 
@@ -3212,6 +3222,27 @@ static bool ggml_backend_vk_device_supports_op_impl(ggml_backend_dev_t dev, cons
             }
         case GGML_OP_SSM_CONV:
             return op->src[0]->type == GGML_TYPE_F32;
+        case GGML_OP_OUT_PROD:
+            // ggmlR: dst and both sources must be F32, and the innermost stride
+            // of src0 and dst must be the element size -- the same constraints
+            // the CPU kernel asserts. A transposed src1 IS supported (the
+            // second mul_mat gradient needs it), so nb10 is deliberately not
+            // constrained here.
+            return op->type == GGML_TYPE_F32 &&
+                   op->src[0]->type == GGML_TYPE_F32 &&
+                   op->src[1]->type == GGML_TYPE_F32 &&
+                   op->src[0]->nb[0] == sizeof(float) &&
+                   op->nb[0] == sizeof(float);
+        case GGML_OP_CROSS_ENTROPY_LOSS_BACK:
+            // ggmlR: the shader indexes rows as row*nc, so everything must be
+            // contiguous -- the same restriction the CPU kernel asserts.
+            return op->type == GGML_TYPE_F32 &&
+                   op->src[0]->type == GGML_TYPE_F32 &&
+                   op->src[1]->type == GGML_TYPE_F32 &&
+                   op->src[2] && op->src[2]->type == GGML_TYPE_F32 &&
+                   ggml_is_contiguous(op) &&
+                   ggml_is_contiguous(op->src[1]) &&
+                   ggml_is_contiguous(op->src[2]);
         case GGML_OP_CONV_TRANSPOSE_1D:
             return op->src[0]->type == GGML_TYPE_F32 && op->src[1]->type == GGML_TYPE_F32;
         case GGML_OP_CONV_2D:

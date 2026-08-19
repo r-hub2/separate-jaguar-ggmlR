@@ -17,7 +17,18 @@ bod_vulkan_available <- function() {
 
 # Ops exercised by the layer builders. Kept short so the default run stays cheap;
 # the full list is available behind GGMLR_TEST_ALL_OPS.
-bod_core_ops <- c("mul_mat", "add", "mul_broadcast", "relu", "soft_max",
+#
+# The mul_mat variants are all in the default set on purpose. Each one selects a
+# different kernel -- F16 weights, the tiled path that the vendor-specific
+# branches live on (coopmat1/coopmat2/MMQ/subgroup shuffle), strided reads, and
+# broadcast over a batch -- and a matmul that silently disagrees with the CPU on
+# one of them is exactly the failure this file exists to catch. Gating them
+# behind an environment variable would mean they are not run before a release.
+bod_core_ops <- c("mul_mat", "mul_mat_batched", "mul_mat_f16", "mul_mat_large",
+                  "mul_mat_unaligned", "mul_mat_noncont", "mul_mat_broadcast",
+                  "mul_mat_id", "mul_mat_id_vec",
+                  "mul_mat_vec_p021", "mul_mat_vec_nc",
+                  "add", "mul_broadcast", "relu", "soft_max",
                   "permute_cont", "im2col_1d", "conv_2d",
                   "batch_norm_infer", "batch_norm_train")
 

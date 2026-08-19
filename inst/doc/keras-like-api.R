@@ -120,6 +120,90 @@ knitr::opts_chunk$set(eval = identical(Sys.getenv("NOT_CRAN"), "true"))
 # cat(sprintf("Pearson r (scaled mpg): %.4f\n", cor(preds, y_mpg)))
 
 ## -----------------------------------------------------------------------------
+# br1 <- inp1 |> ggml_layer_dense(8L,  activation = "relu")
+# br2 <- inp2 |> ggml_layer_dense(12L, activation = "relu")   # widths differ
+# 
+# out_cat <- ggml_layer_concatenate(list(br1, br2), axis = 0L) |>
+#   ggml_layer_dense(1L)
+# 
+# model_cat <- ggml_model(inputs = list(inp1, inp2), outputs = out_cat) |>
+#   ggml_compile(optimizer = "adam", loss = "mse")
+# model_cat <- ggml_fit(model_cat, x = list(x1, x2), y = y_mpg,
+#                       epochs = 200L, batch_size = 16L, verbose = 0L)
+# 
+# p_cat <- ggml_predict(model_cat, x = list(x1, x2), batch_size = 16L)
+# cat(sprintf("Concatenate variant, Pearson r: %.4f\n", cor(p_cat, y_mpg)))
+
+## -----------------------------------------------------------------------------
+# set.seed(11)
+# 
+# # Two targets from the same cars: efficient or not (class), and mpg (value).
+# y_cls <- as.integer(mtcars$mpg > median(mtcars$mpg))
+# y_cls <- cbind(1 - y_cls, y_cls) * 1.0         # one-hot [32 x 2]
+# x_all <- as.matrix(scale(mtcars[, c("disp","hp","wt","cyl")]))
+# 
+# inp_mo <- ggml_input(shape = 4L, name = "features")
+# trunk  <- inp_mo |> ggml_layer_dense(16L, activation = "relu", name = "trunk")
+# head_c <- trunk  |> ggml_layer_dense(2L, activation = "softmax", name = "class")
+# head_v <- trunk  |> ggml_layer_dense(1L, name = "value")
+# 
+# model_mo <- ggml_model(inputs = inp_mo, outputs = list(head_c, head_v)) |>
+#   ggml_compile(optimizer = "adam",
+#                loss         = list(class = "categorical_crossentropy",
+#                                    value = "mse"),
+#                loss_weights = c(class = 1.0, value = 0.5))
+# 
+# model_mo <- ggml_fit(model_mo, x_all,
+#                      y = list(class = y_cls, value = y_mpg),
+#                      epochs = 150L, batch_size = 16L, verbose = 0L)
+# 
+# # Per-head losses, so a head that stops learning is visible on its own
+# # rather than hidden inside the total.
+# h <- model_mo$history
+# cat(sprintf("class loss: %.4f -> %.4f\n",
+#             h$train_class_loss[1], tail(h$train_class_loss, 1)))
+# cat(sprintf("value loss: %.4f -> %.4f\n",
+#             h$train_value_loss[1], tail(h$train_value_loss, 1)))
+
+## -----------------------------------------------------------------------------
+# set.seed(13)
+# n_seq <- 128L; S <- 6L; D <- 8L
+# 
+# # A task that needs mixing across positions: is the sequence sum positive?
+# xs   <- array(runif(n_seq * S * D, -1, 1), dim = c(n_seq, S, D))
+# lab  <- as.integer(apply(xs, 1, mean) > 0)
+# y_sq <- cbind(1 - lab, lab) * 1.0
+# 
+# inp_t <- ggml_input(shape = c(S, D), name = "seq")
+# 
+# # Attention sublayer + residual
+# att <- inp_t |> ggml_layer_attention(d_model = D, n_heads = 2L, name = "mha")
+# h1  <- ggml_layer_add(list(inp_t, att))
+# 
+# # Position-wise feed-forward sublayer + residual
+# ff  <- h1 |> ggml_layer_dense(D * 2L, activation = "relu",
+#                               time_distributed = TRUE, name = "ff1")
+# ff  <- ff |> ggml_layer_dense(D, time_distributed = TRUE, name = "ff2")
+# h2  <- ggml_layer_add(list(h1, ff))
+# 
+# out_t <- h2 |> ggml_layer_flatten() |>
+#   ggml_layer_dense(2L, activation = "softmax", name = "cls")
+# 
+# model_t <- ggml_model(inputs = inp_t, outputs = out_t) |>
+#   ggml_compile(optimizer = "adam", loss = "categorical_crossentropy")
+# 
+# model_t <- ggml_fit(model_t, xs, y_sq, epochs = 30L, batch_size = 32L,
+#                     verbose = 0L)
+# cat(sprintf("transformer block accuracy: %.4f\n",
+#             tail(model_t$history$train_accuracy, 1)))
+
+## ----eval=FALSE---------------------------------------------------------------
+# dec <- inp_t |> ggml_layer_attention(D, n_heads = 2L, causal = TRUE)
+# 
+# ctx_seq <- ggml_input(shape = c(10L, D))
+# x_cross <- ggml_apply(list(dec, ctx_seq), ggml_attention(D, n_heads = 2L))
+
+## -----------------------------------------------------------------------------
 # cb_stop <- ggml_callback_early_stopping(
 #   monitor   = "val_loss",
 #   patience  = 15L,

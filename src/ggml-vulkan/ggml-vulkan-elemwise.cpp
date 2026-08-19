@@ -315,6 +315,23 @@ static void ggml_vk_op_f32(ggml_backend_vk_context * ctx, vk_context& subctx, co
             elements = { nr, n_t, n_s };
         }
         break;
+    case GGML_OP_OUT_PROD:
+        {
+            // One invocation per dst element, with dims 2 and 3 folded into z.
+            // Folding keeps z within the workgroup-count limit that matters on
+            // NVIDIA (65535 for x, far lower than AMD's), since dims 2/3 are
+            // batch-like and small while ne0/ne1 are the wide ones.
+            elements = { (uint32_t)dst->ne[0], (uint32_t)dst->ne[1],
+                         (uint32_t)(dst->ne[2] * dst->ne[3]) };
+        }
+        break;
+    case GGML_OP_CROSS_ENTROPY_LOSS_BACK:
+        {
+            // One workgroup per row; the shader reduces each row in shared
+            // memory, so the grid is the row count rather than the element one.
+            elements = { (uint32_t)ggml_nrows(dst), 1, 1 };
+        }
+        break;
     default:
         elements = { (uint32_t)ggml_nelements(src0), 1, 1 };
         break;
@@ -752,6 +769,54 @@ static void ggml_vk_ssm_conv(ggml_backend_vk_context * ctx, vk_context& subctx, 
         (uint32_t)src0->ne[1],
         (uint32_t)dst->ne[1],
         (uint32_t)dst->ne[2],
+    });
+}
+
+// ggmlR extension: GGML_OP_OUT_PROD on the GPU.
+//
+// Both gradients of ggml_mul_mat() are built from out_prod, so without this
+// every training step of every dense layer fell back to the CPU. Strides are
+// passed as byte counts; the shader divides by sizeof(float), which is what
+// lets it handle a transposed src1 (the second mul_mat gradient passes
+// ggml_transpose(grad)) and the dim-2/3 broadcast used by grouped-query
+// attention.
+static void ggml_vk_out_prod(ggml_backend_vk_context * ctx, vk_context& subctx, ggml_tensor * dst) {
+    const ggml_tensor * src0 = dst->src[0];
+    const ggml_tensor * src1 = dst->src[1];
+
+    // Broadcast factors, matching the CPU kernel's dps2/dps3.
+    const uint32_t dps2 = (uint32_t)(dst->ne[2] / src0->ne[2]);
+    const uint32_t dps3 = (uint32_t)(dst->ne[3] / src0->ne[3]);
+
+    ggml_vk_op_f32<vk_op_out_prod_push_constants>(ctx, subctx, src0, src1, nullptr, nullptr, dst, GGML_OP_OUT_PROD, {
+        (uint32_t)dst->ne[0], (uint32_t)dst->ne[1],
+        (uint32_t)dst->ne[2], (uint32_t)dst->ne[3],
+        (uint32_t)src0->ne[1],
+        (uint32_t)src0->nb[1], (uint32_t)src0->nb[2], (uint32_t)src0->nb[3],
+        (uint32_t)src1->nb[0], (uint32_t)src1->nb[1],
+        (uint32_t)src1->nb[2], (uint32_t)src1->nb[3],
+        (uint32_t)dst->nb[1], (uint32_t)dst->nb[2], (uint32_t)dst->nb[3],
+        dps2, dps3,
+    });
+}
+
+// ggmlR extension: GGML_OP_CROSS_ENTROPY_LOSS_BACK on the GPU.
+//
+//     dst[row] = (softmax(logits[row]) - labels[row]) * grad[0] / nrows
+//
+// src[0] is the scalar loss gradient, src[1] the forward logits, src[2] the
+// labels -- the order ggml_cross_entropy_loss_back() records them in.
+static void ggml_vk_cross_entropy_loss_back(ggml_backend_vk_context * ctx, vk_context& subctx, ggml_tensor * dst) {
+    const ggml_tensor * grad  = dst->src[0];
+    const ggml_tensor * src0f = dst->src[1];
+    const ggml_tensor * src1f = dst->src[2];
+
+    const uint32_t nr = (uint32_t) ggml_nrows(src0f);
+
+    ggml_vk_op_f32<vk_op_cross_entropy_loss_back_push_constants>(ctx, subctx, grad, src0f, src1f, nullptr, dst, GGML_OP_CROSS_ENTROPY_LOSS_BACK, {
+        (uint32_t) src0f->ne[0],
+        nr,
+        1.0f / (float) nr,
     });
 }
 

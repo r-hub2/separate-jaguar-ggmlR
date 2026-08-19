@@ -33,6 +33,16 @@ knitr::opts_chunk$set(eval = identical(Sys.getenv("NOT_CRAN"), "true"))
 # }
 
 ## -----------------------------------------------------------------------------
+# st <- ggml_vulkan_status()
+# if (st$available && st$n_devices > 0) {
+#   # Each entry is a list: index, name, free_memory, total_memory
+#   nm <- vapply(st$devices, function(d) d$name, character(1))
+#   cat("Vulkan devices:", paste(nm, collapse = ", "), "\n")
+# } else {
+#   cat("No Vulkan device — CPU only\n")
+# }
+
+## -----------------------------------------------------------------------------
 # # Select GPU (falls back to CPU if unavailable)
 # device <- tryCatch({
 #   ag_device("gpu")
