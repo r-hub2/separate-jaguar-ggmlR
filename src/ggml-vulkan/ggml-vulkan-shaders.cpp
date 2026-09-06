@@ -1125,6 +1125,8 @@ static void ggml_vk_load_shaders(vk_device& device) {
     }
 
     ggml_vk_create_pipeline(device, device->pipeline_rms_norm_back_f32, "rms_norm_back_f32", rms_norm_back_f32_len, rms_norm_back_f32_data, "main", 3, sizeof(vk_op_push_constants), {1, 1, 1}, {}, 1);
+    // DIVERGENCE from upstream: LayerNorm backward, see ggml_norm_back().
+    ggml_vk_create_pipeline(device, device->pipeline_norm_back_f32, "norm_back_f32", norm_back_f32_len, norm_back_f32_data, "main", 3, sizeof(vk_op_push_constants), {1, 1, 1}, {}, 1);
     ggml_vk_create_pipeline(device, device->pipeline_l2_norm_f32, "l2_norm_f32", l2_norm_f32_len, l2_norm_f32_data, "main", 2, sizeof(vk_op_unary_push_constants), {1, 1, 1}, {}, 1);
 
     ggml_vk_create_pipeline(device, device->pipeline_cpy_f32_f32, "cpy_f32_f32", cpy_f32_f32_len, cpy_f32_f32_data, "main", 2, sizeof(vk_op_unary_push_constants), {512, 1, 1}, {}, 1);
@@ -1380,6 +1382,7 @@ static void ggml_vk_load_shaders(vk_device& device) {
 
     ggml_vk_create_pipeline(device, device->pipeline_leaky_relu_f32, "leaky_relu_f32", leaky_relu_f32_len, leaky_relu_f32_data, "main", 2, sizeof(vk_op_push_constants), {512, 1, 1}, {}, 1);
     ggml_vk_create_pipeline(device, device->pipeline_silu_back_f32, "silu_back_f32", silu_back_f32_len, silu_back_f32_data, "main", 3, sizeof(vk_op_push_constants), {512, 1, 1}, {}, 1);
+    ggml_vk_create_pipeline(device, device->pipeline_gelu_back_f32, "gelu_back_f32", gelu_back_f32_len, gelu_back_f32_data, "main", 3, sizeof(vk_op_push_constants), {512, 1, 1}, {}, 1);
 
     ggml_vk_create_pipeline(device, device->pipeline_diag_mask_inf_f32, "diag_mask_inf_f32", diag_mask_inf_f32_len, diag_mask_inf_f32_data, "main", 2, sizeof(vk_op_diag_mask_push_constants), {1, 512, 1}, {}, 1, true);
 
@@ -1581,6 +1584,35 @@ static void ggml_vk_load_shaders(vk_device& device) {
     }
     ggml_vk_create_pipeline(device, device->pipeline_out_prod_f32, "out_prod_f32", out_prod_f32_len, out_prod_f32_data, "main", 3, sizeof(vk_op_out_prod_push_constants), {32, 8, 1}, {}, 1);
     ggml_vk_create_pipeline(device, device->pipeline_cross_entropy_loss_back_f32, "cross_entropy_loss_back_f32", cross_entropy_loss_back_f32_len, cross_entropy_loss_back_f32_data, "main", 4, sizeof(vk_op_cross_entropy_loss_back_push_constants), {1, 1, 1}, {32}, 1);
+
+    // ggmlR: backward of flash attention. Six buffers (q, k, v, mask, d, and the
+    // packed output). dk/dv accumulate with atomics across query rows, so this
+    // needs shaderBufferFloat32AtomicAdd like ssm_scan_back does. The second
+    // specialisation constant caps the kv length the shared-memory cache holds;
+    // supports_op refuses anything longer rather than overrunning it.
+    if (device->atomic_float_add) {
+        ggml_vk_create_pipeline(device, device->pipeline_flash_attn_back_f32, "flash_attn_back_f32", flash_attn_back_f32_len, flash_attn_back_f32_data, "main", 6, sizeof(vk_op_flash_attn_back_push_constants), {1, 1, 1}, {128, 1024}, 1);
+        // Stage-truncated copies for profiling (GGMLR_FAB_PROFILE). Same SPIR-V,
+        // different PROFILE_STAGE specialisation constant.
+        for (uint32_t st = 1; st <= 4; st++) {
+            const std::string prof_name = "flash_attn_back_f32_prof" + std::to_string(st);
+            ggml_vk_create_pipeline2(device, device->pipeline_flash_attn_back_f32_prof[st],
+                prof_name, flash_attn_back_f32_len, flash_attn_back_f32_data,
+                "main", 6, sizeof(vk_op_flash_attn_back_push_constants),
+                {1, 1, 1}, {128, 1024, st}, 1);
+
+        }
+    }
+    // ggmlR: backward of convolution. Two buffers, no atomics -- each invocation
+    // owns one output element and gathers the kernel taps that reached it.
+    ggml_vk_create_pipeline(device, device->pipeline_im2col_back_f32, "im2col_back_f32", im2col_back_f32_len, im2col_back_f32_data, "main", 2, sizeof(vk_op_im2col_back_push_constants), {256, 1, 1}, {}, 1);
+
+    // ggmlR: backward of embedding lookup. Needs shaderBufferFloat32AtomicAdd:
+    // repeated tokens in a batch scatter into the same table row.
+    if (device->atomic_float_add) {
+        ggml_vk_create_pipeline(device, device->pipeline_get_rows_back_f32, "get_rows_back_f32", get_rows_back_f32_len, get_rows_back_f32_data, "main", 3, sizeof(vk_op_get_rows_back_push_constants), {256, 1, 1}, {}, 1);
+    }
+
 
     ggml_vk_create_pipeline(device, device->pipeline_opt_step_adamw_f32, "opt_step_adamw_f32", opt_step_adamw_f32_len, opt_step_adamw_f32_data, "main", 5, sizeof(vk_op_push_constants), {512, 1, 1}, {}, 1);
 

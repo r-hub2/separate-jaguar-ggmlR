@@ -302,12 +302,19 @@ preds <- ggml_predict(model, x_new)
 | MaxPooling2D | `ggml_layer_max_pooling_2d(pool_size)` |
 | GlobalAvgPool2D | `ggml_layer_global_average_pooling_2d()` |
 | BatchNorm | `ggml_layer_batch_norm()` (RMS-normalizes, then scales/shifts) |
+| RMSNorm | `ggml_layer_rms_norm()` |
+| LayerNorm | `ggml_layer_layer_norm()` (centres as well as scales) |
 | Flatten | `ggml_layer_flatten()` |
+| Permute | `ggml_layer_permute(dims)` — reorder a sample's axes, `aperm()` order |
+| Reshape | `ggml_layer_reshape(shape)` — one axis may be `-1` |
+| SequencePooling | `ggml_layer_sequence_pooling(mode)` — `c(seq, d_model)` to `d_model` |
 | Dropout | `ggml_layer_dropout(rate)` |
 | Embedding | `ggml_layer_embedding(vocab_size, dim)` |
+| PositionalEmbedding | `ggml_layer_positional_embedding()` |
 | LSTM | `ggml_layer_lstm(units, return_sequences)` |
 | GRU | `ggml_layer_gru(units, return_sequences)` |
-| Attention | `ggml_layer_attention(d_model, n_heads, causal)` (functional API) |
+| Attention | `ggml_layer_attention(d_model, n_heads, causal, mask, rope, dropout)` (functional API) |
+| TransformerBlock | `ggml_layer_transformer_block(d_model, n_heads, ...)` (functional API) |
 
 ### Available losses
 
@@ -322,6 +329,11 @@ preds <- ggml_predict(model, x_new)
 `"mean_squared_error"`, `"mean_absolute_error"`, `"huber_loss"` and
 `"binary_cross_entropy"` are accepted as aliases. In a multi-output model each
 head takes its own loss — see [Multi-output model](#multi-output-model).
+
+`ggml_fit(sample_weight = )` takes a vector of one weight per sample, or — for
+`"mse"` — an `nrow(x)` by `ncol(y)` matrix acting as a per-output mask. A mask
+trains only the outputs whose weight is non-zero, which is what a Q-model
+needs: 1 on the action that has a target, 0 elsewhere.
 
 ### CNN example (MNIST)
 
@@ -452,28 +464,56 @@ one dense kernel per position — the position-wise feed-forward sublayer.
 ```r
 inp <- ggml_input(shape = c(64L, 128L))         # c(seq_len, d_model)
 
-attn <- inp |> ggml_layer_attention(d_model = 128L, n_heads = 8L)
-h    <- ggml_layer_add(list(inp, attn))          # residual 1
+h <- inp |> ggml_layer_positional_embedding()
+for (i in 1:4) h <- h |> ggml_layer_transformer_block(128L, n_heads = 8L)
 
-ff   <- h  |> ggml_layer_dense(512L, activation = "relu", time_distributed = TRUE)
-ff   <- ff |> ggml_layer_dense(128L, time_distributed = TRUE)
-h2   <- ggml_layer_add(list(h, ff))              # residual 2
-
-out <- h2 |> ggml_layer_flatten() |>
+out <- h |> ggml_layer_sequence_pooling() |>
   ggml_layer_dense(2L, activation = "softmax")
 
 m <- ggml_model(inputs = inp, outputs = out)
 ```
 
-`causal = TRUE` masks keys after the query (GPT-style decoder). Cross-attention
-takes queries from one node and keys/values from another, which may have a
-different length:
+`ggml_layer_sequence_pooling()` collapses the sequence into one vector, so the
+head's width is `d_model` however long the sequence is — unlike
+`ggml_layer_flatten()`, whose output grows with it. `mode = "first"` takes
+position 1 instead of the mean, the CLS-token convention.
+
+`ggml_layer_transformer_block()` is the pre-LN block — normalize, attend,
+residual, normalize, feed-forward, residual — assembled from the layers below,
+so a block that needs to differ can still be wired by hand. `norm = "layer"`
+swaps RMSNorm for `ggml_layer_layer_norm()`, which centres as well as scales:
 
 ```r
-dec <- inp |> ggml_layer_attention(128L, n_heads = 8L, causal = TRUE)
+attn <- inp |> ggml_layer_rms_norm() |>
+  ggml_layer_attention(d_model = 128L, n_heads = 8L)
+h    <- ggml_layer_add(list(inp, attn))          # residual 1
+
+ff   <- h  |> ggml_layer_rms_norm() |>
+  ggml_layer_dense(512L, activation = "silu", time_distributed = TRUE)
+ff   <- ff |> ggml_layer_dense(128L, time_distributed = TRUE)
+h2   <- ggml_layer_add(list(h, ff))              # residual 2
+```
+
+Note that `activation = "gelu"` cannot be trained: ggml has no backward rule
+for it, so the graph builds and `ggml_fit()` then aborts. Use `"silu"`.
+
+`causal = TRUE` masks keys after the query (GPT-style decoder); `mask` takes an
+explicit additive mask of shape `c(seq_q, seq_kv)` — 0 where a key may be
+attended to, a large negative where it may not — which is how padding is
+excluded from a batch of unequal lengths. `rope = TRUE` applies rotary position
+embedding to queries and keys, encoding relative position without weights.
+`dropout` drops query-key links while training and is the identity at inference.
+Cross-attention takes queries from one node and keys/values from another, which
+may have a different length:
+
+```r
+dec <- inp |> ggml_layer_attention(128L, n_heads = 8L, causal = TRUE, rope = TRUE)
+
+pad <- ggml_input(shape = c(64L, 64L))
+enc <- inp |> ggml_layer_attention(128L, n_heads = 8L, mask = pad)
 
 ctx <- ggml_input(shape = c(96L, 128L))
-x   <- ggml_apply(list(dec, ctx), ggml_attention(128L, n_heads = 8L))
+x   <- dec |> ggml_layer_attention(128L, n_heads = 8L, context = ctx)
 ```
 
 `ggml_attention()` returns a reusable layer object — applying it to several
@@ -729,13 +769,353 @@ Same model on an **8× Tesla V100-32GB** host (2× Xeon E5-2698 v4, 256 GB RAM),
 | Reductions | `ag_sum`, `ag_mean` (with `dim`, `keepdim`) |
 | Math | `ag_log`, `ag_exp`, `ag_pow`, `ag_clamp` |
 | Shape | `ag_reshape`, `ag_transpose` |
-| Attention | `ag_multihead_attention` |
+| Attention | `ag_multihead_attention`, `ag_flash_attention` (all heads in one fused op) |
 | Loss | `ag_mse_loss`, `ag_cross_entropy_loss`, `ag_softmax_cross_entropy_loss` |
 | Layers | `ag_linear`, `ag_batch_norm`, `ag_layer_norm`, `ag_dropout`, `ag_embedding` |
 | Containers | `ag_sequential` |
 | Optimizers | `optimizer_sgd`, `optimizer_adam` |
 | Schedulers | `lr_scheduler_step`, `lr_scheduler_cosine` (SGDR via `T_mult`), `lr_scheduler_onecycle`, `lr_scheduler_cyclic`, `lr_scheduler_warmup_cosine` |
+| Memory | `ag_checkpoint` (recompute a segment instead of storing its activations) |
 | Utilities | `clip_grad_norm`, `clip_grad_value`, `check_grad_anomaly`, `ag_gradcheck`, `dp_train` |
+
+### Fused attention
+
+`ag_multihead_attention()` loops over heads. Because `ag_*` has no slice
+operation, pulling one head out of a `[d_model, seq]` matrix is a matmul
+against a selector matrix; each head then costs two more matmuls, two
+transposes and a softmax. A 4-head block records **52 tape nodes** for the
+attention core alone.
+
+`ag_flash_attention()` does all heads in a single `ggml_flash_attn_ext()` call,
+and its gradient in a single `ggml_flash_attn_back()` — **one tape node**.
+
+```r
+d_model <- 64L; seq_len <- 32L; n_heads <- 4L
+
+q <- ag_param(matrix(runif(d_model * seq_len, -1, 1), d_model, seq_len))
+k <- ag_param(matrix(runif(d_model * seq_len, -1, 1), d_model, seq_len))
+v <- ag_param(matrix(runif(d_model * seq_len, -1, 1), d_model, seq_len))
+
+with_grad_tape({
+  out  <- ag_flash_attention(q, k, v, n_heads)
+  loss <- ag_mse_loss(out, target)
+})
+backward(loss)
+```
+
+Rows are split into `n_heads` contiguous blocks — the same head layout
+`ag_multihead_attention()` uses. **Projections are not included**: apply `W_q`,
+`W_k`, `W_v` before the call and `W_o` after it. `k` and `v` may be a different
+length from `q` (cross-attention) as long as they match each other.
+
+Attention core only, forward and backward, CPU backend
+(`inst/scripts/measure_ag_flash_attn.R`):
+
+| | tape nodes | head loop | fused | |
+|---|---|---|---|---|
+| d32 h2 seq16 | 26 | 1.47 ms | 0.04 ms | 36.5× |
+| d64 h4 seq32 | 52 | 3.52 ms | 0.15 ms | 23.2× |
+| d128 h8 seq64 | 104 | 10.72 ms | 0.70 ms | 15.4× |
+| d256 h8 seq128 | 104 | 41.69 ms | 2.16 ms | 19.3× |
+
+Those figures compare the same work on both sides — the projections and the
+loss are excluded from each. They are an upper bound: the fused column pays no
+R-level tape bookkeeping at all.
+
+Masking is supported in both directions — the same mask is applied to the
+forward pass and to the gradient:
+
+```r
+# Decoder-style: query j attends to keys 1..j
+out <- ag_flash_attention(q, k, v, n_heads, causal = TRUE)
+
+# Or supply one. NOTE the orientation: [seq_kv, seq_q] -- keys index the ROWS,
+# queries the columns, which is the transpose of the usual "row = query"
+# convention. Logical (TRUE = attend) or numeric (0 / -Inf) both work.
+allow <- matrix(TRUE, seq_kv, seq_q)
+allow[padding_positions, ] <- FALSE
+out <- ag_flash_attention(q, k, v, n_heads, mask = allow)
+```
+
+A `[seq_q, seq_kv]` matrix is rejected rather than accepted quietly, because
+for a square case it would mask the transposed entries and nothing would say
+so.
+
+Not supported: ALiBi (`max_bias`), logit softcap and attention sinks —
+`ggml_flash_attn_back()` asserts on all three.
+
+`ag_multihead_attention()` stays as the fallback for what the fused op does not
+cover: attention **dropout**, and the packaged projections — it owns `W_q`,
+`W_k`, `W_v`, `W_o` and `b_o`, where `ag_flash_attention()` takes
+already-projected Q/K/V and leaves the output projection to you. For plain and
+causal attention without dropout, prefer the fused op.
+
+### Gradient checkpointing
+
+Every autograd op records what its backward rule will need — `ag_matmul` keeps
+the activations flowing through it, and on a deep stack those snapshots are
+most of what the tape holds. `ag_checkpoint()` runs a segment of the forward
+pass **without recording it**, keeping only the segment's input, and re-runs
+that segment during `backward()` to rebuild the values the rules need. Memory
+drops by whatever the segment would have stored; the price is running its
+forward pass twice.
+
+```r
+block <- ag_linear(256L, 256L, activation = "relu")
+
+with_grad_tape({
+  h    <- ag_checkpoint(function(inp) block$forward(inp), x)
+  loss <- ag_mse_loss(h, y)
+})
+backward(loss)
+```
+
+Typically you checkpoint every *n*-th block of a deep stack. Note the
+`local()`: the segment is called again later, during `backward()`, so it must
+not close over the loop variable — otherwise every segment ends up sharing one
+binding, all of them see the last layer at replay time, and the earlier layers
+silently receive no gradient while the loss still looks normal.
+
+```r
+with_grad_tape({
+  h <- x
+  for (i in seq_along(layers)) {
+    seg <- local({
+      lyr <- layers[[i]]                 # captured per iteration
+      function(inp) lyr$forward(inp)
+    })
+    h <- if (i %% 2L == 0L) ag_checkpoint(seg, h) else seg(h)
+  }
+  loss <- ag_mse_loss(h, y)
+})
+backward(loss)
+```
+
+On a 12-layer 256×256 stack at batch 64, measured on the tape itself:
+
+| | tape held | saved |
+|---|---|---|
+| no checkpointing | 10.13 MB | — |
+| every 3rd block | 6.88 MB | 32% |
+| every 2nd block | 5.23 MB | 48% |
+| every block | 0.25 MB | 98% |
+
+Gradients are identical to a non-checkpointed run in each case.
+
+`fn` must be reproducible: given the same inputs and RNG state it has to
+compute the same thing. Randomness inside a segment is handled — the RNG state
+is saved at the forward pass and restored before the replay, so an
+`ag_dropout()` inside a checkpoint replays with the same mask rather than
+drawing a fresh one (which would apply a mask the forward never used). Anything
+non-deterministic beyond R's RNG is not.
+
+The output re-enters the tape as one opaque node: detached from the segment's
+internals, so gradients cannot arrive twice, but still linked to the inputs you
+passed in, so earlier layers train as usual. A tape containing a checkpoint
+always uses the closure backward — the segment is R code, not something the
+graph path below can turn into nodes.
+
+### Backward as a single graph
+
+`backward()` builds the **entire backward pass as one ggml graph** and computes
+it in a single call, so intermediate gradients never leave the device. The
+alternative — one R closure per tape node, each computing its gradient with
+`%*%` and `t()` on the host — is still there as a fallback.
+
+The graph path is the default. Turn it off per session or per run:
+
+```r
+ggmlR:::ag_backward_graph(FALSE)    # or: GGMLR_AG_BACKWARD_GRAPH=0 Rscript ...
+ggmlR:::ag_backward_path()          # "graph", "closures", or "closures (<why>)"
+```
+
+The path is **GPU-only** and **all-or-nothing**: it emits `ag_matmul`,
+`ag_add` (both broadcasts), the three losses, `relu`/`sigmoid`/`tanh`,
+`ag_transpose`, `ag_softmax`, `ag_scale` and `ag_mul` — enough for dense
+stacks, classifiers, `ag_multihead_attention` (causal included) and
+`ag_dropout`. A tape holding any other operation — `ag_sub`, `ag_sum`,
+`ag_layer_norm`, `ag_embedding`, `ag_batch_norm` and the rest — runs the
+closure path in full rather than splitting the pass between the two.
+`ag_backward_path()` names the operation that caused the fallback. Gradients
+are identical either way; the test suite checks the graph path against the
+closures on every covered shape.
+
+**It became the faster path once weights stopped moving.** Measured across five
+shapes it runs 1.2–2.7× the closures, with only the smallest (64×64, depth 2)
+at parity. It was a measured *slowdown* before resident weights: stage profiling
+put the actual GPU compute at 12–25% of `backward()`, with the rest spread over
+uploading forward snapshots, downloading gradients, building nodes in R and
+writing `$grad` back. Two of those four are now gone — a snapshot that is a
+weight is already on the device, and gradients stay there — which is what turned
+the ratio around.
+
+Measure before trusting either path on your own shapes:
+
+```bash
+Rscript inst/scripts/measure_ag_backward_real.R                 # ratios per model
+GGMLR_AG_BENCH_PROF=1 Rscript inst/scripts/measure_ag_backward_real.R   # + stage breakdown
+```
+
+`GGMLR_AG_BWD_PROF=1` turns the same per-stage timings on inside any script;
+read them with `ggmlR:::ag_backward_profile_report()`.
+
+### When the GPU is worth it on the `ag_*` path
+
+Short answer: for the `ag_*` ops on their own, on the hardware measured so far,
+it is not — and the reason is worth knowing before reaching for `ag_device("gpu")`.
+
+⚠️ **The table below predates device residency and has not been re-measured.**
+It was taken when every `ag_*` operation uploaded its operands and downloaded
+its result, which is no longer what happens on the ops listed in "Keeping
+tensors on the device" — a step now costs 8 crossings rather than 10, and the
+forward's share of them no longer grows with depth. Treat these numbers as the
+shape of the old problem, and re-run
+`inst/scripts/measure_ag_gpu_threshold.R` before deciding anything from them.
+
+Every `ag_*` operation is executed on its own: `.ag_run_op` creates tensors for
+the inputs, uploads their data, builds a one-node graph, computes it and reads
+the result back. The arithmetic is a small part of that. A trivial `ag_scale`
+on a 4 MB operand costs about 16 ms, and the cost tracks the bytes moved at
+roughly 4 ms/MB — more than a 1024×1024 matmul takes on the CPU altogether.
+
+The consequence is that the usual intuition, "it will pay off once the matrices
+are big enough", does not hold here. Measured with
+`inst/scripts/measure_ag_gpu_threshold.R` (radv, multi-threaded BLAS on the CPU
+side):
+
+| what grows | CPU vs GPU |
+|---|---|
+| layer size `d`, batch 64 | CPU ahead throughout, and the gap **widens**: 1.5× at `d=1024`, 12.7× at `d=2048` |
+| batch, layer fixed at 512 | gap narrows 14× → 1.35× and then flattens; it does not cross over |
+| 4-layer MLP forward | steady 4.2–4.9× for the CPU at every size — per-op cost compounds with depth |
+| `ag_flash_attention` | 1.26× for the GPU at `d_model=64`, a tie at 256 and 512 |
+
+Two things follow. Growing the layer makes it worse, not better: the upload
+grows with `d²` while the CPU side has BLAS threading to fall back on. Growing
+the batch is the direction that helps — the weight upload is paid once per call
+however wide the batch is — but it converges to about 1.35× rather than crossing
+zero.
+
+The last row is the useful one. `ag_flash_attention` uploads Q, K and V once and
+runs the whole attention inside a single call, which is the best case for this
+execution model: no repeated uploads at all. It reaches parity with the CPU, not
+a win. So an upload cache for unchanged operands — the obvious next optimisation,
+and a real one — would narrow the gap rather than reverse it.
+
+Where that leaves the GPU path:
+
+- **Use it** when the alternative is not the CPU: models whose weights do not fit
+  in host memory comfortably, work already resident on the device, or the
+  `nn_*` sequential/functional path, which builds one graph for the whole model
+  and does not pay per-op upload at all.
+- **Do not reach for it** to speed up an `ag_*` chain on this class of hardware.
+  Set `ag_device("cpu")` — the default — and the same code runs faster.
+- **Re-measure** on different hardware before generalising. These numbers come
+  from radv, which announces itself as non-conformant, against a multi-threaded
+  CPU BLAS. A proprietary driver, or a card with much greater memory bandwidth,
+  is a different experiment.
+
+```bash
+Rscript inst/scripts/measure_ag_gpu_threshold.R   # the table above
+Rscript inst/scripts/measure_ag_upload_cost.R     # where the time inside one op goes
+```
+
+This is about `ag_*` specifically. The `nn_*` path compiles a model into a single
+ggml graph, so it is not subject to the per-op upload described here, and the
+Vulkan backend behaves quite differently there.
+
+### Keeping tensors on the device
+
+The per-op round trip above has an obvious remedy — leave values on the device —
+and it now applies to the whole training step. Four kinds of tensor stay in
+backend buffers:
+
+* **weights** — `ag_param()` uploads once into a residency pool that survives
+  the tape reset `with_grad_tape()` performs at every step;
+* **optimizer moments** — Adam's `m` and `v` live beside the weights, and the
+  step updates all three on the device;
+* **gradients** — the graph backward puts a device handle in each leaf's
+  `$grad`, and the optimizer consumes it there;
+* **forward activations** — the ops take handles instead of materialising their
+  operands.
+
+**Measured on one training step:** 4 host/device crossings and 0.047 MB, against
+10 and 0.188 before, split as forward 3 / backward 1 / step 0. What remains is
+the batch going up, the loss scalar coming back, and one backward snapshot — the
+optimizer step touches the host not at all. Forward traffic no longer scales
+with depth either: a four-layer network with four different activations pays the
+same three crossings as a single layer, because nothing between the input and
+the loss goes through R.
+
+Both defaults can be turned off:
+
+```r
+ggmlR:::ag_backward_graph(FALSE)     # GGMLR_AG_BACKWARD_GRAPH=0
+ggmlR:::ag_backward_resident(FALSE)  # GGMLR_AG_RESIDENT_GRADS=0
+```
+
+Numerically nothing changes: this is transport, not arithmetic, and the test
+suite checks gradients against the closure path and against finite differences.
+
+**One thing to know if you write code against `$grad`.** With resident gradients
+it holds a device handle, not a matrix. Read it through the supported accessors
+and nothing changes; do arithmetic on it directly and you get a handle, which
+has no arithmetic methods and so fails loudly rather than computing something
+wrong. The same applies to holding a gradient across a tape boundary — its
+buffer belongs to the step that produced it. `dp_train()` and `ag_checkpoint()`
+both do this and both materialise first.
+
+**A note on how this was measured, because the subsystem figure misleads.** The
+forward is more transfer-bound than the backward (46–85%, upload alone up to
+72%), so making it resident speeds *the forward* up by 1.9–8.2x — but the
+forward is only 39–58% of a step, so the step gains 1.2–1.4x. Measure what a
+change does to the step, not to the part it touches: the two differ by a factor
+of six here, and the subsystem number is the noisier of the two.
+
+Two reports come with it:
+
+```r
+ggmlR:::ag_forward_profile(TRUE)     # then run a forward pass
+ggmlR:::ag_forward_profile_report()  # ctx/create/flush/upload/graph/compute/download
+
+ag_tape_memory()                     # what the tape is holding, right now
+```
+
+`ag_tape_memory()` splits the tape into operands, which outlive it, and
+activations, which clearing it would release — counting storage shared between
+the two only once, and charging it to the operand. A weight's matrix and the
+snapshot a backward closure captured of it are the same object, so reporting it
+as an activation would claim the tape can free memory the parameter keeps alive
+regardless.
+
+```bash
+Rscript inst/scripts/measure_ag_resident_gain.R      # what residency delivered
+Rscript inst/scripts/measure_ag_forward_profile.R    # where the forward goes
+Rscript inst/scripts/measure_ag_tape_memory.R        # tape composition by shape
+```
+
+### Budgeting a training run
+
+```r
+ag_estimate_training_memory(
+  shapes = list(c(512, 512), c(512, 512), c(512, 512)),
+  batch_size = 64, optimizer = "adam")
+```
+
+Adds up weights, gradients, optimizer state and activations from parameter
+shapes alone — no model needed, so the question "will this fit" can be asked
+before building one.
+
+It counts **8 bytes per scalar**, not 4, and that is the most useful thing it
+says. `ag_dtype()` controls the precision of forward tensors uploaded into a
+ggml buffer; it does not reach `backward()`, which accumulates `$grad` in R
+closures, nor the optimizer's moments, which are R matrices. So an f32 estimate
+of an `ag_*` training run is half the real figure. Two things follow that are
+usually paid for elsewhere: gradient underflow does not occur, so there is no
+loss scaling to configure, and optimizer state is already in higher precision
+than the forward pass.
+
+For a model that exists, `ag_tape_memory()` measures rather than estimates.
 
 ## mlr3 Integration
 
@@ -1242,6 +1622,24 @@ Vulkan shaders, so a state-space block trains entirely on the GPU (`d_state`
 128 or 256, Mamba-2 shapes; other shapes compute the backward on the CPU). The
 RWKV and GLA backward kernels are CPU-only, as is `ggml_gated_linear_attn()` in
 the forward direction.
+
+The same holds for flash attention: upstream's `ggml_flash_attn_back()` is a
+stub that aborts, so `ggml_flash_attn_ext()` was inference-only. ggmlR
+implements it on CPU and Vulkan and wires it into the autodiff, so attention
+trains through the fused op. No ALiBi, logit softcap or attention sinks.
+
+Convolution backward (`GGML_OP_IM2COL_BACK`) also has a Vulkan shader here,
+which upstream lacks. Without it the scheduler moved the backward — and the
+nodes feeding it — to the CPU, and a convolution trained on the GPU came out
+*slower* than the same model trained on the CPU outright; with it the graph
+stays in one piece on the device. Training a convolution requires an F32
+kernel: an F16 one, the usual choice for inference, leaves the backward with no
+backend that can run it, and ggmlR says so when the gradient is requested
+rather than aborting later inside the scheduler.
+
+Embedding backward (`GGML_OP_GET_ROWS_BACK`) has a Vulkan shader here as well,
+so a trained embedding table stays on the device. On a 30000-word vocabulary
+that puts GPU training 1.5–2.5x ahead of the CPU, widening with depth.
 
 See `inst/examples/mamba_train_demo.R` for a block trained end to end on both
 backends, and `inst/examples/backward_gpu_demo.R` for which backward ops run

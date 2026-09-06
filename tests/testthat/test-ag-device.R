@@ -114,14 +114,22 @@ test_that("ag_tensor(x, device='gpu') has device='gpu'", {
   reset_to_cpu()
 })
 
-test_that("ag_param(x, device='gpu') keeps $data as source-of-truth", {
+test_that("ag_param(x, device='gpu') keeps its value, on the device", {
   skip_if(ggml_backend_dev_count() < 1, "No ggml backend device available")
   ag_device("gpu")
   d <- matrix(1:4, 2, 2)
   p <- ag_param(d, device = "gpu")
   expect_equal(p$device, "gpu")
-  expect_equal(p$data, d)
   expect_true(p$requires_grad)
+
+  # A parameter is uploaded once into the persistent pool and read back through
+  # .ag_data(); $data is NULL because the device holds the value, which the
+  # contract defines as "not materialised", never as "empty" (rule 4). The
+  # test above covers the other half of this: a plain ag_tensor is NOT made
+  # resident, so it does keep $data.
+  expect_null(p$data)
+  expect_false(is.null(p$ptr))
+  expect_equal(.ag_data(p), d, tolerance = 1e-6)
   reset_to_cpu()
 })
 
@@ -187,7 +195,8 @@ test_that("backward on GPU tensors matches CPU backward (tol=1e-4)", {
   grads_gpu <- backward(loss_gpu)
   g_gpu     <- get0(as.character(W_gpu$id), envir = grads_gpu)
 
-  expect_equal(g_gpu, g_cpu, tolerance = 1e-4)
+  # Resident gradients arrive as device handles -- materialise before comparing.
+  expect_equal(ggmlR:::.ag_as_matrix(g_gpu), g_cpu, tolerance = 1e-4)
   reset_to_cpu()
 })
 
@@ -433,4 +442,42 @@ test_that("ag_add GPU with [1,n] broadcast equals CPU", {
 
   expect_equal(result, expected, tolerance = 1e-5)
   reset_to_cpu()
+})
+
+test_that("switching to the CPU releases the GPU backend", {
+  skip_if_not(ggml_vulkan_available() && ggml_vulkan_device_count() > 0L,
+              "no Vulkan device")
+
+  st <- ggmlR:::.ag_device_state
+  prev <- ag_default_device()
+  on.exit(ag_device(prev), add = TRUE)
+
+  ag_device("gpu")
+  expect_false(is.null(st$backend))
+
+  # Regression: ag_device("cpu") used to set $device and stop there, leaving a
+  # Vulkan backend behind. Everything that reads $backend directly --
+  # gpu_linalg, sc_umap, ag_flash_attention -- then kept computing on the GPU
+  # after the caller asked for the CPU. Under test_dir() any file running after
+  # a GPU test inherited that, and the only symptom was f16-level disagreement
+  # with a double-precision reference: no error, just numbers from the wrong
+  # device.
+  ag_device("cpu")
+  expect_null(st$backend)
+
+  # Residency has to go with it: contexts and buffers allocated from that
+  # backend would otherwise outlive it, which is a use-after-free rather than a
+  # leak.
+  expect_length(st$contexts, 0L)
+  expect_length(st$buffers, 0L)
+
+  # And the round trip still works -- the backend is re-created on demand.
+  ag_device("gpu")
+  expect_false(is.null(st$backend))
+  a <- ag_tensor(matrix(runif(16), 4, 4))
+  b <- ag_tensor(matrix(runif(16), 4, 4))
+  r <- ag_matmul(a, b)
+  expect_equal(ggmlR:::.ag_data(r),
+               ggmlR:::.ag_data(a) %*% ggmlR:::.ag_data(b),
+               tolerance = 1e-2)
 })

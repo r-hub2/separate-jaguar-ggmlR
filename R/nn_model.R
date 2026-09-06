@@ -632,7 +632,7 @@ nn_build_graph <- function(model, batch_size, training = TRUE,
       ggml_set_name(layer$weights$weight, paste0("dense_", i, "_weight"))
       ggml_set_name(layer$weights$bias, paste0("dense_", i, "_bias"))
 
-    } else if (layer$type == "batch_norm") {
+    } else if (nn_is_norm_type(layer$type)) {
       # Determine number of features for gamma/beta
       n_features <- if (length(layer$input_shape) == 1) layer$input_shape
                     else if (length(layer$input_shape) == 2) layer$input_shape[2]
@@ -640,15 +640,19 @@ nn_build_graph <- function(model, batch_size, training = TRUE,
 
       layer$weights$gamma <- ggml_new_tensor_1d(ctx_weights, GGML_TYPE_F32, n_features)
       layer$weights$beta <- ggml_new_tensor_1d(ctx_weights, GGML_TYPE_F32, n_features)
-      ggml_set_name(layer$weights$gamma, paste0("bn_", i, "_gamma"))
-      ggml_set_name(layer$weights$beta, paste0("bn_", i, "_beta"))
+      pfx <- switch(layer$type, rms_norm = "rmsn_", layer_norm = "ln_", "bn_")
+      ggml_set_name(layer$weights$gamma, paste0(pfx, i, "_gamma"))
+      ggml_set_name(layer$weights$beta, paste0(pfx, i, "_beta"))
 
       # Running estimates used at inference time. Not parameters: they are
-      # updated by an EMA during training, never by the optimizer.
-      layer$weights$running_mean <- ggml_new_tensor_1d(ctx_weights, GGML_TYPE_F32, n_features)
-      layer$weights$running_var  <- ggml_new_tensor_1d(ctx_weights, GGML_TYPE_F32, n_features)
-      ggml_set_name(layer$weights$running_mean, paste0("bn_", i, "_running_mean"))
-      ggml_set_name(layer$weights$running_var, paste0("bn_", i, "_running_var"))
+      # updated by an EMA during training, never by the optimizer. RMS norm has
+      # no batch statistics, so it needs none of this.
+      if (layer$type == "batch_norm") {
+        layer$weights$running_mean <- ggml_new_tensor_1d(ctx_weights, GGML_TYPE_F32, n_features)
+        layer$weights$running_var  <- ggml_new_tensor_1d(ctx_weights, GGML_TYPE_F32, n_features)
+        ggml_set_name(layer$weights$running_mean, paste0("bn_", i, "_running_mean"))
+        ggml_set_name(layer$weights$running_var, paste0("bn_", i, "_running_var"))
+      }
 
     } else if (layer$type == "lstm") {
       # input_shape: c(seq_len, input_size)
@@ -781,7 +785,7 @@ nn_build_graph <- function(model, batch_size, training = TRUE,
         ggml_set_param(layer$weights$bias)
       }
 
-    } else if (layer$type == "batch_norm") {
+    } else if (nn_is_norm_type(layer$type)) {
       if (has_weights_data && !is.null(old_layer$weights_data$gamma)) {
         ggml_backend_tensor_set_data(layer$weights$gamma, old_layer$weights_data$gamma)
         ggml_backend_tensor_set_data(layer$weights$beta, old_layer$weights_data$beta)
@@ -798,19 +802,22 @@ nn_build_graph <- function(model, batch_size, training = TRUE,
       }
 
       # Running estimates: restore when available, else start from the identity
-      # transform (mean 0, variance 1), matching ag_batch_norm().
-      nbn <- ggml_nelements(layer$weights$running_mean)
-      if (has_weights_data && !is.null(old_layer$weights_data$running_mean)) {
-        ggml_backend_tensor_set_data(layer$weights$running_mean, old_layer$weights_data$running_mean)
-        ggml_backend_tensor_set_data(layer$weights$running_var, old_layer$weights_data$running_var)
-      } else if (has_trained_weights && !is.null(old_layer$weights$running_mean)) {
-        ggml_backend_tensor_set_data(layer$weights$running_mean,
-          ggml_backend_tensor_get_data(old_layer$weights$running_mean))
-        ggml_backend_tensor_set_data(layer$weights$running_var,
-          ggml_backend_tensor_get_data(old_layer$weights$running_var))
-      } else {
-        nn_init_zeros(layer$weights$running_mean)
-        ggml_backend_tensor_set_data(layer$weights$running_var, rep(1.0, nbn))
+      # transform (mean 0, variance 1), matching ag_batch_norm(). RMS norm keeps
+      # no batch statistics, so it has no such tensors to restore.
+      if (!is.null(layer$weights$running_mean)) {
+        nbn <- ggml_nelements(layer$weights$running_mean)
+        if (has_weights_data && !is.null(old_layer$weights_data$running_mean)) {
+          ggml_backend_tensor_set_data(layer$weights$running_mean, old_layer$weights_data$running_mean)
+          ggml_backend_tensor_set_data(layer$weights$running_var, old_layer$weights_data$running_var)
+        } else if (has_trained_weights && !is.null(old_layer$weights$running_mean)) {
+          ggml_backend_tensor_set_data(layer$weights$running_mean,
+            ggml_backend_tensor_get_data(old_layer$weights$running_mean))
+          ggml_backend_tensor_set_data(layer$weights$running_var,
+            ggml_backend_tensor_get_data(old_layer$weights$running_var))
+        } else {
+          nn_init_zeros(layer$weights$running_mean)
+          ggml_backend_tensor_set_data(layer$weights$running_var, rep(1.0, nbn))
+        }
       }
 
       if (isTRUE(layer$trainable)) {
@@ -1052,7 +1059,14 @@ nn_bn_calibrate <- function(model, x) {
 #'   \item{validation_split}{Fraction of data for validation (default: 0)}
 #'   \item{validation_data}{Optional list(x_val, y_val) for validation. Overrides validation_split.}
 #'   \item{class_weight}{Named vector of weights per class, e.g. c("0"=1, "1"=10). Cannot be used with sample_weight.}
-#'   \item{sample_weight}{Numeric vector of per-sample weights (length = nrow(x)). Cannot be used with class_weight.}
+#'   \item{sample_weight}{Per-sample weights: a numeric vector of length
+#'     \code{nrow(x)}, or -- for \code{mean_squared_error} only -- a
+#'     \code{nrow(x)} by \code{ncol(y)} matrix acting as a per-output loss mask.
+#'     A mask trains only the outputs whose weight is non-zero, which is what a
+#'     Q-model needs: 1 on the action that has a TD target, 0 elsewhere. The
+#'     denominator is unchanged (\code{sum(w*(pred-y)^2)/nelements}), so masking
+#'     does not renormalise over the active outputs. Cannot be used with
+#'     class_weight.}
 #'   \item{verbose}{0 = silent, 1 = progress (default: 1)}
 #'   \item{shuffle}{Shuffle the data (default: TRUE). Shuffled once before the
 #'     train/validation split, then the training portion each epoch; the
@@ -1167,16 +1181,41 @@ ggml_fit_sequential <- function(model, x, y, epochs = 1, batch_size = 32,
   # When TRUE, sample weights are applied through the weighted-MSE loss node
   # (sum(w*(pred-y)^2)) instead of by scaling the labels, which would be wrong
   # for squared error. CE is unaffected: CE(p, w*y) == w*CE(p, y).
+  # A matrix sample_weight is a per-output mask rather than one weight per
+  # sample; loss_mask_ne0 carries its width down to the loss node. NULL keeps
+  # the [1, ndata] layout, so the vector case is untouched.
   use_weighted_mse <- FALSE
+  loss_mask_ne0 <- NULL
   if (!is.null(sample_weight)) {
-    if (length(sample_weight) != nrow(y)) {
-      stop("sample_weight length must match number of training samples.")
-    }
     is_mse <- model$compilation$loss %in% c("mse", "mean_squared_error")
-    if (is_mse) {
-      use_weighted_mse <- TRUE   # weights go into the loss node below, not y
+
+    if (is.matrix(sample_weight)) {
+      if (!is_mse) {
+        stop("A matrix 'sample_weight' is a per-output loss mask and only ",
+             "applies to mean_squared_error; got loss '",
+             model$compilation$loss, "'.", call. = FALSE)
+      }
+      if (nrow(sample_weight) != nrow(y)) {
+        stop("'sample_weight' must have one row per training sample (",
+             nrow(sample_weight), " rows for ", nrow(y), " samples).",
+             call. = FALSE)
+      }
+      if (ncol(sample_weight) != ncol(y)) {
+        stop("A matrix 'sample_weight' must have one column per output (",
+             ncol(sample_weight), " columns for ", ncol(y), " outputs).",
+             call. = FALSE)
+      }
+      use_weighted_mse <- TRUE
+      loss_mask_ne0    <- ncol(sample_weight)
     } else {
-      y <- y * sample_weight     # cross-entropy: scaling the label is correct
+      if (length(sample_weight) != nrow(y)) {
+        stop("sample_weight length must match number of training samples.")
+      }
+      if (is_mse) {
+        use_weighted_mse <- TRUE   # weights go into the loss node below, not y
+      } else {
+        y <- y * sample_weight     # cross-entropy: scaling the label is correct
+      }
     }
   }
 
@@ -1202,7 +1241,12 @@ ggml_fit_sequential <- function(model, x, y, epochs = 1, batch_size = 32,
     # Validation rows carry no user weight; default to 1.0 so weighted MSE
     # reduces to plain MSE on the validation split.
     if (use_weighted_mse) {
-      sample_weight <- c(sample_weight, rep(1.0, n_val))
+      sample_weight <- if (is.matrix(sample_weight)) {
+        rbind(sample_weight,
+              matrix(1.0, nrow = n_val, ncol = ncol(sample_weight)))
+      } else {
+        c(sample_weight, rep(1.0, n_val))
+      }
     }
     validation_split <- n_val / (n_train + n_val)
     # The split is positional now: these rows ARE the user's validation set, so
@@ -1229,7 +1273,11 @@ ggml_fit_sequential <- function(model, x, y, epochs = 1, batch_size = 32,
     x <- slice_first_dim(x, seq_len(usable_samples))
     y <- y[seq_len(usable_samples), , drop = FALSE]
     if (use_weighted_mse) {
-      sample_weight <- sample_weight[seq_len(usable_samples)]
+      sample_weight <- if (is.matrix(sample_weight)) {
+        sample_weight[seq_len(usable_samples), , drop = FALSE]
+      } else {
+        sample_weight[seq_len(usable_samples)]
+      }
     }
     n_samples <- usable_samples
   }
@@ -1267,10 +1315,19 @@ ggml_fit_sequential <- function(model, x, y, epochs = 1, batch_size = 32,
   ggml_backend_tensor_set_data(data_tensor, x_ggml)
   ggml_backend_tensor_set_data(labels_tensor, y_ggml)
 
-  # Per-datapoint weights for weighted MSE (loss = sum(w*(pred-y)^2)/nelem)
+  # Loss weights for weighted MSE (loss = sum(w*(pred-y)^2)/nelem).
+  # A vector gives [1, ndata] (one weight per sample); a matrix gives
+  # [n_out, ndata] -- a per-output mask, transposed on the way in exactly like
+  # the labels above, since ggml wants the output axis on ne[0].
   if (use_weighted_mse) {
-    weights_tensor <- ggml_opt_dataset_weights(dataset)
-    ggml_backend_tensor_set_data(weights_tensor, as.numeric(sample_weight))
+    w_ne0 <- if (is.null(loss_mask_ne0)) 1L else as.integer(loss_mask_ne0)
+    weights_tensor <- ggml_opt_dataset_weights(dataset, w_ne0)
+    w_ggml <- if (is.matrix(sample_weight)) {
+      as.numeric(t(sample_weight))
+    } else {
+      as.numeric(sample_weight)
+    }
+    ggml_backend_tensor_set_data(weights_tensor, w_ggml)
   }
 
   # Build graph (creates contexts, weights, inputs, outputs).
@@ -1323,7 +1380,8 @@ ggml_fit_sequential <- function(model, x, y, epochs = 1, batch_size = 32,
     shuffle = shuffle,
     shuffle_all = shuffle_all,
     callbacks = callbacks,
-    silent = (verbose == 0)
+    silent = (verbose == 0),
+    loss_mask_ne0 = loss_mask_ne0
   )
 
   # Store built layers (with trained weights)
@@ -1642,7 +1700,7 @@ ggml_save_weights <- function(model, path) {
         layer_weights$weight <- ggml_backend_tensor_get_data(layer$weights$weight)
         layer_weights$bias <- ggml_backend_tensor_get_data(layer$weights$bias)
       }
-    } else if (layer$type == "batch_norm") {
+    } else if (nn_is_norm_type(layer$type)) {
       if (!is.null(layer$weights$gamma)) {
         layer_weights$gamma <- ggml_backend_tensor_get_data(layer$weights$gamma)
         layer_weights$beta <- ggml_backend_tensor_get_data(layer$weights$beta)
@@ -1865,7 +1923,7 @@ nn_count_layer_params <- function(layer) {
       fan_in <- if (length(layer$input_shape) == 1) layer$input_shape else prod(layer$input_shape)
       fan_in * layer$config$units + layer$config$units
     } else 0
-  } else if (layer$type == "batch_norm") {
+  } else if (nn_is_norm_type(layer$type)) {
     if (!is.null(layer$input_shape)) {
       n <- if (length(layer$input_shape) == 1) layer$input_shape
            else if (length(layer$input_shape) == 2) layer$input_shape[2]
@@ -2006,7 +2064,8 @@ ggml_save_model.ggml_sequential_model <- function(model, path) {
     } else if (l$type == "dense" && !is.null(l$weights$weight)) {
       wdata$weight <- ggml_backend_tensor_get_data(l$weights$weight)
       wdata$bias   <- ggml_backend_tensor_get_data(l$weights$bias)
-    } else if (l$type == "batch_norm" && !is.null(l$weights$gamma)) {
+    } else if (nn_is_norm_type(l$type) &&
+               !is.null(l$weights$gamma)) {
       wdata$gamma <- ggml_backend_tensor_get_data(l$weights$gamma)
       wdata$beta  <- ggml_backend_tensor_get_data(l$weights$beta)
       # Running estimates are part of the model: without them a reloaded model

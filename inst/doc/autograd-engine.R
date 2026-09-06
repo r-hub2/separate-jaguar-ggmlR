@@ -208,5 +208,32 @@ knitr::opts_chunk$set(eval = identical(Sys.getenv("NOT_CRAN"), "true"))
 # # All subsequent ag_param / ag_tensor use the selected dtype
 
 ## -----------------------------------------------------------------------------
+# # Section 10 left the dtype at f16 on a GPU machine; the tape report is about
+# # bytes held, so pin f32 to keep the figures comparable across machines.
+# ag_dtype("f32")
+# 
+# x_r <- ag_tensor(matrix(rnorm(16 * 32), nrow = 16L))
+# W_r <- ag_param(matrix(rnorm(8 * 16) * 0.1, nrow = 8L))
+# y_r <- ag_tensor(matrix(0, 8L, 32L))
+# 
+# with_grad_tape({
+#   out_r  <- ag_relu(ag_matmul(W_r, x_r))
+#   loss_r <- ag_mse_loss(out_r, y_r)
+# })
+# backward(loss_r)
+# 
+# ag_tape_memory(top = 5)
+
+## ----eval=FALSE---------------------------------------------------------------
+# # WRONG: g1's buffer is gone by the time it is used
+# with_grad_tape({ l1 <- f(x1) }); backward(l1); g1 <- W$grad
+# with_grad_tape({ l2 <- f(x2) }); backward(l2); g2 <- W$grad
+# total <- g1 + g2
+
+## ----eval=FALSE---------------------------------------------------------------
+# ggmlR:::ag_backward_graph(FALSE)     # backward as closures, not one graph
+# ggmlR:::ag_backward_resident(FALSE)  # download gradients into R matrices
+
+## -----------------------------------------------------------------------------
 # # Full example: inst/examples/dp_train_demo.R
 

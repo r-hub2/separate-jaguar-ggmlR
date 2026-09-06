@@ -317,6 +317,10 @@ static bool ggml_vk_build_graph(ggml_backend_vk_context * ctx, ggml_cgraph * cgr
         ggml_vk_silu_back(ctx, compute_ctx, src0, src1, node);
 
         break;
+    case GGML_OP_GELU_BACK:
+        ggml_vk_gelu_back(ctx, compute_ctx, src0, src1, node);
+
+        break;
     case GGML_OP_NORM:
         ggml_vk_norm(ctx, compute_ctx, src0, node);
 
@@ -330,6 +334,11 @@ static bool ggml_vk_build_graph(ggml_backend_vk_context * ctx, ggml_cgraph * cgr
         break;
     case GGML_OP_RMS_NORM_BACK:
         ggml_vk_rms_norm_back(ctx, compute_ctx, src0, src1, node);
+
+        break;
+    // DIVERGENCE from upstream: LayerNorm backward, see ggml_norm_back().
+    case GGML_OP_NORM_BACK:
+        ggml_vk_norm_back(ctx, compute_ctx, src0, src1, node);
 
         break;
     case GGML_OP_L2_NORM:
@@ -542,6 +551,21 @@ static bool ggml_vk_build_graph(ggml_backend_vk_context * ctx, ggml_cgraph * cgr
 
     case GGML_OP_OUT_PROD:
         ggml_vk_out_prod(ctx, compute_ctx, node);
+
+        break;
+
+    case GGML_OP_GET_ROWS_BACK:
+        ggml_vk_get_rows_back(ctx, compute_ctx, node);
+
+        break;
+
+    case GGML_OP_IM2COL_BACK:
+        ggml_vk_im2col_back(ctx, compute_ctx, node);
+
+        break;
+
+    case GGML_OP_FLASH_ATTN_BACK:
+        ggml_vk_flash_attn_back(ctx, compute_ctx, node);
 
         break;
 
@@ -3040,7 +3064,11 @@ static bool ggml_backend_vk_device_supports_op_impl(ggml_backend_dev_t dev, cons
             return op->src[0]->type == GGML_TYPE_F32 && op->src[1]->type == GGML_TYPE_F32 && op->src[2]->type == GGML_TYPE_I32 &&
                    op->type == GGML_TYPE_F32;
         case GGML_OP_SILU_BACK:
+        // DIVERGENCE from upstream: GELU backward, see ggml_gelu_back().
+        case GGML_OP_GELU_BACK:
         case GGML_OP_RMS_NORM_BACK:
+        // DIVERGENCE from upstream: LayerNorm backward, see ggml_norm_back().
+        case GGML_OP_NORM_BACK:
             return ggml_is_contiguous(op->src[0]) && op->src[0]->type == GGML_TYPE_F32;
         case GGML_OP_SQR:
         case GGML_OP_SQRT:
@@ -3338,6 +3366,76 @@ static bool ggml_backend_vk_device_supports_op_impl(ggml_backend_dev_t dev, cons
                    op->src[1]->type == GGML_TYPE_F32 &&
                    op->src[0]->nb[0] == sizeof(float) &&
                    op->nb[0] == sizeof(float);
+        case GGML_OP_GET_ROWS_BACK:
+            {
+                // ggmlR: backward of embedding lookup. Repeated tokens scatter
+                // into the same row, so this needs atomic float add.
+                ggml_backend_vk_device_context * vk_ctx =
+                    (ggml_backend_vk_device_context *)dev->context;
+                const vk_device& vk_dev = ggml_vk_get_device(vk_ctx->device);
+                if (!vk_dev->atomic_float_add) {
+                    return false;
+                }
+                return op->type == GGML_TYPE_F32 &&
+                       op->src[0]->type == GGML_TYPE_F32 &&
+                       op->src[1] && op->src[1]->type == GGML_TYPE_I32 &&
+                       ggml_is_contiguous(op) &&
+                       ggml_is_contiguous(op->src[0]);
+            }
+        case GGML_OP_IM2COL_BACK:
+            // ggmlR: backward of convolution. The CPU kernel requires both
+            // sources to be F32 and so does this; an F16 kernel is rejected
+            // earlier, when the backward graph is built (see ggml-graph.c).
+            return op->type == GGML_TYPE_F32 &&
+                   op->src[0]->type == GGML_TYPE_F32 &&
+                   op->src[1] && op->src[1]->type == GGML_TYPE_F32 &&
+                   ggml_is_contiguous(op) &&
+                   ggml_is_contiguous(op->src[0]);
+        case GGML_OP_FLASH_ATTN_BACK:
+            {
+                // ggmlR: backward of flash attention (upstream has neither a
+                // working op nor a shader). Without this the whole backward
+                // left the GPU, splitting a training graph once per attention
+                // block.
+                ggml_backend_vk_device_context * vk_ctx =
+                    (ggml_backend_vk_device_context *)dev->context;
+                const vk_device& vk_dev = ggml_vk_get_device(vk_ctx->device);
+
+                // dk and dv are shared by every query row of a kv head, so
+                // they accumulate with atomicAdd.
+                if (!vk_dev->atomic_float_add) {
+                    return false;
+                }
+
+                // The shader caches the softmax row and dP in shared memory,
+                // sized by the pipeline's MAX_M specialisation constant. Longer
+                // kv runs go to the CPU rather than overrun it.
+                if (op->src[1]->ne[1] > 1024) {
+                    return false;
+                }
+
+                // f32 only, and contiguous: the shader indexes with element
+                // strides and assumes rows are packed.
+                if (op->type != GGML_TYPE_F32 ||
+                    op->src[0]->type != GGML_TYPE_F32 ||
+                    op->src[1]->type != GGML_TYPE_F32 ||
+                    op->src[2]->type != GGML_TYPE_F32 ||
+                    op->src[4] == nullptr || op->src[4]->type != GGML_TYPE_F32) {
+                    return false;
+                }
+                if (!ggml_is_contiguous(op->src[0]) || !ggml_is_contiguous(op->src[1]) ||
+                    !ggml_is_contiguous(op->src[2]) || !ggml_is_contiguous(op->src[4])) {
+                    return false;
+                }
+
+                // The mask, when present, is f16 and contiguous.
+                if (op->src[3] != nullptr &&
+                    (op->src[3]->type != GGML_TYPE_F16 || !ggml_is_contiguous(op->src[3]))) {
+                    return false;
+                }
+
+                return true;
+            }
         case GGML_OP_CROSS_ENTROPY_LOSS_BACK:
             // ggmlR: the shader indexes rows as row*nc, so everything must be
             // contiguous -- the same restriction the CPU kernel asserts.

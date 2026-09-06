@@ -499,6 +499,7 @@ extern "C" {
         GGML_OP_REPEAT_BACK,
         GGML_OP_CONCAT,
         GGML_OP_SILU_BACK,
+        GGML_OP_GELU_BACK,
         GGML_OP_NORM, // normalize
         GGML_OP_RMS_NORM,
         GGML_OP_RMS_NORM_BACK,
@@ -593,6 +594,7 @@ extern "C" {
         GGML_OP_RWKV_WKV6_BACK,
         GGML_OP_RWKV_WKV7_BACK,
         GGML_OP_GATED_LINEAR_ATTN_BACK,
+        GGML_OP_NORM_BACK,
 
         GGML_OP_COUNT,
     };
@@ -1223,6 +1225,14 @@ extern "C" {
             struct ggml_tensor  * a,
             struct ggml_tensor  * b);
 
+    // gelu backward: dx = dy * gelu'(x), for the tanh approximation ggml_gelu() uses
+    // a - dy (the incoming gradient)
+    // b - x  (the original input)
+    GGML_API struct ggml_tensor * ggml_gelu_back(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * a,
+            struct ggml_tensor  * b);
+
     // hardswish(x) = x * relu6(x + 3) / 6
     GGML_API struct ggml_tensor * ggml_hardswish(
             struct ggml_context * ctx,
@@ -1430,9 +1440,20 @@ extern "C" {
             struct ggml_tensor  * a,
             float                 eps);
 
-    // a - x
-    // b - dy
+    // a - dy (gradient w.r.t. the forward output)
+    // b - x  (the forward input)
+    // NB: this is the order both ggml-graph.c and the CPU kernel use; the
+    // comment here used to say the opposite.
     GGML_API struct ggml_tensor * ggml_rms_norm_back(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * a,
+            struct ggml_tensor  * b,
+            float                 eps);
+
+    // Backward pass of ggml_norm (LayerNorm over ne0, no gamma/beta).
+    // a - dy (gradient w.r.t. the forward output)
+    // b - x  (the forward input)
+    GGML_API struct ggml_tensor * ggml_norm_back(
             struct ggml_context * ctx,
             struct ggml_tensor  * a,
             struct ggml_tensor  * b,
@@ -2432,14 +2453,20 @@ extern "C" {
             struct ggml_tensor * a,
             struct ggml_tensor * sinks);
 
-    // TODO: needs to be adapted to ggml_flash_attn_ext
+    // ggmlR extension: backward pass for ggml_flash_attn_ext.
+    // Upstream ships this as a GGML_ABORT stub speaking the pre-_ext layout;
+    // here it is a working op. mask may be NULL; scale must match the forward
+    // node. max_bias/logit_softcap/sinks are not supported (asserted).
+    // Returns grad_q, grad_k and grad_v packed in one contiguous 1D tensor;
+    // ggml-graph.c takes a view of each slice (see GGML_OP_FLASH_ATTN_EXT).
     GGML_API struct ggml_tensor * ggml_flash_attn_back(
            struct ggml_context * ctx,
            struct ggml_tensor  * q,
            struct ggml_tensor  * k,
            struct ggml_tensor  * v,
+           struct ggml_tensor  * mask,
            struct ggml_tensor  * d,
-           bool                  masked);
+           float                 scale);
 
     GGML_API struct ggml_tensor * ggml_ssm_conv(
             struct ggml_context * ctx,

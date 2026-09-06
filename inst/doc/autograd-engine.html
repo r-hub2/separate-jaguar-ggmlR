@@ -654,11 +654,107 @@ matrices:</p>
 device management.</p>
 <hr />
 </div>
+<div id="gpu-residency" class="section level2">
+<h2>11. GPU residency</h2>
+<p>Tensors stay in device buffers across a whole training step instead
+of moving to the host after every operation. This is not a setting — it
+is how <code>ag_*</code> already works — but it changes what two things
+<em>are</em>, so it is worth knowing.</p>
+<p><strong>Why it exists.</strong> A naive GPU autograd re-uploads the
+weights on every single operation, then downloads each result. The
+arithmetic was never the bottleneck: uploading <em>weights</em>
+accounted for 74–98% of the forward pass. Four things now stay
+resident:</p>
+<table>
+<thead>
+<tr class="header">
+<th>what</th>
+<th>lifetime</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>weights</td>
+<td>across steps</td>
+</tr>
+<tr class="even">
+<td>Adam moments (<code>m</code>, <code>v</code>)</td>
+<td>across steps</td>
+</tr>
+<tr class="odd">
+<td>gradients</td>
+<td>within a step</td>
+</tr>
+<tr class="even">
+<td>forward activations</td>
+<td>within a step</td>
+</tr>
+</tbody>
+</table>
+<p>A training step went from <strong>10 host/device crossings and 0.188
+MB to 4 and 0.047 MB</strong> — forward 3, backward 1, optimizer step 0.
+The Adam step no longer touches the host at all. Training is numerically
+unchanged; this is a transport change, not a different computation.</p>
+<p><code>ag_tape_memory()</code> shows the memory side of it:</p>
+<div class="sourceCode" id="cb14"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb14-1"><a href="#cb14-1" tabindex="-1"></a><span class="co"># Section 10 left the dtype at f16 on a GPU machine; the tape report is about</span></span>
+<span id="cb14-2"><a href="#cb14-2" tabindex="-1"></a><span class="co"># bytes held, so pin f32 to keep the figures comparable across machines.</span></span>
+<span id="cb14-3"><a href="#cb14-3" tabindex="-1"></a><span class="fu">ag_dtype</span>(<span class="st">&quot;f32&quot;</span>)</span>
+<span id="cb14-4"><a href="#cb14-4" tabindex="-1"></a></span>
+<span id="cb14-5"><a href="#cb14-5" tabindex="-1"></a>x_r <span class="ot">&lt;-</span> <span class="fu">ag_tensor</span>(<span class="fu">matrix</span>(<span class="fu">rnorm</span>(<span class="dv">16</span> <span class="sc">*</span> <span class="dv">32</span>), <span class="at">nrow =</span> <span class="dv">16</span><span class="dt">L</span>))</span>
+<span id="cb14-6"><a href="#cb14-6" tabindex="-1"></a>W_r <span class="ot">&lt;-</span> <span class="fu">ag_param</span>(<span class="fu">matrix</span>(<span class="fu">rnorm</span>(<span class="dv">8</span> <span class="sc">*</span> <span class="dv">16</span>) <span class="sc">*</span> <span class="fl">0.1</span>, <span class="at">nrow =</span> <span class="dv">8</span><span class="dt">L</span>))</span>
+<span id="cb14-7"><a href="#cb14-7" tabindex="-1"></a>y_r <span class="ot">&lt;-</span> <span class="fu">ag_tensor</span>(<span class="fu">matrix</span>(<span class="dv">0</span>, <span class="dv">8</span><span class="dt">L</span>, <span class="dv">32</span><span class="dt">L</span>))</span>
+<span id="cb14-8"><a href="#cb14-8" tabindex="-1"></a></span>
+<span id="cb14-9"><a href="#cb14-9" tabindex="-1"></a><span class="fu">with_grad_tape</span>({</span>
+<span id="cb14-10"><a href="#cb14-10" tabindex="-1"></a>  out_r  <span class="ot">&lt;-</span> <span class="fu">ag_relu</span>(<span class="fu">ag_matmul</span>(W_r, x_r))</span>
+<span id="cb14-11"><a href="#cb14-11" tabindex="-1"></a>  loss_r <span class="ot">&lt;-</span> <span class="fu">ag_mse_loss</span>(out_r, y_r)</span>
+<span id="cb14-12"><a href="#cb14-12" tabindex="-1"></a>})</span>
+<span id="cb14-13"><a href="#cb14-13" tabindex="-1"></a><span class="fu">backward</span>(loss_r)</span>
+<span id="cb14-14"><a href="#cb14-14" tabindex="-1"></a></span>
+<span id="cb14-15"><a href="#cb14-15" tabindex="-1"></a><span class="fu">ag_tape_memory</span>(<span class="at">top =</span> <span class="dv">5</span>)</span></code></pre></div>
+<div id="two-rules-this-imposes" class="section level3">
+<h3>Two rules this imposes</h3>
+<p><strong><code>$grad</code> may be a device handle, not a
+matrix.</strong> Reading it through the normal accessors is unaffected,
+but arithmetic directly on the slot fails — an <code>ag_handle</code>
+has no arithmetic methods. That is deliberate: failing loudly beats
+computing something plausible from a pointer.</p>
+<p><strong>A resident gradient dies at the next tape.</strong> It lives
+in the pass pool, which is cleared when the next
+<code>with_grad_tape()</code> opens. The ordinary loop is fine — the
+optimizer consumes gradients in the step that produced them — but
+holding one <em>across</em> a tape boundary does not work:</p>
+<div class="sourceCode" id="cb15"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb15-1"><a href="#cb15-1" tabindex="-1"></a><span class="co"># WRONG: g1&#39;s buffer is gone by the time it is used</span></span>
+<span id="cb15-2"><a href="#cb15-2" tabindex="-1"></a><span class="fu">with_grad_tape</span>({ l1 <span class="ot">&lt;-</span> <span class="fu">f</span>(x1) }); <span class="fu">backward</span>(l1); g1 <span class="ot">&lt;-</span> W<span class="sc">$</span>grad</span>
+<span id="cb15-3"><a href="#cb15-3" tabindex="-1"></a><span class="fu">with_grad_tape</span>({ l2 <span class="ot">&lt;-</span> <span class="fu">f</span>(x2) }); <span class="fu">backward</span>(l2); g2 <span class="ot">&lt;-</span> W<span class="sc">$</span>grad</span>
+<span id="cb15-4"><a href="#cb15-4" tabindex="-1"></a>total <span class="ot">&lt;-</span> g1 <span class="sc">+</span> g2</span></code></pre></div>
+<p>Materialise inside the pass that produced it, before the next tape
+opens.</p>
+</div>
+<div id="switching-it-off" class="section level3">
+<h3>Switching it off</h3>
+<p>Both parts are on by default and restore the previous behaviour
+exactly:</p>
+<div class="sourceCode" id="cb16"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb16-1"><a href="#cb16-1" tabindex="-1"></a>ggmlR<span class="sc">:::</span><span class="fu">ag_backward_graph</span>(<span class="cn">FALSE</span>)     <span class="co"># backward as closures, not one graph</span></span>
+<span id="cb16-2"><a href="#cb16-2" tabindex="-1"></a>ggmlR<span class="sc">:::</span><span class="fu">ag_backward_resident</span>(<span class="cn">FALSE</span>)  <span class="co"># download gradients into R matrices</span></span></code></pre></div>
+<p>Both also respond to an environment variable, which is the right way
+to switch them off for a whole session without touching code:</p>
+<div class="sourceCode" id="cb17"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb17-1"><a href="#cb17-1" tabindex="-1"></a><span class="va">GGMLR_AG_BACKWARD_GRAPH</span><span class="op">=</span>0 <span class="va">GGMLR_AG_RESIDENT_GRADS</span><span class="op">=</span>0 <span class="ex">Rscript</span> your-script.R</span></code></pre></div>
+<p>A third part, a <strong>deferred forward</strong> that computes the
+whole forward as one graph, is off by default and enabled with
+<code>GGMLR_AG_DEFER=1</code>. It is gated because its benefit is uneven
+— substantial on small and mid-sized models, close to nothing where the
+weight upload dominates.</p>
+<p>Residency lowers the size at which the GPU beats the CPU; it does not
+remove it. Below roughly <code>d = 128</code> the dispatch cost still
+outweighs the arithmetic.</p>
+<hr />
+</div>
+</div>
 <div id="data-parallel-training" class="section level2">
-<h2>11. Data-parallel training</h2>
+<h2>12. Data-parallel training</h2>
 <p>For multi-GPU or faster single-GPU training see
 <code>dp_train()</code>:</p>
-<div class="sourceCode" id="cb14"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb14-1"><a href="#cb14-1" tabindex="-1"></a><span class="co"># Full example: inst/examples/dp_train_demo.R</span></span></code></pre></div>
+<div class="sourceCode" id="cb18"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb18-1"><a href="#cb18-1" tabindex="-1"></a><span class="co"># Full example: inst/examples/dp_train_demo.R</span></span></code></pre></div>
 <p>See also
 <code>vignette(&quot;data-parallel-training&quot;, package = &quot;ggmlR&quot;)</code>.</p>
 </div>

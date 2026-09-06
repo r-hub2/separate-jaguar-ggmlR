@@ -1,3 +1,8 @@
+# ggmlR 0.8.5
+
+* **GPU-resident training** — weights, Adam moments, gradients and forward activations stay in device buffers across steps, cutting a training step from 10 host/device crossings to 4 (0.188 MB to 0.047); graph backward and resident gradients are now the default, and training is numerically unchanged.
+* **Transformers train on the GPU** — new `ag_flash_attention(q, k, v, n_heads)` computes every head in one fused call with its gradient in one more, backed by new `ggml_flash_attn_back()`, `GGML_OP_NORM_BACK` and `GGML_OP_GELU_BACK` kernels (CPU and Vulkan) that upstream ships as inference-only stubs.
+
 # ggmlR 0.8.4
 
 * Mamba backward on the GPU: `SSM_CONV_BACK` and `SSM_SCAN_BACK` now have Vulkan shaders, so state-space blocks train entirely on the GPU (`inst/examples/mamba_train_demo.R`: 21.7s -> 7.7s). Requires `d_state` 128 or 256 and Mamba-2 shapes; other shapes fall back to the CPU.

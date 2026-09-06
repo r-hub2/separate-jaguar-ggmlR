@@ -349,6 +349,17 @@ static void ggml_compute_backward(
                 ggml_add_or_set(ctx, cgraph, isrc0, ggml_rms_norm_back(ctx, grad, src0, eps));
             }
         } break;
+        // DIVERGENCE from upstream: ggml has no backward for NORM, so upstream
+        // leaves LayerNorm inference-only and aborts here. LayerNorm is the
+        // normalization of the original transformer, so a graph using it has to
+        // be trainable -- hence ggml_norm_back() and its CPU/Vulkan kernels.
+        case GGML_OP_NORM: {
+            if (src0_needs_grads) {
+                float eps;
+                memcpy(&eps, tensor->op_params, sizeof(float));
+                ggml_add_or_set(ctx, cgraph, isrc0, ggml_norm_back(ctx, grad, src0, eps));
+            }
+        } break;
         case GGML_OP_MUL_MAT: {
             // https://cs231n.github.io/optimization-2/#staged
             // # forward pass
@@ -618,16 +629,92 @@ static void ggml_compute_backward(
                 const int32_t d1    = ggml_get_op_params_i32(tensor, 5);
                 const bool    is_2D = ggml_get_op_params_i32(tensor, 6) == 1;
 
+                // DIVERGENCE from upstream: fail here, with a reason, rather
+                // than letting the scheduler abort later.
+                //
+                // The CPU backend refuses IM2COL_BACK unless BOTH its sources
+                // are F32, and Vulkan has no shader for it at all. src0 here is
+                // the convolution kernel, and it becomes src1 of im2col_back --
+                // so an F16 kernel, the natural choice for inference weights,
+                // leaves that node with no backend that can run it. Upstream's
+                // only symptom is GGML_ASSERT(*cur_backend_id != -1) raised from
+                // deep inside the scheduler, naming neither the op nor the cause.
+                GGML_ASSERT(src0->type == GGML_TYPE_F32 &&
+                    "convolution backward needs an F32 kernel: an F16 one leaves "
+                    "im2col_back with no backend that can run it. Build the kernel "
+                    "with GGML_TYPE_F32 to train it.");
+
                 ggml_add_or_set(ctx, cgraph, isrc1, ggml_im2col_back(ctx, grad, src0, src1->ne, s0, s1, p0, p1, d0, d1, is_2D));
+            }
+        } break;
+        case GGML_OP_FLASH_ATTN_EXT: {
+            // DIVERGENCE from upstream: flash attention had no backward at all.
+            // ggml_flash_attn_back() existed as an op with a CPU kernel, but the
+            // constructor was a GGML_ABORT stub speaking the pre-_ext layout and
+            // nothing ever wired it up here -- a kernel alone does not make an
+            // op differentiable. Rewritten against the _ext contract and hooked
+            // in, so a transformer's attention can now be trained through the
+            // fused op instead of only through hand-lowered mul_mat/softmax.
+            //
+            // One ggml_flash_attn_back() call yields all three gradients packed
+            // as [d_q | d_k | d_v]; each src takes a view of its own slice, so
+            // attention is replayed once rather than once per input. src[3] is
+            // the mask (constant, no gradient) and src[4] the sinks.
+            struct ggml_tensor * mask = tensor->src[3];
+
+            // The mask is a constant input; ggml never requests a gradient for it.
+            GGML_ASSERT(!tensor->src[4] && "gradients with attention sinks are not supported");
+
+            if (src0_needs_grads || src1_needs_grads || src2_needs_grads) {
+                float scale         = 1.0f;
+                float max_bias      = 0.0f;
+                float logit_softcap = 0.0f;
+
+                memcpy(&scale,         (const float *) tensor->op_params + 0, sizeof(float));
+                memcpy(&max_bias,      (const float *) tensor->op_params + 1, sizeof(float));
+                memcpy(&logit_softcap, (const float *) tensor->op_params + 2, sizeof(float));
+
+                GGML_ASSERT(max_bias      == 0.0f && "backward for ALiBi (max_bias) is not implemented");
+                GGML_ASSERT(logit_softcap == 0.0f && "backward for logit_softcap is not implemented");
+
+                struct ggml_tensor * bk = ggml_flash_attn_back(ctx, src0, src1, src2, mask, grad, scale);
+
+                const size_t offs_k = GGML_PAD(ggml_nelements(src0)*sizeof(float), GGML_MEM_ALIGN);
+                const size_t offs_v = offs_k + GGML_PAD(ggml_nelements(src1)*sizeof(float), GGML_MEM_ALIGN);
+
+                if (src0_needs_grads) {
+                    struct ggml_tensor * d_q = ggml_view_4d(ctx, bk,
+                        src0->ne[0], src0->ne[1], src0->ne[2], src0->ne[3],
+                        src0->ne[0]*sizeof(float),
+                        src0->ne[0]*src0->ne[1]*sizeof(float),
+                        src0->ne[0]*src0->ne[1]*src0->ne[2]*sizeof(float),
+                        0);
+                    ggml_add_or_set(ctx, cgraph, isrc0, d_q);
+                }
+                if (src1_needs_grads) {
+                    struct ggml_tensor * d_k = ggml_view_4d(ctx, bk,
+                        src1->ne[0], src1->ne[1], src1->ne[2], src1->ne[3],
+                        src1->ne[0]*sizeof(float),
+                        src1->ne[0]*src1->ne[1]*sizeof(float),
+                        src1->ne[0]*src1->ne[1]*src1->ne[2]*sizeof(float),
+                        offs_k);
+                    ggml_add_or_set(ctx, cgraph, isrc1, d_k);
+                }
+                if (src2_needs_grads) {
+                    struct ggml_tensor * d_v = ggml_view_4d(ctx, bk,
+                        src2->ne[0], src2->ne[1], src2->ne[2], src2->ne[3],
+                        src2->ne[0]*sizeof(float),
+                        src2->ne[0]*src2->ne[1]*sizeof(float),
+                        src2->ne[0]*src2->ne[1]*src2->ne[2]*sizeof(float),
+                        offs_v);
+                    ggml_add_or_set(ctx, cgraph, isrc2, d_v);
+                }
             }
         } break;
         case GGML_OP_SSM_CONV: {
             // DIVERGENCE from upstream: ggml has no backward for SSM_CONV at
             // all, which makes the convolution branch of a Mamba block
-            // inference-only. Note the contrast with GGML_OP_FLASH_ATTN_EXT,
-            // whose ggml_flash_attn_back() exists as an op and a kernel but was
-            // never wired up here -- a kernel alone does not make an op
-            // differentiable.
+            // inference-only.
             //
             // One ggml_ssm_conv_back() call yields both gradients packed as
             // [d_sx | d_c]; each src then takes a view of its own half, so the
@@ -925,6 +1012,16 @@ static void ggml_compute_backward(
                     if (src0_needs_grads) {
                         struct ggml_tensor * dsigmoid = ggml_mul(ctx, tensor, ggml_scale_bias(ctx, tensor, -1.0f, 1.0f));
                         ggml_add_or_set(ctx, cgraph, isrc0, ggml_mul(ctx, grad, dsigmoid));
+                    }
+                } break;
+                // DIVERGENCE (ggmlR): upstream has no backward for GELU, so
+                // ggml_compile(activation = "gelu") built a forward graph and
+                // then aborted here in ggml_fit. GELU_QUICK and GELU_ERF are
+                // different functions with different derivatives and stay
+                // unsupported.
+                case GGML_UNARY_OP_GELU: {
+                    if (src0_needs_grads) {
+                        ggml_add_or_set(ctx, cgraph, isrc0, ggml_gelu_back(ctx, grad, src0));
                     }
                 } break;
                 default: {

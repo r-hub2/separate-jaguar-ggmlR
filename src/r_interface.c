@@ -78,7 +78,7 @@ extern SEXP R_ggml_opt_dataset_free(SEXP);
 extern SEXP R_ggml_opt_dataset_ndata(SEXP);
 extern SEXP R_ggml_opt_dataset_data(SEXP);
 extern SEXP R_ggml_opt_dataset_labels(SEXP);
-extern SEXP R_ggml_opt_dataset_weights(SEXP);
+extern SEXP R_ggml_opt_dataset_weights(SEXP, SEXP);
 extern SEXP R_ggml_opt_dataset_shuffle(SEXP, SEXP, SEXP);
 extern SEXP R_ggml_opt_dataset_get_batch(SEXP, SEXP, SEXP, SEXP);
 extern SEXP R_ggml_opt_default_params(SEXP, SEXP);
@@ -119,7 +119,7 @@ extern SEXP R_ggml_opt_grad_acc(SEXP, SEXP);
 extern SEXP R_ggml_opt_result_pred(SEXP);
 extern SEXP R_ggml_opt_prepare_alloc(SEXP, SEXP, SEXP, SEXP, SEXP);
 extern SEXP R_ggml_opt_epoch(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
-extern SEXP R_ggml_opt_init_for_fit(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
+extern SEXP R_ggml_opt_init_for_fit(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern SEXP R_ggml_opt_init_for_fit_multi(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern SEXP R_ggml_sched_sync_threads(SEXP);
 extern SEXP R_ggml_opt_set_lr(SEXP, SEXP, SEXP);
@@ -844,6 +844,7 @@ SEXP R_ggml_group_norm_inplace(SEXP ctx_ptr, SEXP a_ptr, SEXP n_groups, SEXP eps
 SEXP R_ggml_l2_norm(SEXP ctx_ptr, SEXP a_ptr, SEXP eps);
 SEXP R_ggml_l2_norm_inplace(SEXP ctx_ptr, SEXP a_ptr, SEXP eps);
 SEXP R_ggml_rms_norm_back(SEXP ctx_ptr, SEXP a_ptr, SEXP b_ptr, SEXP eps);
+SEXP R_ggml_norm_back(SEXP ctx_ptr, SEXP a_ptr, SEXP b_ptr, SEXP eps);
 SEXP R_ggml_soft_max(SEXP ctx_ptr, SEXP a_ptr);
 SEXP R_ggml_soft_max_inplace(SEXP ctx_ptr, SEXP a_ptr);
 SEXP R_ggml_soft_max_ext(SEXP ctx_ptr, SEXP a_ptr, SEXP mask_ptr, SEXP scale, SEXP max_bias);
@@ -960,7 +961,7 @@ SEXP R_ggml_rope_multi_inplace(SEXP ctx_ptr, SEXP a_ptr, SEXP b_ptr, SEXP c_ptr,
 SEXP R_ggml_flash_attn_ext(SEXP ctx_ptr, SEXP q_ptr, SEXP k_ptr, SEXP v_ptr,
                            SEXP mask_ptr, SEXP scale, SEXP max_bias, SEXP logit_softcap);
 SEXP R_ggml_flash_attn_back(SEXP ctx_ptr, SEXP q_ptr, SEXP k_ptr, SEXP v_ptr,
-                            SEXP d_ptr, SEXP masked);
+                            SEXP mask_ptr, SEXP d_ptr, SEXP scale_sexp);
 
 // Mixture of Experts
 SEXP R_ggml_mul_mat_id(SEXP ctx_ptr, SEXP as_ptr, SEXP b_ptr, SEXP ids_ptr);
@@ -991,6 +992,7 @@ SEXP R_ggml_diag(SEXP ctx_ptr, SEXP a_ptr);
 
 // Backward pass operations
 SEXP R_ggml_silu_back(SEXP ctx_ptr, SEXP a_ptr, SEXP b_ptr);
+SEXP R_ggml_gelu_back(SEXP ctx_ptr, SEXP a_ptr, SEXP b_ptr);
 SEXP R_ggml_get_rows_back(SEXP ctx_ptr, SEXP a_ptr, SEXP b_ptr, SEXP c_ptr);
 SEXP R_ggml_soft_max_ext_back(SEXP ctx_ptr, SEXP a_ptr, SEXP b_ptr,
                                SEXP scale, SEXP max_bias);
@@ -1392,6 +1394,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"R_ggml_l2_norm",        (DL_FUNC) &R_ggml_l2_norm,        3},
     {"R_ggml_l2_norm_inplace",(DL_FUNC) &R_ggml_l2_norm_inplace,3},
     {"R_ggml_rms_norm_back",  (DL_FUNC) &R_ggml_rms_norm_back,  4},
+    {"R_ggml_norm_back",      (DL_FUNC) &R_ggml_norm_back,      4},
 
     // Softmax
     {"R_ggml_soft_max",             (DL_FUNC) &R_ggml_soft_max,             2},
@@ -1513,7 +1516,7 @@ static const R_CallMethodDef CallEntries[] = {
 
     // Flash Attention
     {"R_ggml_flash_attn_ext",  (DL_FUNC) &R_ggml_flash_attn_ext,  8},
-    {"R_ggml_flash_attn_back", (DL_FUNC) &R_ggml_flash_attn_back, 6},
+    {"R_ggml_flash_attn_back", (DL_FUNC) &R_ggml_flash_attn_back, 7},
 
     // Mixture of Experts
     {"R_ggml_mul_mat_id",     (DL_FUNC) &R_ggml_mul_mat_id,     4},
@@ -1542,6 +1545,7 @@ static const R_CallMethodDef CallEntries[] = {
 
     // Backward pass operations
     {"R_ggml_silu_back",                (DL_FUNC) &R_ggml_silu_back,                3},
+    {"R_ggml_gelu_back",                (DL_FUNC) &R_ggml_gelu_back,                3},
     {"R_ggml_get_rows_back",            (DL_FUNC) &R_ggml_get_rows_back,            4},
     {"R_ggml_soft_max_ext_back",        (DL_FUNC) &R_ggml_soft_max_ext_back,        5},
     {"R_ggml_soft_max_ext_back_inplace",(DL_FUNC) &R_ggml_soft_max_ext_back_inplace,5},
@@ -1706,7 +1710,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"R_ggml_opt_dataset_ndata",                (DL_FUNC) &R_ggml_opt_dataset_ndata,                1},
     {"R_ggml_opt_dataset_data",                 (DL_FUNC) &R_ggml_opt_dataset_data,                 1},
     {"R_ggml_opt_dataset_labels",               (DL_FUNC) &R_ggml_opt_dataset_labels,               1},
-    {"R_ggml_opt_dataset_weights",              (DL_FUNC) &R_ggml_opt_dataset_weights,              1},
+    {"R_ggml_opt_dataset_weights",              (DL_FUNC) &R_ggml_opt_dataset_weights,              2},
     {"R_ggml_opt_dataset_shuffle",              (DL_FUNC) &R_ggml_opt_dataset_shuffle,              3},
     {"R_ggml_opt_dataset_get_batch",            (DL_FUNC) &R_ggml_opt_dataset_get_batch,            4},
     {"R_ggml_opt_default_params",               (DL_FUNC) &R_ggml_opt_default_params,               2},
@@ -1747,7 +1751,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"R_ggml_opt_result_pred",                   (DL_FUNC) &R_ggml_opt_result_pred,                   1},
     {"R_ggml_opt_prepare_alloc",                 (DL_FUNC) &R_ggml_opt_prepare_alloc,                 5},
     {"R_ggml_opt_epoch",                         (DL_FUNC) &R_ggml_opt_epoch,                         7},
-    {"R_ggml_opt_init_for_fit",                  (DL_FUNC) &R_ggml_opt_init_for_fit,                  7},
+    {"R_ggml_opt_init_for_fit",                  (DL_FUNC) &R_ggml_opt_init_for_fit,                  8},
     {"R_ggml_opt_init_for_fit_multi",            (DL_FUNC) &R_ggml_opt_init_for_fit_multi,            9},
     {"R_ggml_sched_sync_threads",                (DL_FUNC) &R_ggml_sched_sync_threads,                1},
     {"R_ggml_opt_set_lr",                        (DL_FUNC) &R_ggml_opt_set_lr,                        3},

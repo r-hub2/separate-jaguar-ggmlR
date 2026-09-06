@@ -838,13 +838,31 @@ ggml_l2_norm_inplace <- function(ctx, a, eps = 1e-5) {
 #' Used in training for computing gradients.
 #'
 #' @param ctx GGML context
-#' @param a Input tensor (x from forward pass)
-#' @param b Gradient tensor (dy)
+#' @param a Gradient tensor (dy from the forward output)
+#' @param b Input tensor (x from the forward pass)
 #' @param eps Epsilon for numerical stability (default 1e-5)
 #' @return Tensor representing the gradient with respect to input
 #' @export
 ggml_rms_norm_back <- function(ctx, a, b, eps = 1e-5) {
   .Call("R_ggml_rms_norm_back", ctx, a, b, as.numeric(eps), PACKAGE = "ggmlR")
+}
+
+#' Layer Norm Backward (Graph)
+#'
+#' Creates a graph node for the backward pass of \code{\link{ggml_norm}}, i.e.
+#' of LayerNorm without gamma/beta. Upstream ggml has no backward for
+#' \code{GGML_OP_NORM}; ggmlR adds it with CPU and Vulkan kernels, which is what
+#' makes \code{\link{ggml_layer_layer_norm}} trainable.
+#'
+#' @param ctx GGML context
+#' @param a Gradient tensor (dy from the forward output)
+#' @param b Input tensor (x from the forward pass)
+#' @param eps Epsilon for numerical stability (default 1e-5)
+#' @return Tensor representing the gradient with respect to input
+#' @seealso \code{\link{ggml_norm}}, \code{\link{ggml_rms_norm_back}}
+#' @export
+ggml_norm_back <- function(ctx, a, b, eps = 1e-5) {
+  .Call("R_ggml_norm_back", ctx, a, b, as.numeric(eps), PACKAGE = "ggmlR")
 }
 
 # ============================================================================
@@ -2799,6 +2817,29 @@ ggml_silu_back <- function(ctx, a, b) {
   .Call("R_ggml_silu_back", ctx, a, b, PACKAGE = "ggmlR")
 }
 
+#' GELU Backward (Graph)
+#'
+#' Gradient of the GELU activation: \code{dx = dy * dgelu(x)}. Wired into the
+#' autodiff engine, so \code{ggml_compile(activation = "gelu")} trains -- this
+#' is a ggmlR extension, upstream ggml has no GELU backward and aborts instead.
+#'
+#' The derivative is that of the tanh approximation \code{\link{ggml_gelu}}
+#' computes,
+#' \code{g(x) = 0.5x(1 + tanh(u))} with \code{u = c*x*(1 + a*x^2)}. The quick
+#' and erf variants (\code{\link{ggml_gelu_quick}}, \code{\link{ggml_gelu_erf}})
+#' are different functions with different derivatives and remain without a
+#' backward rule.
+#'
+#' @param ctx GGML context
+#' @param a Gradient tensor from upstream (\code{dy})
+#' @param b Forward input tensor (\code{x})
+#' @return Gradient tensor for the input
+#' @seealso \code{\link{ggml_gelu}}, \code{\link{ggml_silu_back}}
+#' @export
+ggml_gelu_back <- function(ctx, a, b) {
+  .Call("R_ggml_gelu_back", ctx, a, b, PACKAGE = "ggmlR")
+}
+
 #' Get Rows Backward (Graph)
 #'
 #' Backward pass for ggml_get_rows operation.
@@ -2865,19 +2906,35 @@ ggml_rope_ext_back <- function(ctx, a, b, c = NULL,
 
 #' Flash Attention Backward (Graph)
 #'
-#' Backward pass for Flash Attention.
-#' Used during training to compute gradients through attention.
+#' Backward pass for \code{\link{ggml_flash_attn_ext}}: given the gradient of
+#' the attention output, produces the gradients of Q, K and V in one pass.
+#'
+#' Upstream ggml ships this operation as a stub that aborts, left behind when
+#' \code{flash_attn} was replaced by \code{flash_attn_ext}; ggmlR implements it
+#' so attention can be trained through the fused op. It is also wired into the
+#' graph autodiff, so \code{\link{ggml_build_backward_expand}} reaches it on its
+#' own --- calling this directly is only needed when building a backward graph
+#' by hand.
+#'
+#' The three gradients come back packed head to tail in one contiguous 1D
+#' tensor: \code{grad_q}, then \code{grad_k}, then \code{grad_v}, each padded to
+#' \code{GGML_MEM_ALIGN}. Take a view of the slice you need.
+#'
+#' Not supported: \code{max_bias} (ALiBi), \code{logit_softcap} and attention
+#' sinks. Q, K, V and \code{d} must be F32.
 #'
 #' @param ctx GGML context
-#' @param q Query tensor (same as forward pass)
-#' @param k Key tensor (same as forward pass)
-#' @param v Value tensor (same as forward pass)
-#' @param d Gradient tensor from upstream (same shape as forward output)
-#' @param masked Logical: whether causal masking was used in forward pass
-#' @return Gradient tensor
+#' @param q Query tensor \code{[DK, N, H, B]}, as passed to the forward pass
+#' @param k Key tensor \code{[DK, M, H_kv, B]}, as passed to the forward pass
+#' @param v Value tensor \code{[DV, M, H_kv, B]}, as passed to the forward pass
+#' @param mask Attention mask \code{[M, N, H_m, B_m]} of type F16, or NULL
+#' @param d Gradient of the forward output, shape \code{[DV, H, N, B]}
+#' @param scale Softmax scale used in the forward pass (e.g. \code{1/sqrt(DK)})
+#' @return Tensor holding grad_q, grad_k and grad_v packed contiguously
+#' @seealso \code{\link{ggml_flash_attn_ext}} for the forward pass.
 #' @export
-ggml_flash_attn_back <- function(ctx, q, k, v, d, masked = TRUE) {
-  .Call("R_ggml_flash_attn_back", ctx, q, k, v, d, as.logical(masked),
+ggml_flash_attn_back <- function(ctx, q, k, v, mask, d, scale) {
+  .Call("R_ggml_flash_attn_back", ctx, q, k, v, mask, d, as.numeric(scale),
         PACKAGE = "ggmlR")
 }
 

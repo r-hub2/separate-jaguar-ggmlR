@@ -42,9 +42,11 @@ void ggml_compute_forward_repeat(const struct ggml_compute_params * params, stru
 void ggml_compute_forward_repeat_back(const struct ggml_compute_params * params, struct ggml_tensor * dst);
 void ggml_compute_forward_concat(const struct ggml_compute_params * params, struct ggml_tensor * dst);
 void ggml_compute_forward_silu_back(const struct ggml_compute_params * params, struct ggml_tensor * dst);
+void ggml_compute_forward_gelu_back(const struct ggml_compute_params * params, struct ggml_tensor * dst);
 void ggml_compute_forward_norm(const struct ggml_compute_params * params, struct ggml_tensor * dst);
 void ggml_compute_forward_rms_norm(const struct ggml_compute_params * params, struct ggml_tensor * dst);
 void ggml_compute_forward_rms_norm_back(const struct ggml_compute_params * params, struct ggml_tensor * dst);
+void ggml_compute_forward_norm_back(const struct ggml_compute_params * params, struct ggml_tensor * dst);
 void ggml_compute_forward_group_norm(const struct ggml_compute_params * params, struct ggml_tensor * dst);
 void ggml_compute_forward_l2_norm(const struct ggml_compute_params * params, struct ggml_tensor * dst);
 void ggml_compute_forward_out_prod(const struct ggml_compute_params * params, struct ggml_tensor * dst);
@@ -87,10 +89,7 @@ void ggml_compute_forward_leaky_relu(const struct ggml_compute_params * params, 
 void ggml_compute_forward_tri(const struct ggml_compute_params * params, struct ggml_tensor * dst);
 void ggml_compute_forward_fill(const struct ggml_compute_params * params, struct ggml_tensor * dst);
 void ggml_compute_forward_flash_attn_ext(const struct ggml_compute_params * params, struct ggml_tensor * dst);
-void ggml_compute_forward_flash_attn_back(
-        const struct ggml_compute_params * params,
-        const bool masked,
-        struct ggml_tensor * dst);
+void ggml_compute_forward_flash_attn_back(const struct ggml_compute_params * params, struct ggml_tensor * dst);
 void ggml_compute_forward_ssm_conv(const struct ggml_compute_params * params, struct ggml_tensor * dst);
 void ggml_compute_forward_ssm_conv_back(const struct ggml_compute_params * params, struct ggml_tensor * dst);
 void ggml_compute_forward_ssm_scan_back(const struct ggml_compute_params * params, struct ggml_tensor * dst);
