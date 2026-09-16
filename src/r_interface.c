@@ -193,6 +193,7 @@ extern SEXP R_onnx_override_input_shapes(SEXP, SEXP, SEXP);
 extern SEXP R_onnx_build(SEXP, SEXP, SEXP, SEXP);
 extern SEXP R_onnx_run(SEXP, SEXP, SEXP);
 extern SEXP R_onnx_inputs(SEXP);
+extern SEXP R_onnx_graph_info(SEXP);
 extern SEXP R_onnx_device_info(SEXP);
 // Async operations
 extern SEXP R_ggml_backend_tensor_set_async(SEXP, SEXP, SEXP, SEXP, SEXP);
@@ -994,6 +995,8 @@ SEXP R_ggml_diag(SEXP ctx_ptr, SEXP a_ptr);
 SEXP R_ggml_silu_back(SEXP ctx_ptr, SEXP a_ptr, SEXP b_ptr);
 SEXP R_ggml_gelu_back(SEXP ctx_ptr, SEXP a_ptr, SEXP b_ptr);
 SEXP R_ggml_get_rows_back(SEXP ctx_ptr, SEXP a_ptr, SEXP b_ptr, SEXP c_ptr);
+SEXP R_ggml_scatter_elements(SEXP ctx_ptr, SEXP data_ptr, SEXP upd_ptr,
+                             SEXP idx_ptr, SEXP reduction_sexp, SEXP axis_sexp);
 SEXP R_ggml_soft_max_ext_back(SEXP ctx_ptr, SEXP a_ptr, SEXP b_ptr,
                                SEXP scale, SEXP max_bias);
 SEXP R_ggml_soft_max_ext_back_inplace(SEXP ctx_ptr, SEXP a_ptr, SEXP b_ptr,
@@ -1500,6 +1503,7 @@ static const R_CallMethodDef CallEntries[] = {
 
     // Row operations
     {"R_ggml_get_rows",     (DL_FUNC) &R_ggml_get_rows,     3},
+    {"R_ggml_scatter_elements", (DL_FUNC) &R_ggml_scatter_elements, 6},
 
     // Diagonal masking (for causal attention)
     {"R_ggml_diag_mask_inf",         (DL_FUNC) &R_ggml_diag_mask_inf,         3},
@@ -2028,6 +2032,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"R_onnx_build",                            (DL_FUNC) &R_onnx_build,                             4},
     {"R_onnx_run",                              (DL_FUNC) &R_onnx_run,                               3},
     {"R_onnx_inputs",                           (DL_FUNC) &R_onnx_inputs,                            1},
+    {"R_onnx_graph_info",                       (DL_FUNC) &R_onnx_graph_info,                        1},
     {"R_onnx_device_info",                      (DL_FUNC) &R_onnx_device_info,                       1},
 
     {"R_ggml_set_omp_threads",                  (DL_FUNC) &R_ggml_set_omp_threads,                   1},

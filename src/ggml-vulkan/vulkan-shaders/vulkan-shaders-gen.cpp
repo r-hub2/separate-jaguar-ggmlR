@@ -933,6 +933,8 @@ void process_shaders() {
     string_to_spv("step_f32",       "step.comp",        {{"A_TYPE", "float"},       {"D_TYPE", "float"}});
     string_to_spv("round_f16",      "round.comp",       {{"A_TYPE", "float16_t"},   {"D_TYPE", "float16_t"}});
     string_to_spv("round_f32",      "round.comp",       {{"A_TYPE", "float"},       {"D_TYPE", "float"}});
+    string_to_spv("round_even_f16", "round_even.comp",  {{"A_TYPE", "float16_t"},   {"D_TYPE", "float16_t"}});
+    string_to_spv("round_even_f32", "round_even.comp",  {{"A_TYPE", "float"},       {"D_TYPE", "float"}});
     string_to_spv("ceil_f16",       "ceil.comp",        {{"A_TYPE", "float16_t"},   {"D_TYPE", "float16_t"}});
     string_to_spv("ceil_f32",       "ceil.comp",        {{"A_TYPE", "float"},       {"D_TYPE", "float"}});
     string_to_spv("floor_f16",      "floor.comp",       {{"A_TYPE", "float16_t"},   {"D_TYPE", "float16_t"}});
@@ -1007,6 +1009,18 @@ void process_shaders() {
 
     // Pairwise squared-distance matrix: fixed f32 types, no variants.
     string_to_spv("pairwise_dist", "pairwise_dist.comp", {});
+
+    // RoiAlign (ONNX): fixed f32 in and out, no variants.
+    string_to_spv("roi_align", "roi_align.comp", {});
+
+    // QLinearMatMul with an exact i32 accumulator (ONNX): fixed types.
+    string_to_spv("qmatmul_i32", "qmatmul_i32.comp", {});
+
+    // QLinearConv with an exact i32 accumulator (ONNX): fixed types.
+    string_to_spv("qconv_i32", "qconv_i32.comp", {});
+
+    // NonMaxSuppression (ONNX): one workgroup per (batch, class).
+    string_to_spv("nms", "nms.comp", {});
 
     // Tiled fused k-NN: fixed f32 distance / uint index types. WG/K/MAXD are
     // specialization constants set at pipeline creation, not compile-time

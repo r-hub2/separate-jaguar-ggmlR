@@ -1045,6 +1045,14 @@ struct ggml_tensor * ggml_round_inplace(
     return ggml_unary_inplace(ctx, a, GGML_UNARY_OP_ROUND);
 }
 
+//ggml_round_even
+
+struct ggml_tensor * ggml_round_even(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * a) {
+    return ggml_unary(ctx, a, GGML_UNARY_OP_ROUND_EVEN);
+}
+
 //ggml_trunc
 
 struct ggml_tensor * ggml_trunc(
@@ -1755,6 +1763,15 @@ struct ggml_tensor * ggml_reshape_1d(
         struct ggml_tensor  * a,
         int64_t               ne0) {
     GGML_ASSERT(ggml_is_contiguous(a));
+    if (ggml_nelements(a) != ne0) {
+        /* Name the tensor: "some reshape had the wrong count" is not enough
+         * to locate the node in a graph of thousands. */
+        GGML_LOG_ERROR("%s: '%s' has %lld elements, cannot reshape to [%lld]; "
+                       "ne=[%lld,%lld,%lld,%lld]\n", __func__,
+                       a->name, (long long) ggml_nelements(a), (long long) ne0,
+                       (long long) a->ne[0], (long long) a->ne[1],
+                       (long long) a->ne[2], (long long) a->ne[3]);
+    }
     GGML_ASSERT(ggml_nelements(a) == ne0);
 
     const int64_t ne[1] = { ne0 };
@@ -3034,6 +3051,105 @@ struct ggml_tensor * ggml_conv_2d_direct(
     result->op = GGML_OP_CONV_2D;
     result->src[0] = a;
     result->src[1] = b;
+
+    return result;
+}
+
+// ggml_qconv_i32
+//
+// ggmlR extension: ONNX QLinearConv, absent upstream.
+//
+// It exists as a real op rather than a custom one for a scheduling reason, not
+// a numerical one: GGML_OP_CUSTOM reports unsupported on every backend, so a
+// model's quantised convolutions were each pinned to the CPU and split the
+// graph around them -- 63 splits on MaskRCNN, with the tensor copies that
+// implies. The arithmetic is unchanged; see ggml.h for why it reproduces ONNX
+// Runtime's int16 pair saturation instead of an exact sum.
+//
+// The per-channel tables arrive as SOURCES rather than in op_params: op_params
+// holds 64 bytes and these run to one entry per output channel. Carrying them
+// as tensors also lets the scheduler place them on whichever backend runs the
+// op, which a userdata pointer could not do.
+
+struct ggml_tensor * ggml_qconv_i32(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * x,        // [W_in, H_in, C_in, 1]
+        struct ggml_tensor  * w,        // [KW, KH, C_in, C_out]
+        struct ggml_tensor  * w_scale,  // [n_w_scale]
+        struct ggml_tensor  * w_zp,     // [n_w_zp], I32
+        struct ggml_tensor  * bias,     // [C_out], I32, or NULL
+        struct ggml_tensor  * mult,     // [C_out], F32, precomputed
+        int                   stride_w,
+        int                   stride_h,
+        int                   pad_w,
+        int                   pad_h,
+        int                   dil_w,
+        int                   dil_h,
+        float                 x_scale,
+        float                 y_scale,
+        int                   x_zp,
+        int                   y_zp,
+        float                 out_lo,
+        float                 out_hi) {
+
+    GGML_ASSERT(x->ne[2] == w->ne[2]);   // C_in agrees
+    // The tables arrive with the type the ONNX loader gave them: a zero point
+    // is INT8 in the file and is widened to F32 on load, while a bias is INT32
+    // by the operator spec and stays integer. Both hold whole numbers either
+    // way; the kernel reads each at its own type rather than requiring one.
+    GGML_ASSERT(w_scale->type == GGML_TYPE_F32);
+    // w_zp is optional in the operator spec and absent on a symmetric export,
+    // which is the common case; NULL there means every zero point is zero.
+    GGML_ASSERT(w_zp == NULL || w_zp->type == GGML_TYPE_F32 ||
+                                w_zp->type == GGML_TYPE_I32);
+    GGML_ASSERT(bias == NULL || bias->type == GGML_TYPE_I32 ||
+                                bias->type == GGML_TYPE_F32);
+    GGML_ASSERT(stride_w > 0 && stride_h > 0);
+    GGML_ASSERT(dil_w    > 0 && dil_h    > 0);
+
+    // A per-channel table is either one entry (the exporter quantised per
+    // tensor) or exactly one per output channel. Anything else means the
+    // caller read the wrong initializer, and silently indexing it would
+    // mis-scale whole channels rather than fail.
+    const int64_t C_out = w->ne[3];
+    GGML_ASSERT(w_scale->ne[0] == 1 || w_scale->ne[0] == C_out);
+    GGML_ASSERT(w_zp == NULL || w_zp->ne[0] == 1 || w_zp->ne[0] == C_out);
+    GGML_ASSERT(bias == NULL || bias->ne[0] == C_out);
+    // One multiplier per output channel, always materialised: the whole point
+    // is that no kernel recomputes it.
+    GGML_ASSERT(mult != NULL && mult->type == GGML_TYPE_F32);
+    GGML_ASSERT(mult->ne[0] == C_out);
+
+    int64_t ne[4];
+    ne[0] = ggml_calc_conv_output_size(x->ne[0], w->ne[0], stride_w, pad_w, dil_w);
+    ne[1] = ggml_calc_conv_output_size(x->ne[1], w->ne[1], stride_h, pad_h, dil_h);
+    ne[2] = C_out;
+    ne[3] = x->ne[3];
+
+    struct ggml_tensor * result = ggml_new_tensor(ctx, GGML_TYPE_F32, 4, ne);
+
+    ggml_set_op_params_i32(result,  0, stride_w);
+    ggml_set_op_params_i32(result,  1, stride_h);
+    ggml_set_op_params_i32(result,  2, pad_w);
+    ggml_set_op_params_i32(result,  3, pad_h);
+    ggml_set_op_params_i32(result,  4, dil_w);
+    ggml_set_op_params_i32(result,  5, dil_h);
+    ggml_set_op_params_f32(result,  6, x_scale);
+    ggml_set_op_params_f32(result,  7, y_scale);
+    ggml_set_op_params_i32(result,  8, x_zp);
+    ggml_set_op_params_i32(result,  9, y_zp);
+    ggml_set_op_params_f32(result, 10, out_lo);
+    ggml_set_op_params_f32(result, 11, out_hi);
+    // Slots 12..15 are free: op_params holds 16 of them and the kernel reads
+    // the table lengths off the source tensors rather than from here.
+
+    result->op     = GGML_OP_QCONV_I32;
+    result->src[0] = x;
+    result->src[1] = w;
+    result->src[2] = w_scale;
+    result->src[3] = w_zp;
+    result->src[4] = bias;   // NULL is legal: the conv simply has no bias
+    result->src[5] = mult;
 
     return result;
 }

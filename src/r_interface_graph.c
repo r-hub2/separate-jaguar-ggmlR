@@ -1641,6 +1641,37 @@ SEXP R_ggml_get_rows(SEXP ctx_ptr, SEXP a_ptr, SEXP b_ptr) {
     return R_MakeExternalPtr(result, R_NilValue, R_NilValue);
 }
 
+/* ScatterElements, exposed so the op can be checked without a model.
+ *
+ * It had three independent defects at once -- a 4-dimension push constant
+ * block against the 5-dimension struct the dispatcher sends, a pipeline
+ * declaring a 12-byte push constant range against the 140 bytes actually
+ * pushed, and a shader indexing only gl_GlobalInvocationID.x while the
+ * dispatch spreads work over y -- and every one of them was found by running
+ * a 45 MB detector end to end, minutes per attempt. All three are visible in
+ * a graph of one node. */
+SEXP R_ggml_scatter_elements(SEXP ctx_ptr, SEXP data_ptr, SEXP upd_ptr,
+                             SEXP idx_ptr, SEXP reduction_sexp, SEXP axis_sexp) {
+    struct ggml_context * ctx  = (struct ggml_context *) R_ExternalPtrAddr(ctx_ptr);
+    struct ggml_tensor  * data = (struct ggml_tensor *) R_ExternalPtrAddr(data_ptr);
+    struct ggml_tensor  * upd  = (struct ggml_tensor *) R_ExternalPtrAddr(upd_ptr);
+    struct ggml_tensor  * idx  = (struct ggml_tensor *) R_ExternalPtrAddr(idx_ptr);
+
+    if (ctx == NULL || data == NULL || upd == NULL || idx == NULL) {
+        error("Invalid pointer");
+    }
+
+    struct ggml_tensor * result =
+        ggml_scatter_elements(ctx, data, upd, idx,
+                              asInteger(reduction_sexp), asInteger(axis_sexp));
+
+    if (result == NULL) {
+        error("Failed to create scatter_elements operation");
+    }
+
+    return R_MakeExternalPtr(result, R_NilValue, R_NilValue);
+}
+
 // ============================================================================
 // Diagonal Masking Operations (for causal attention)
 // ============================================================================
@@ -4814,8 +4845,17 @@ SEXP R_ggml_log_is_r_enabled(void) {
 // Static flag for R abort handler
 static int r_abort_enabled = 0;
 
+/* Declared here rather than taken from r_ggml_compat.h: this file compiles
+ * with -DR_GGML_IO_IMPL, which switches that header off entirely. */
+extern void (*r_ggml_abort_hook)(void);
+
 // R-compatible abort callback
 static void r_ggml_abort_callback(const char * error_message) {
+    /* Let anything that has been accumulating diagnostics print it first.
+     * Rf_error longjmps, so this is the last point at which any code runs;
+     * ggml reaches here through its own abort callback and never touches
+     * abort(), which is why the hook has to be called from both places. */
+    if (r_ggml_abort_hook) r_ggml_abort_hook();
     if (error_message != NULL) {
         Rf_error("GGML abort: %s", error_message);
     } else {

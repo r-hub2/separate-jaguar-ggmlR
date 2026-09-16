@@ -9,19 +9,22 @@
 .pb_varint <- function(value) {
   value <- as.numeric(value)
   if (value < 0) {
-    # Protobuf encodes negative sint as 10-byte two's complement uint64.
-    # Represent value mod 2^64 as two 32-bit halves to avoid int32 truncation.
-    lo <- value %% 2^32          # unsigned low 32 bits (as double)
-    hi <- (2^32 - 1)             # sign-extended: all 1s in bits 32-63
+    # Two's complement in 64 bits, emitted as 10 groups of 7 bits.  The
+    # groups are produced from the magnitude with a borrow rather than from
+    # value + 2^64, because 2^64 exceeds the exact range of a double and the
+    # low bits of the sum are lost -- which silently corrupts the result.
+    mag <- -value                 # positive magnitude, exact for our range
+    borrow <- 1                   # two's complement = ~mag + 1
     bytes <- raw(10)
     for (i in 1:10) {
-      if (i <= 5) {
-        b <- as.integer(lo %% 128)
-        lo <- floor(lo / 128)
-      } else {
-        b <- as.integer(hi %% 128)
-        hi <- floor(hi / 128)
-      }
+      chunk <- as.integer(mag %% 128)
+      mag <- floor(mag / 128)
+      inv <- bitwAnd(bitwNot(chunk), 0x7FL) + borrow
+      borrow <- if (inv > 0x7F) 1 else 0
+      b <- bitwAnd(inv, 0x7FL)
+      # The tenth group carries only bit 63, so it is 1 for any negative
+      # value; the seven-bit chunking above would otherwise emit 0x7F there.
+      if (i == 10) b <- 1L
       bytes[i] <- as.raw(if (i < 10) bitwOr(b, 0x80L) else b)
     }
     return(bytes)
@@ -426,4 +429,17 @@
   path <- tempfile(fileext = ".onnx")
   writeBin(model, path)
   path
+}
+
+# A TensorProto whose payload lives in float_data (field 4) rather than
+# raw_data (field 9).  Both are legal and exporters use both -- MaskRCNN
+# stores its Clip bounds this way -- so readers that look only at raw_data
+# silently see nothing.
+.onnx_tensor_floatdata <- function(name, dims, values) {
+  out <- raw(0)
+  for (d in dims) out <- c(out, .pb_varint_field(1L, d))
+  out <- c(out, .pb_varint_field(2L, 1L))          # data_type = FLOAT
+  for (v in values) out <- c(out, .pb_fixed32(4L, v))   # float_data, repeated
+  out <- c(out, .pb_string(8L, name))
+  out
 }

@@ -1,7 +1,15 @@
+# ggmlR 0.8.6
+
+* **ONNX inference matches ONNX Runtime bit for bit on all 15 reference models**, MaskRCNN-12-int8 included (`max|d| = 0`, was 14/15).
+* New integer-accumulator `QLinearMatMul` kernel, alongside the existing `QLinearConv` one. Scoped to 2-D A x B.
+* New `ONNX_INJECT_NODES` / `ONNX_INJECT_DIR`: replace a node's output with a reference dump mid-run, to tell one amplified divergence from several independent ones.
+
 # ggmlR 0.8.5
 
 * **GPU-resident training** — weights, Adam moments, gradients and forward activations stay in device buffers across steps, cutting a training step from 10 host/device crossings to 4 (0.188 MB to 0.047); graph backward and resident gradients are now the default, and training is numerically unchanged.
 * **Transformers train on the GPU** — new `ag_flash_attention(q, k, v, n_heads)` computes every head in one fused call with its gradient in one more, backed by new `ggml_flash_attn_back()`, `GGML_OP_NORM_BACK` and `GGML_OP_GELU_BACK` kernels (CPU and Vulkan) that upstream ships as inference-only stubs.
+* **Training from a generator** — `ggml_fit(model, generator = )` pulls batches from a function instead of slicing a matrix held in memory, so only the current batch is resident. Endless generators (augmentation, simulators, RL rollouts) are supported via `steps_per_epoch`, with `initial_epoch`, `validation_generator` and `validation_steps` alongside. `ggml_fit_opt_gen()` exposes the same loop for training loops you drive yourself.
+* **New `ggml_trainer()`** — a training context that outlives a single call, for loops where "epoch" is not the unit of progress (reinforcement learning, curricula). `tr$step(x, y)` runs one forward/backward and returns that step's loss, keeping weights, Adam moments and the graph alive across steps; `$eval()`, `$model()`, `$set_lr()` and `$free()` complete it.
 
 # ggmlR 0.8.4
 
