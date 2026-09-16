@@ -982,23 +982,28 @@ static int map_node(onnx_ggml_ctx_t *c, const onnx_node_t *n) {
         r = map_node_basic  (c, n, a, b, &out, &out_nd);
         if (r != 0 && onnx_trace_nodes())
             fprintf(stderr, "[dispatch] %s op=%s -> basic r=%d\n", n->outputs[0], op, r);
-        if (r < 0) return -1; if (r > 0) goto reg_output;
+        if (r < 0) return -1;
+        if (r > 0) goto reg_output;
         r = map_node_tensor (c, n, a, b, &out, &out_nd);
         if (r != 0 && onnx_trace_nodes())
             fprintf(stderr, "[dispatch] %s op=%s -> tensor r=%d\n", n->outputs[0], op, r);
-        if (r < 0) return -1; if (r > 0) goto reg_output;
+        if (r < 0) return -1;
+        if (r > 0) goto reg_output;
         r = map_node_nn     (c, n, a, b, &out, &out_nd);
         if (r != 0 && onnx_trace_nodes())
             fprintf(stderr, "[dispatch] %s op=%s -> nn r=%d\n", n->outputs[0], op, r);
-        if (r < 0) return -1; if (r > 0) goto reg_output;
+        if (r < 0) return -1;
+        if (r > 0) goto reg_output;
         r = map_node_quant  (c, n, a, b, &out, &out_nd);
         if (r != 0 && onnx_trace_nodes())
             fprintf(stderr, "[dispatch] %s op=%s -> quant r=%d\n", n->outputs[0], op, r);
-        if (r < 0) return -1; if (r > 0) goto reg_output;
+        if (r < 0) return -1;
+        if (r > 0) goto reg_output;
         r = map_node_special(c, n, a, b, &out, &out_nd);
         if (r != 0 && onnx_trace_nodes())
             fprintf(stderr, "[dispatch] %s op=%s -> special r=%d\n", n->outputs[0], op, r);
-        if (r < 0) return -1; if (r > 0) goto reg_output;
+        if (r < 0) return -1;
+        if (r > 0) goto reg_output;
         onnx_warn_unsupported_op(op);
         return -1;
     }
@@ -2566,7 +2571,6 @@ static int map_node_range(onnx_ggml_ctx_t *c, int node_lo, int node_hi) {
             if (bi >= 0) {
                 /* Last node of block — emit fused RelPosBias2D op */
                 rel_pos_bias_params_t *p = &c->pos_embed_blocks[bi].params;
-                int HW = p->H * p->W;
 
                 /* Get input tensors */
                 struct ggml_tensor *x_t  = tmap_get(c, c->pos_embed_blocks[bi].x_input_name);
@@ -2625,8 +2629,13 @@ static int map_node_range(onnx_ggml_ctx_t *c, int node_lo, int node_hi) {
              * can only say "look for r=-1 yourself". */
             const onnx_node_t *fn = &onnx->nodes[i];
             if (c->first_failed_node[0] == '\0' && fn->n_outputs > 0) {
-                strncpy(c->first_failed_node, fn->outputs[0], ONNX_MAX_NAME - 1);
-                strncpy(c->first_failed_op, fn->op_type, sizeof(c->first_failed_op) - 1);
+                /* snprintf rather than strncpy: it always terminates, and a
+                 * name longer than the field is truncated on purpose here --
+                 * strncpy makes the compiler warn about exactly that. */
+                snprintf(c->first_failed_node, sizeof(c->first_failed_node),
+                         "%s", fn->outputs[0]);
+                snprintf(c->first_failed_op, sizeof(c->first_failed_op),
+                         "%s", fn->op_type);
             }
             /* Non-fatal: skip unsupported/invalid ops silently */
             (void)0;
