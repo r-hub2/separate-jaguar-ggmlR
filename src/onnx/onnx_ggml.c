@@ -44,8 +44,7 @@ void tmap_put_nd(onnx_ggml_ctx_t *c, const char *name,
                                        c->tensor_map_cap * sizeof(*c->tensor_map_empty));
     }
     int idx = c->tensor_map_size;
-    strncpy(c->tensor_map_keys[idx], name, ONNX_MAX_NAME - 1);
-    c->tensor_map_keys[idx][ONNX_MAX_NAME - 1] = '\0';
+    snprintf(c->tensor_map_keys[idx], ONNX_MAX_NAME, "%s", name);
     c->tensor_map_vals[idx] = t;
     c->tensor_map_ndims[idx] = onnx_ndims;
     c->tensor_map_empty[idx] = 0;
@@ -194,8 +193,7 @@ void cval_put(onnx_ggml_ctx_t *c, const char *name,
         c->cval_data = realloc(c->cval_data, c->cval_cap * sizeof(*c->cval_data));
         c->cval_lens = realloc(c->cval_lens, c->cval_cap * sizeof(*c->cval_lens));
     }
-    strncpy(c->cval_keys[c->cval_size], name, ONNX_MAX_NAME - 1);
-    c->cval_keys[c->cval_size][ONNX_MAX_NAME - 1] = '\0';
+    snprintf(c->cval_keys[c->cval_size], ONNX_MAX_NAME, "%s", name);
     memcpy(c->cval_data[c->cval_size], vals, n * sizeof(int64_t));
     c->cval_lens[c->cval_size] = n;
     c->cval_size++;
@@ -423,6 +421,73 @@ static int create_initializer_tensors(onnx_ggml_ctx_t *c) {
  * Split out of load_weights() so that Constant nodes can reuse it: their data
  * lives in a node attribute, not in graph.initializer, so they never appear in
  * the array load_weights() walks, yet they need exactly this conversion. */
+/* ── Batched uploads for fill_deferred_tensors() ─────────────────────
+ *
+ * fill_deferred_tensors() writes hundreds of tiny tensors per run, and on a
+ * Vulkan device buffer each ggml_backend_tensor_set is its own staged
+ * transfer with its own submit and wait -- ~54 us apiece. Measured on
+ * RoBERTa with device buffers in plain VRAM: 195 Constant payloads + 193
+ * Shape tensors = 21 ms of a 44 ms run, against 0.3 ms when the same writes
+ * were plain memcpy into the 256 MiB BAR window.
+ *
+ * While g_fill_batch is set, fill_set() copies each payload into a pinned
+ * host arena at its own offset and queues it with
+ * ggml_backend_tensor_set_async; fill_flush() then sends the lot with one
+ * synchronize. Pinned because ggml-vulkan only batches from pinned memory --
+ * any other source goes through one shared staging buffer at offset 0 and
+ * syncs per call (ggml_backend_vk_set_tensor_async).
+ *
+ * The arena is the payload's lifetime: nothing in it is reused before the
+ * flush that sends it. When it is full, fill_set() flushes first (a batch
+ * boundary), then grows it if one payload alone does not fit. Copies on one
+ * transfer context run in order with a barrier between them, so two writes to
+ * the same bytes keep their order.
+ *
+ * Outside a batch (load_weights, CPU models, CPU-buffer tensors) fill_set()
+ * is exactly ggml_backend_tensor_set. */
+static onnx_ggml_ctx_t *g_fill_batch = NULL;
+
+static void fill_flush(onnx_ggml_ctx_t *c) {
+    if (!c) return;
+    if (c->fill_pending && c->backend_gpu)
+        ggml_backend_synchronize(c->backend_gpu);
+    c->fill_pending  = 0;
+    c->fill_pin_used = 0;
+}
+
+static void fill_set(struct ggml_tensor *t, const void *data, size_t offset, size_t size) {
+#ifdef GGML_USE_VULKAN
+    onnx_ggml_ctx_t *c = g_fill_batch;
+    if (c && c->backend_gpu && t && t->buffer && size > 0 &&
+        ggml_backend_buffer_get_type(t->buffer) ==
+            ggml_backend_get_default_buffer_type(c->backend_gpu)) {
+        const size_t need = (size + 63) & ~(size_t)63;
+        if (c->fill_pin_used + need > c->fill_pin_cap) {
+            fill_flush(c);
+            if (need > c->fill_pin_cap) {
+                if (c->fill_pin_buf) ggml_backend_buffer_free(c->fill_pin_buf);
+                size_t cap = c->fill_pin_cap ? c->fill_pin_cap * 2 : ((size_t)1 << 20);
+                while (cap < need) cap *= 2;
+                c->fill_pin_buf = ggml_backend_buft_alloc_buffer(
+                    ggml_backend_vk_host_buffer_type(), cap);
+                c->fill_pin_ptr = c->fill_pin_buf
+                    ? (uint8_t *)ggml_backend_buffer_get_base(c->fill_pin_buf) : NULL;
+                c->fill_pin_cap = c->fill_pin_buf ? cap : 0;
+            }
+        }
+        if (c->fill_pin_ptr && c->fill_pin_used + need <= c->fill_pin_cap) {
+            uint8_t *dst = c->fill_pin_ptr + c->fill_pin_used;
+            memcpy(dst, data, size);
+            ggml_backend_tensor_set_async(c->backend_gpu, t, dst, offset, size);
+            c->fill_pin_used += need;
+            c->fill_pending   = 1;
+            return;
+        }
+    }
+#endif
+    ggml_backend_tensor_set(t, data, offset, size);
+}
+
 int onnx_upload_initializer(struct ggml_tensor *t,
                             const onnx_initializer_t *init) {
     const void *data = NULL;
@@ -499,7 +564,7 @@ int onnx_upload_initializer(struct ggml_tensor *t,
             }
             for (size_t j = src_elems; j < (size_t)n_elem; j++)
                 buf[j] = 0.0f;
-            ggml_backend_tensor_set(t, buf, 0, n_elem * sizeof(float));
+            fill_set(t, buf, 0, n_elem * sizeof(float));
             free(buf);
         }
         /* INT16/UINT16 → F32: two bytes per element in the file, four in the
@@ -527,7 +592,7 @@ int onnx_upload_initializer(struct ggml_tensor *t,
             }
             for (size_t j = src_elems; j < (size_t)n_elem; j++)
                 buf[j] = 0.0f;
-            ggml_backend_tensor_set(t, buf, 0, n_elem * sizeof(float));
+            fill_set(t, buf, 0, n_elem * sizeof(float));
             free(buf);
         }
         /* INT64 → I32 downcast */
@@ -545,7 +610,7 @@ int onnx_upload_initializer(struct ggml_tensor *t,
             }
             for (size_t j = src_elems; j < (size_t)n_elem; j++)
                 buf[j] = 0;
-            ggml_backend_tensor_set(t, buf, 0, n_elem * sizeof(int32_t));
+            fill_set(t, buf, 0, n_elem * sizeof(int32_t));
             free(buf);
         }
         /* DOUBLE → F32 downcast */
@@ -563,7 +628,7 @@ int onnx_upload_initializer(struct ggml_tensor *t,
             }
             for (size_t j = src_elems; j < (size_t)n_elem; j++)
                 buf[j] = 0.0f;
-            ggml_backend_tensor_set(t, buf, 0, n_elem * sizeof(float));
+            fill_set(t, buf, 0, n_elem * sizeof(float));
             free(buf);
         }
         /* F32 source data → F16 tensor (FP16 inference mode) */
@@ -582,12 +647,12 @@ int onnx_upload_initializer(struct ggml_tensor *t,
             /* Zero-fill any remaining elements */
             for (size_t j = src_elems; j < (size_t)n_elem; j++)
                 buf[j] = ggml_fp32_to_fp16(0.0f);
-            ggml_backend_tensor_set(t, buf, 0, n_elem * sizeof(ggml_fp16_t));
+            fill_set(t, buf, 0, n_elem * sizeof(ggml_fp16_t));
             free(buf);
         }
         else {
             size_t copy_size = data_size < tsize ? data_size : tsize;
-            ggml_backend_tensor_set(t, data, 0, copy_size);
+            fill_set(t, data, 0, copy_size);
         }
     }
     return 0;
@@ -934,8 +999,7 @@ void onnx_warn_unsupported_op(const char *op) {
     for (int i = 0; i < g_n_warned_ops; i++)
         if (strcmp(g_warned_ops[i], op) == 0) return;
     if (g_n_warned_ops < ONNX_MAX_WARNED_OPS) {
-        strncpy(g_warned_ops[g_n_warned_ops], op, ONNX_MAX_NAME - 1);
-        g_warned_ops[g_n_warned_ops][ONNX_MAX_NAME - 1] = '\0';
+        snprintf(g_warned_ops[g_n_warned_ops], ONNX_MAX_NAME, "%s", op);
         g_n_warned_ops++;
     }
     fprintf(stderr, "onnx_ggml: unsupported op '%s'\n", op);
@@ -1516,8 +1580,7 @@ static void resolved_put(onnx_ggml_ctx_t *c, const char *name, int64_t size) {
             return;
         }
     if (c->n_resolved >= ONNX_MAX_RESOLVED) return;
-    strncpy(c->resolved_names[c->n_resolved], name, ONNX_MAX_NAME - 1);
-    c->resolved_names[c->n_resolved][ONNX_MAX_NAME - 1] = '\0';
+    snprintf(c->resolved_names[c->n_resolved], ONNX_MAX_NAME, "%s", name);
     c->resolved_sizes[c->n_resolved] = size;
     c->n_resolved++;
 }
@@ -2451,8 +2514,7 @@ static int detect_shape_dependent_segments(onnx_ggml_ctx_t *c) {
             for (int o = 0; o < n->n_outputs; o++) {
                 if (n->outputs[o][0] == '\0') continue;
                 if (n_tainted < ONNX_MAX_DEFERRED) {
-                    strncpy(tainted[n_tainted], n->outputs[o], ONNX_MAX_NAME - 1);
-                    tainted[n_tainted][ONNX_MAX_NAME - 1] = '\0';
+                    snprintf(tainted[n_tainted], ONNX_MAX_NAME, "%s", n->outputs[o]);
                     n_tainted++;
                 }
             }
@@ -3187,6 +3249,8 @@ static int buffer_is_model_owned(const onnx_ggml_ctx_t *c, ggml_backend_buffer_t
 }
 
 static void fill_deferred_tensors(onnx_ggml_ctx_t *c) {
+    /* Batch every small upload below; see fill_set(). */
+    g_fill_batch = c;
     if (onnx_trace_nodes())
         fprintf(stderr, "[fill] segment %d: shape=%d const=%d cinit=%d nonzero=%d eye=%d nms=%d\n",
                 c->cur_segment, c->n_shape_tensors, c->n_const_fills,
@@ -3227,7 +3291,7 @@ static void fill_deferred_tensors(onnx_ggml_ctx_t *c) {
         int32_t dims[ONNX_MAX_DIMS];
         for (int d = 0; d < nd; d++)
             dims[d] = (int32_t)c->shape_tensors_ne[i][d + 1];
-        ggml_backend_tensor_set(t, dims, 0, fill_sz);
+        fill_set(t, dims, 0, fill_sz);
     }
 
     DF_MARK(1, c->n_shape_tensors);
@@ -3251,13 +3315,17 @@ static void fill_deferred_tensors(onnx_ggml_ctx_t *c) {
         float *buf = (float *)malloc(n * sizeof(float));
         if (buf) {
             for (size_t j = 0; j < n; j++) buf[j] = val;
-            ggml_backend_tensor_set(t, buf, 0, n * sizeof(float));
+            fill_set(t, buf, 0, n * sizeof(float));
             free(buf);
             c->const_fill_done[i] = buffer_is_model_owned(c, t->buffer)
                                   ? t->buffer : NULL;
         }
     }
 
+    /* NonZero reads its sources with ggml_backend_tensor_get, and a source can
+     * be a tensor queued above (a ConstantOfShape mask, say): send the batch
+     * first. Its own writes stay synchronous. */
+    fill_flush(c);
     DF_MARK(2, c->n_const_fills);
     /* Fill NonZero output tensors.
      * At build time we assumed all elements are non-zero (ConstantOfShape
@@ -3368,7 +3436,7 @@ static void fill_deferred_tensors(onnx_ggml_ctx_t *c) {
                 if (c_idx >= 0 && c_idx < cols)
                     buf[r * cols + c_idx] = 1.0f;
             }
-            ggml_backend_tensor_set(t, buf, 0, n * sizeof(float));
+            fill_set(t, buf, 0, n * sizeof(float));
             free(buf);
         }
     }
@@ -3384,7 +3452,7 @@ static void fill_deferred_tensors(onnx_ggml_ctx_t *c) {
         memcpy(&params[1], &c->nms_iou_thresh[i], sizeof(float));
         memcpy(&params[2], &c->nms_score_thresh[i], sizeof(float));
         params[3] = (float)c->nms_have_score_thresh[i];
-        ggml_backend_tensor_set(t, params, 0, 4 * sizeof(float));
+        fill_set(t, params, 0, 4 * sizeof(float));
     }
 
     DF_MARK(5, c->n_nms_deferred);
@@ -3394,9 +3462,12 @@ static void fill_deferred_tensors(onnx_ggml_ctx_t *c) {
     for (int i = 0; i < c->n_qconv_mult; i++) {
         struct ggml_tensor *t = c->qconv_mult_tensors[i];
         if (!t || !t->buffer || !c->qconv_mult_values[i]) continue;
-        ggml_backend_tensor_set(t, c->qconv_mult_values[i], 0,
+        fill_set(t, c->qconv_mult_values[i], 0,
                                 (size_t)c->qconv_mult_n[i] * sizeof(float));
     }
+    /* Everything queued is on the device before anything computes. */
+    fill_flush(c);
+    g_fill_batch = NULL;
     DF_MARK(6, c->n_qconv_mult);
     #undef DF_MARK
 }
@@ -3619,8 +3690,7 @@ onnx_ggml_ctx_t *onnx_ggml_build(onnx_model_t *onnx, const char *device, int n_t
                                 memcpy(top_name[m], top_name[m-1], ONNX_MAX_NAME);
                             }
                             top_bytes[k] = nb;
-                            strncpy(top_name[k], nm, ONNX_MAX_NAME - 1);
-                            top_name[k][ONNX_MAX_NAME - 1] = '\0';
+                            snprintf(top_name[k], ONNX_MAX_NAME, "%s", nm);
                             break;
                         }
                     }
@@ -6038,6 +6108,9 @@ void onnx_ggml_free(onnx_ggml_ctx_t *ctx) {
         if (ctx->seg_scheds[i]) ggml_backend_sched_free(ctx->seg_scheds[i]);
     }
     if (ctx->pinned_buf)  ggml_backend_buffer_free(ctx->pinned_buf);
+    /* The fill arena: pinned memory from the Vulkan backend, so it goes
+     * before that backend does. */
+    if (ctx->fill_pin_buf) ggml_backend_buffer_free(ctx->fill_pin_buf);
     if (ctx->weight_buf)  ggml_backend_buffer_free(ctx->weight_buf);
     /* Buffers from the per-segment alloc_ctx_tensors calls (see the field's
      * comment): each one covers the weight tensors added by one segment, and

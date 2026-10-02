@@ -183,6 +183,17 @@ typedef struct {
      * scalar each time was ~177 ms of a MaskRCNN Vulkan run (682 one-element
      * uploads at ~0.26 ms each, almost all of them repeats). */
     ggml_backend_buffer_t const_fill_done[ONNX_MAX_DEFERRED];
+
+    /* Batched uploads for fill_deferred_tensors() (see fill_set()). A pinned
+     * host arena: each small write is copied in at its own offset and queued
+     * with ggml_backend_tensor_set_async, then one synchronize sends them all.
+     * Pinned because ggml-vulkan batches only from pinned memory -- any other
+     * source goes through one shared staging buffer and syncs per call. */
+    ggml_backend_buffer_t fill_pin_buf;
+    uint8_t              *fill_pin_ptr;
+    size_t                fill_pin_cap;
+    size_t                fill_pin_used;
+    int                   fill_pending;
     int                 n_const_fills;
 
     /* Deferred payload for Constant nodes whose data lives in the node's
