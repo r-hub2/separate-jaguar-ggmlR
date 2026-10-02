@@ -703,11 +703,16 @@ graphs. Tensors are <strong>column-major</strong>: shape is
 <code>[features, batch]</code>.</p>
 <div id="prepare-data-iris-col-major" class="section level3">
 <h3>4.1 Prepare data (iris, col-major)</h3>
-<div class="sourceCode" id="cb15"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb15-1"><a href="#cb15-1" tabindex="-1"></a><span class="co"># transpose: rows = features, cols = samples</span></span>
-<span id="cb15-2"><a href="#cb15-2" tabindex="-1"></a>x_tr_ag  <span class="ot">&lt;-</span> <span class="fu">t</span>(x_tr)    <span class="co"># [4, 120]</span></span>
-<span id="cb15-3"><a href="#cb15-3" tabindex="-1"></a>y_tr_ag  <span class="ot">&lt;-</span> <span class="fu">t</span>(y_tr)    <span class="co"># [3, 120]</span></span>
-<span id="cb15-4"><a href="#cb15-4" tabindex="-1"></a>x_val_ag <span class="ot">&lt;-</span> <span class="fu">t</span>(x_val)   <span class="co"># [4, 30]</span></span>
-<span id="cb15-5"><a href="#cb15-5" tabindex="-1"></a>y_val_ag <span class="ot">&lt;-</span> <span class="fu">t</span>(y_val)</span></code></pre></div>
+<div class="sourceCode" id="cb15"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb15-1"><a href="#cb15-1" tabindex="-1"></a><span class="co"># ag_device()/ag_dtype() are package-level state, so a section that relies on a</span></span>
+<span id="cb15-2"><a href="#cb15-2" tabindex="-1"></a><span class="co"># particular device has to say so rather than inherit whatever ran before it.</span></span>
+<span id="cb15-3"><a href="#cb15-3" tabindex="-1"></a><span class="fu">ag_device</span>(<span class="st">&quot;cpu&quot;</span>)</span>
+<span id="cb15-4"><a href="#cb15-4" tabindex="-1"></a><span class="fu">ag_dtype</span>(<span class="st">&quot;f32&quot;</span>)</span>
+<span id="cb15-5"><a href="#cb15-5" tabindex="-1"></a></span>
+<span id="cb15-6"><a href="#cb15-6" tabindex="-1"></a><span class="co"># transpose: rows = features, cols = samples</span></span>
+<span id="cb15-7"><a href="#cb15-7" tabindex="-1"></a>x_tr_ag  <span class="ot">&lt;-</span> <span class="fu">t</span>(x_tr)    <span class="co"># [4, 120]</span></span>
+<span id="cb15-8"><a href="#cb15-8" tabindex="-1"></a>y_tr_ag  <span class="ot">&lt;-</span> <span class="fu">t</span>(y_tr)    <span class="co"># [3, 120]</span></span>
+<span id="cb15-9"><a href="#cb15-9" tabindex="-1"></a>x_val_ag <span class="ot">&lt;-</span> <span class="fu">t</span>(x_val)   <span class="co"># [4, 30]</span></span>
+<span id="cb15-10"><a href="#cb15-10" tabindex="-1"></a>y_val_ag <span class="ot">&lt;-</span> <span class="fu">t</span>(y_val)</span></code></pre></div>
 </div>
 <div id="build-a-model-with-ag_sequential" class="section level3">
 <h3>4.2 Build a model with <code>ag_sequential</code></h3>
@@ -746,7 +751,7 @@ graphs. Tensors are <strong>column-major</strong>: shape is
 <span id="cb17-20"><a href="#cb17-20" tabindex="-1"></a>  }</span>
 <span id="cb17-21"><a href="#cb17-21" tabindex="-1"></a></span>
 <span id="cb17-22"><a href="#cb17-22" tabindex="-1"></a>  <span class="cf">if</span> (ep <span class="sc">%%</span> <span class="dv">50</span><span class="dt">L</span> <span class="sc">==</span> <span class="dv">0</span><span class="dt">L</span>)</span>
-<span id="cb17-23"><a href="#cb17-23" tabindex="-1"></a>    <span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">&quot;epoch %d  loss %.4f</span><span class="sc">\n</span><span class="st">&quot;</span>, ep, loss<span class="sc">$</span>data[<span class="dv">1</span>]))</span>
+<span id="cb17-23"><a href="#cb17-23" tabindex="-1"></a>    <span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">&quot;epoch %d  loss %.4f</span><span class="sc">\n</span><span class="st">&quot;</span>, ep, <span class="fu">as.matrix</span>(loss)[<span class="dv">1</span>]))</span>
 <span id="cb17-24"><a href="#cb17-24" tabindex="-1"></a>}</span></code></pre></div>
 </div>
 <div id="inference-and-accuracy" class="section level3">
@@ -756,10 +761,10 @@ graphs. Tensors are <strong>column-major</strong>: shape is
 <span id="cb18-3"><a href="#cb18-3" tabindex="-1"></a><span class="co"># forward in chunks, apply softmax manually</span></span>
 <span id="cb18-4"><a href="#cb18-4" tabindex="-1"></a>ag_predict_cm <span class="ot">&lt;-</span> <span class="cf">function</span>(model, x_cm, <span class="at">chunk =</span> <span class="dv">64</span><span class="dt">L</span>) {</span>
 <span id="cb18-5"><a href="#cb18-5" tabindex="-1"></a>  n   <span class="ot">&lt;-</span> <span class="fu">ncol</span>(x_cm)</span>
-<span id="cb18-6"><a href="#cb18-6" tabindex="-1"></a>  out <span class="ot">&lt;-</span> <span class="fu">matrix</span>(<span class="fl">0.0</span>, <span class="fu">nrow</span>(model<span class="sc">$</span><span class="fu">forward</span>(<span class="fu">ag_tensor</span>(x_cm[,<span class="dv">1</span>,<span class="at">drop=</span><span class="cn">FALSE</span>]))<span class="sc">$</span>data), n)</span>
+<span id="cb18-6"><a href="#cb18-6" tabindex="-1"></a>  out <span class="ot">&lt;-</span> <span class="fu">matrix</span>(<span class="fl">0.0</span>, <span class="fu">nrow</span>(<span class="fu">as.matrix</span>(model<span class="sc">$</span><span class="fu">forward</span>(<span class="fu">ag_tensor</span>(x_cm[,<span class="dv">1</span>,<span class="at">drop=</span><span class="cn">FALSE</span>])))), n)</span>
 <span id="cb18-7"><a href="#cb18-7" tabindex="-1"></a>  <span class="cf">for</span> (s <span class="cf">in</span> <span class="fu">seq</span>(<span class="dv">1</span><span class="dt">L</span>, n, <span class="at">by =</span> chunk)) {</span>
 <span id="cb18-8"><a href="#cb18-8" tabindex="-1"></a>    e  <span class="ot">&lt;-</span> <span class="fu">min</span>(s <span class="sc">+</span> chunk <span class="sc">-</span> <span class="dv">1</span><span class="dt">L</span>, n)</span>
-<span id="cb18-9"><a href="#cb18-9" tabindex="-1"></a>    lg <span class="ot">&lt;-</span> model<span class="sc">$</span><span class="fu">forward</span>(<span class="fu">ag_tensor</span>(x_cm[, s<span class="sc">:</span>e, <span class="at">drop =</span> <span class="cn">FALSE</span>]))<span class="sc">$</span>data</span>
+<span id="cb18-9"><a href="#cb18-9" tabindex="-1"></a>    lg <span class="ot">&lt;-</span> <span class="fu">as.matrix</span>(model<span class="sc">$</span><span class="fu">forward</span>(<span class="fu">ag_tensor</span>(x_cm[, s<span class="sc">:</span>e, <span class="at">drop =</span> <span class="cn">FALSE</span>])))</span>
 <span id="cb18-10"><a href="#cb18-10" tabindex="-1"></a>    ev <span class="ot">&lt;-</span> <span class="fu">exp</span>(lg <span class="sc">-</span> <span class="fu">apply</span>(lg, <span class="dv">2</span>, max))</span>
 <span id="cb18-11"><a href="#cb18-11" tabindex="-1"></a>    out[, s<span class="sc">:</span>e] <span class="ot">&lt;-</span> ev <span class="sc">/</span> <span class="fu">colSums</span>(ev)</span>
 <span id="cb18-12"><a href="#cb18-12" tabindex="-1"></a>  }</span>

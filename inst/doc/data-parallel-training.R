@@ -5,6 +5,12 @@ knitr::opts_chunk$set(eval = identical(Sys.getenv("NOT_CRAN"), "true"))
 
 ## -----------------------------------------------------------------------------
 # library(ggmlR)
+# 
+# # dp_train() picks its replicas through n_gpu, not through the global device,
+# # so this document only needs the ag_* default to be a known one. It is
+# # package-level state, so state it rather than inherit whatever ran before.
+# ag_device("cpu")
+# ag_dtype("f32")
 
 ## -----------------------------------------------------------------------------
 # data(iris)
@@ -85,7 +91,7 @@ knitr::opts_chunk$set(eval = identical(Sys.getenv("NOT_CRAN"), "true"))
 #   for (batch in dl$epoch()) {
 #     with_grad_tape({
 #       loss <- ag_softmax_cross_entropy_loss(
-#         model2$forward(batch$x), batch$y$data)
+#         model2$forward(batch$x), as.matrix(batch$y))
 #     })
 #     grads <- backward(loss)
 #     opt2$step(grads);  opt2$zero_grad()

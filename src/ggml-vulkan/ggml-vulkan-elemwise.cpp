@@ -2466,6 +2466,11 @@ static void ggml_vk_qconv_i32(ggml_backend_vk_context * ctx, vk_context& subctx,
     p.n_w_zp    = src3 ? (uint32_t)src3->ne[0] : 1u;
     p.has_bias  = src4 ? 1u : 0u;
     p.has_w_zp  = src3 ? 1u : 0u;
+    p.N_batch   = (uint32_t)dst->ne[3];
+    // The shader steps x and dst by one image using the shapes above, which is
+    // only the right address when both are packed at that stride.
+    GGML_ASSERT(src0->ne[3] == dst->ne[3]);
+    GGML_ASSERT(ggml_is_contiguous(src0) && ggml_is_contiguous(dst));
     {
         static int dbg = -1;
         if (dbg < 0) {
@@ -2478,7 +2483,12 @@ static void ggml_vk_qconv_i32(ggml_backend_vk_context * ctx, vk_context& subctx,
     // One thread per output element, the whole reduction inside it: the int16
     // pair saturation this reproduces is order-dependent, so a workgroup
     // cooperating on one output would pair different neighbours and diverge.
-    const uint32_t total = (uint32_t)(dst->ne[0] * dst->ne[1] * dst->ne[2]);
+    //
+    // ne[3] is part of the count, not a loop around the dispatch: every output
+    // element is independent, so one flat grid over batch*C_out*H_out*W_out
+    // keeps the threads busy when H_out*W_out is small and the batch is large --
+    // which is exactly the mask-head shape (28x28 over 51 images).
+    const uint32_t total = (uint32_t)(dst->ne[0] * dst->ne[1] * dst->ne[2] * dst->ne[3]);
     const std::array<uint32_t, 3> elements = { total, 1, 1 };
 
     ggml_pipeline_request_descriptor_sets(ctx, ctx->device->pipeline_qconv_i32, 1);
@@ -2497,6 +2507,59 @@ static void ggml_vk_qconv_i32(ggml_backend_vk_context * ctx, vk_context& subctx,
 
     ggml_vk_dispatch_pipeline(ctx, subctx, ctx->device->pipeline_qconv_i32,
                               { x_buf, w_buf, ws_buf, wz_buf, bi_buf, d_buf, mt_buf },
+                              p, elements);
+}
+
+// ggmlR extension: GGML_OP_QMATMUL_I32 (ONNX QLinearMatMul).
+//
+// Same shape as ggml_vk_qconv_i32 above and for the same reason: it reads
+// every operand where the scheduler put it. The direct dispatch this replaces
+// created five device buffers, uploaded A and B (~114 MB on MaskRCNN's box
+// head), waited on a fence and read the result back on every call -- about
+// 10% of the node's time, the other 90% being the shader, which is unchanged.
+static void ggml_vk_qmatmul_i32(ggml_backend_vk_context * ctx, vk_context& subctx,
+                                const ggml_tensor * src0, const ggml_tensor * src1,
+                                const ggml_tensor * src2, const ggml_tensor * src3,
+                                ggml_tensor * dst) {
+    GGML_ASSERT(src0 != nullptr && src1 != nullptr && src2 != nullptr);
+    GGML_ASSERT(dst->buffer != nullptr);
+    // 2-D only (the builder asserts the same), and packed: the shader indexes
+    // a[m*K + k] and bmat[n*K + k].
+    GGML_ASSERT(ggml_is_contiguous(src0) && ggml_is_contiguous(src1) &&
+                ggml_is_contiguous(dst));
+
+    vk_op_qmatmul_i32_push_constants p{};
+    p.M         = (uint32_t)src0->ne[1];
+    p.N         = (uint32_t)src1->ne[1];
+    p.K         = (uint32_t)src0->ne[0];
+    p.a_scale   = ggml_get_op_params_f32(dst, 0);
+    p.y_scale   = ggml_get_op_params_f32(dst, 1);
+    p.a_zp      = ggml_get_op_params_i32(dst, 2);
+    p.y_zp      = ggml_get_op_params_i32(dst, 3);
+    p.out_lo    = ggml_get_op_params_f32(dst, 4);
+    p.out_hi    = ggml_get_op_params_f32(dst, 5);
+    p.b_zp_any  = (uint32_t)ggml_get_op_params_i32(dst, 6);
+    p.n_b_scale = (uint32_t)src2->ne[0];
+    p.n_b_zp    = src3 ? (uint32_t)src3->ne[0] : 1u;
+
+    // 2D: N across, M down, matching the shader's 16x16 block tile and the
+    // pipeline's {16,16,1} wg_denoms. A flat element count would hand the
+    // shader one long row of blocks and every m would come out zero.
+    const std::array<uint32_t, 3> elements = { p.N, p.M, 1 };
+
+    ggml_pipeline_request_descriptor_sets(ctx, ctx->device->pipeline_qmatmul_i32, 1);
+
+    vk_subbuffer a_buf  = ggml_vk_tensor_subbuffer(ctx, src0, true);
+    vk_subbuffer b_buf  = ggml_vk_tensor_subbuffer(ctx, src1, true);
+    vk_subbuffer bs_buf = ggml_vk_tensor_subbuffer(ctx, src2, true);
+    // Binding 3 must be filled even with no zero-point tensor: an unwritten
+    // descriptor is not a legal source. b_scale stands in; the builder sets
+    // b_zp_any = 0 in that case, and the shader reads b_zp only when it is set.
+    vk_subbuffer bz_buf = src3 ? ggml_vk_tensor_subbuffer(ctx, src3, true) : bs_buf;
+    vk_subbuffer d_buf  = ggml_vk_tensor_subbuffer(ctx, dst, true);
+
+    ggml_vk_dispatch_pipeline(ctx, subctx, ctx->device->pipeline_qmatmul_i32,
+                              { a_buf, b_buf, bs_buf, bz_buf, d_buf },
                               p, elements);
 }
 

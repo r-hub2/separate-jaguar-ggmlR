@@ -105,3 +105,8 @@ knitr::opts_chunk$set(eval = identical(Sys.getenv("NOT_CRAN"), "true"))
 # ggml_vulkan_status()   # shows "Vulkan not available" if not compiled in
 # ggml_vulkan_hard_exit_available()   # TRUE only with --enable-hard-exit
 
+## -----------------------------------------------------------------------------
+# ag_device("cpu")
+# ag_dtype("f32")
+# cat("Restored:", ag_default_dtype(), "on cpu\n")
+

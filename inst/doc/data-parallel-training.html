@@ -344,7 +344,13 @@ code > span.er { color: #a61717; background-color: #e3d2d2; }
 <p>ggmlR provides <code>dp_train()</code> for data-parallel training
 across multiple GPUs (or CPU cores). Each replica processes a unique
 sample per step; gradients are averaged and applied once.</p>
-<div class="sourceCode" id="cb1"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb1-1"><a href="#cb1-1" tabindex="-1"></a><span class="fu">library</span>(ggmlR)</span></code></pre></div>
+<div class="sourceCode" id="cb1"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb1-1"><a href="#cb1-1" tabindex="-1"></a><span class="fu">library</span>(ggmlR)</span>
+<span id="cb1-2"><a href="#cb1-2" tabindex="-1"></a></span>
+<span id="cb1-3"><a href="#cb1-3" tabindex="-1"></a><span class="co"># dp_train() picks its replicas through n_gpu, not through the global device,</span></span>
+<span id="cb1-4"><a href="#cb1-4" tabindex="-1"></a><span class="co"># so this document only needs the ag_* default to be a known one. It is</span></span>
+<span id="cb1-5"><a href="#cb1-5" tabindex="-1"></a><span class="co"># package-level state, so state it rather than inherit whatever ran before.</span></span>
+<span id="cb1-6"><a href="#cb1-6" tabindex="-1"></a><span class="fu">ag_device</span>(<span class="st">&quot;cpu&quot;</span>)</span>
+<span id="cb1-7"><a href="#cb1-7" tabindex="-1"></a><span class="fu">ag_dtype</span>(<span class="st">&quot;f32&quot;</span>)</span></code></pre></div>
 <hr />
 <div id="concept" class="section level2">
 <h2>1. Concept</h2>
@@ -453,7 +459,7 @@ each optimizer step:</p>
 <span id="cb6-11"><a href="#cb6-11" tabindex="-1"></a>  <span class="cf">for</span> (batch <span class="cf">in</span> dl<span class="sc">$</span><span class="fu">epoch</span>()) {</span>
 <span id="cb6-12"><a href="#cb6-12" tabindex="-1"></a>    <span class="fu">with_grad_tape</span>({</span>
 <span id="cb6-13"><a href="#cb6-13" tabindex="-1"></a>      loss <span class="ot">&lt;-</span> <span class="fu">ag_softmax_cross_entropy_loss</span>(</span>
-<span id="cb6-14"><a href="#cb6-14" tabindex="-1"></a>        model2<span class="sc">$</span><span class="fu">forward</span>(batch<span class="sc">$</span>x), batch<span class="sc">$</span>y<span class="sc">$</span>data)</span>
+<span id="cb6-14"><a href="#cb6-14" tabindex="-1"></a>        model2<span class="sc">$</span><span class="fu">forward</span>(batch<span class="sc">$</span>x), <span class="fu">as.matrix</span>(batch<span class="sc">$</span>y))</span>
 <span id="cb6-15"><a href="#cb6-15" tabindex="-1"></a>    })</span>
 <span id="cb6-16"><a href="#cb6-16" tabindex="-1"></a>    grads <span class="ot">&lt;-</span> <span class="fu">backward</span>(loss)</span>
 <span id="cb6-17"><a href="#cb6-17" tabindex="-1"></a>    opt2<span class="sc">$</span><span class="fu">step</span>(grads);  opt2<span class="sc">$</span><span class="fu">zero_grad</span>()</span>

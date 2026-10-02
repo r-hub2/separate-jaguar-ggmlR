@@ -848,7 +848,7 @@ static void * ggml_vk_host_malloc(vk_device& device, size_t size) {
          vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent});
 
     if(!(buf->memory_property_flags & vk::MemoryPropertyFlagBits::eHostVisible)) {
-        fprintf(stderr, "WARNING: failed to allocate %.2f MB of pinned memory\n",
+        GGML_LOG_WARN("failed to allocate %.2f MB of pinned memory\n",
             size/1024.0/1024.0);
         device->device.freeMemory(buf->device_memory);
         device->device.destroyBuffer(buf->buffer);
@@ -880,7 +880,7 @@ static void ggml_vk_host_free(vk_device& device, void* ptr) {
         }
     }
     if (buf == nullptr) {
-        fprintf(stderr, "WARNING: failed to free pinned memory: memory not in map\n");
+        GGML_LOG_WARN("failed to free pinned memory: memory not in map\n");
         return;
     }
 
@@ -913,6 +913,34 @@ static vk_subbuffer ggml_vk_tensor_subbuffer(
         ggml_vk_host_get(ctx->device, tensor->data, buffer, offset);
     }
     if (!buffer) {
+        // A tensor reaching a Vulkan op without a Vulkan buffer is a scheduling
+        // error, not something to recover from: the cast below would reinterpret
+        // whatever ->context holds and the process would die on a bare address.
+        // Name the tensor and its op instead -- that is the difference between a
+        // reportable defect and a segfault somewhere in the backend.
+        //
+        // Two cases this does catch, both without touching bad memory: a null
+        // buffer (tested first, so the chain short-circuits), and a buffer that
+        // belongs to a different, live backend -- a CPU tensor handed to a
+        // Vulkan op, where the pointer is valid and only the type is wrong.
+        // The identity test is the one ggml_backend_buffer_is_vk() uses, spelled
+        // out because that helper is defined later in this translation unit.
+        //
+        // ⚠️ What it does NOT catch: a buffer pointer that is stale rather than
+        // null. Reading ->buft through it is itself the dereference that dies,
+        // so this cannot be turned into a guard against released pools -- on
+        // MaskRCNN-12-int8 the crash address (0x7679, 0x100000009) is a value
+        // read AS a field, meaning tensor->buffer already held garbage. Fixing
+        // that needs the stale pointer not to exist, not a test for it here.
+        if (tensor->buffer == nullptr ||
+            tensor->buffer->buft == nullptr ||
+            tensor->buffer->buft->iface.get_name != ggml_backend_vk_buffer_type_name) {
+            GGML_ABORT("ggml_vk_tensor_subbuffer: tensor '%s' (op=%s) has no Vulkan buffer "
+                       "(buffer=%p) -- a Vulkan op was handed a source that lives on "
+                       "another backend, or one whose pool was released",
+                       tensor->name[0] ? tensor->name : "<unnamed>",
+                       ggml_op_name(tensor->op), (void *) tensor->buffer);
+        }
         auto buf_ctx = (ggml_backend_vk_buffer_context *)tensor->buffer->context;
         buffer = buf_ctx->dev_buffer;
         offset = vk_tensor_offset(tensor) + tensor->view_offs;

@@ -505,6 +505,17 @@ warning rather than silently doing nothing. See
 <div class="sourceCode" id="cb12"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb12-1"><a href="#cb12-1" tabindex="-1"></a><span class="fu">cat</span>(<span class="fu">ggml_version</span>(), <span class="st">&quot;</span><span class="sc">\n</span><span class="st">&quot;</span>)</span>
 <span id="cb12-2"><a href="#cb12-2" tabindex="-1"></a><span class="fu">ggml_vulkan_status</span>()   <span class="co"># shows &quot;Vulkan not available&quot; if not compiled in</span></span>
 <span id="cb12-3"><a href="#cb12-3" tabindex="-1"></a><span class="fu">ggml_vulkan_hard_exit_available</span>()   <span class="co"># TRUE only with --enable-hard-exit</span></span></code></pre></div>
+<hr />
+</div>
+<div id="restoring-the-default-device" class="section level2">
+<h2>Restoring the default device</h2>
+<p><code>ag_device()</code> and <code>ag_dtype()</code> set
+package-level state that outlives this document: anything running later
+in the same R session keeps the GPU and the f16 default unless it is put
+back. Restore it once the GPU section is done.</p>
+<div class="sourceCode" id="cb13"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb13-1"><a href="#cb13-1" tabindex="-1"></a><span class="fu">ag_device</span>(<span class="st">&quot;cpu&quot;</span>)</span>
+<span id="cb13-2"><a href="#cb13-2" tabindex="-1"></a><span class="fu">ag_dtype</span>(<span class="st">&quot;f32&quot;</span>)</span>
+<span id="cb13-3"><a href="#cb13-3" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">&quot;Restored:&quot;</span>, <span class="fu">ag_default_dtype</span>(), <span class="st">&quot;on cpu</span><span class="sc">\n</span><span class="st">&quot;</span>)</span></code></pre></div>
 </div>
 
 
