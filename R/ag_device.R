@@ -25,6 +25,7 @@
 .ag_device_state <- new.env(parent = emptyenv())
 .ag_device_state$device  <- "cpu"   # "cpu" | "gpu"
 .ag_device_state$dtype   <- "f32"   # "f32" | "f16" | "bf16"
+.ag_device_state$matmul_precision <- "default"  # "default" | "f32" (ag_matmul_precision)
 .ag_device_state$backend <- NULL    # ggml backend (ext ptr)
 .ag_device_state$ctx     <- NULL    # current ggml context for resident tensors
 .ag_device_state$buffer  <- NULL    # last buffer allocated (legacy slot)
@@ -157,11 +158,46 @@ ag_default_device <- function() {
   .ag_device_state$device
 }
 
+#' Matrix-multiply precision for ag_* operations on the GPU
+#'
+#' On a Vulkan device with fp16 or cooperative-matrix support, an f32 x f32
+#' matrix multiply with more than 8 columns runs a kernel that keeps its tiles in
+#' f16: relative error around \code{4e-4}, while up to 8 columns (and the CPU)
+#' give f32 accuracy (~\code{1e-7}). \code{"f32"} asks every \code{ag_matmul}
+#' (forward, and the input gradient of the graph backward) for the f32-tile
+#' kernel, so the result no longer depends on the batch size or the device.
+#'
+#' Cost: none measurable on small layers (RL policies, tens to hundreds of
+#' units); 2-4x slower on large ones (1024 x 1024 and up). That is why the default
+#' stays \code{"default"}: set it around the code that needs it and restore the
+#' previous value, e.g.
+#' \code{old <- ag_matmul_precision("f32"); on.exit(ag_matmul_precision(old))}.
+#' Has no effect on the CPU or with \code{ag_dtype("f16")} / \code{"bf16"}.
+#'
+#' @param precision \code{"default"} or \code{"f32"}. Missing: return the current
+#'   setting.
+#' @return The current setting when \code{precision} is missing; otherwise the
+#'   previous setting, invisibly.
+#' @export
+#' @examples
+#' old <- ag_matmul_precision("f32")
+#' ag_matmul_precision()
+#' ag_matmul_precision(old)
+ag_matmul_precision <- function(precision) {
+  prev <- .ag_device_state$matmul_precision
+  if (missing(precision)) return(prev)
+  .ag_device_state$matmul_precision <- match.arg(precision, c("default", "f32"))
+  invisible(prev)
+}
+
 #' Set the default floating-point precision for ag_* GPU operations
 #'
 #' Controls the dtype used when uploading tensors to the ggml backend.
 #' \code{"bf16"} halves memory usage vs \code{"f32"} with minimal accuracy loss.
-#' Backward pass always uses f32 R matrices regardless of this setting.
+#' Gradients are never computed in f16: the GPU graph backward runs in f32 only,
+#' so with \code{"f16"} or \code{"bf16"} \code{backward()} takes the closure path,
+#' which computes them in double -- correct, but slower (the reason is counted
+#' by \code{ggmlR:::ag_backward_fallbacks()}). Training in f32 keeps the graph path.
 #'
 #' @param dtype \code{"f32"} (default), \code{"f16"}, or \code{"bf16"}
 #' @return Invisibly the previous dtype string
@@ -241,19 +277,38 @@ ag_to_device <- function(tensor, device) {
 
 .ag_scopes <- c("pass", "persistent")
 
+# match.arg(scope, .ag_scopes) with an exact-match fast path. Called on every
+# ag_* op, several times (handle liveness checks go through .ag_pool_slots);
+# match.arg itself was ~10% of graph-mode op recording under Rprof (PPO
+# update forward). Anything but an exact name still goes through match.arg, so
+# partial matching and the error message are unchanged.
+.ag_scope_arg <- function(scope) {
+  if (identical(scope, "pass") || identical(scope, "persistent")) scope
+  else match.arg(scope, .ag_scopes)
+}
+
+.ag_slots_pass       <- list(ctxs = "contexts", bufs = "buffers", cur = "ctx", gen = "ctx_gen")
+.ag_slots_persistent <- list(ctxs = "p_contexts", bufs = "p_buffers", cur = "p_ctx", gen = "p_ctx_gen")
+
 # Slot names for a pool: contexts, buffers, current context, generation.
 .ag_pool_slots <- function(scope = "pass") {
-  scope <- match.arg(scope, .ag_scopes)
-  if (scope == "pass")
-    list(ctxs = "contexts", bufs = "buffers", cur = "ctx", gen = "ctx_gen")
-  else
-    list(ctxs = "p_contexts", bufs = "p_buffers", cur = "p_ctx", gen = "p_ctx_gen")
+  if (identical(.ag_scope_arg(scope), "pass")) .ag_slots_pass else .ag_slots_persistent
 }
 
 # Current generation of a pool. Handles are validated against this.
 .ag_scope_gen <- function(scope = "pass") {
   .ag_device_state[[.ag_pool_slots(scope)$gen]]
 }
+
+# ggml_tensor_overhead() is a build-time constant (sizeof object + tensor), so
+# it is read once rather than through .Call on every capacity check.
+.ag_tensor_overhead <- local({
+  v <- NULL
+  function() {
+    if (is.null(v)) v <<- as.double(ggml_tensor_overhead())
+    v
+  }
+})
 
 # How many more tensor descriptors fit in `ctx` before it overflows.
 #
@@ -265,7 +320,7 @@ ag_to_device <- function(tensor, device) {
 # (ggml-context.c:514) — hence the extra slot held back here.
 .ag_ctx_capacity <- function(ctx) {
   if (is.null(ctx)) return(0L)
-  per   <- as.double(ggml_tensor_overhead())
+  per   <- .ag_tensor_overhead()
   total <- as.double(ggml_get_mem_size(ctx))
   used  <- as.double(ggml_used_mem(ctx))
   free  <- total - used - per
@@ -356,6 +411,10 @@ ag_to_device <- function(tensor, device) {
 
   .ag_materialise_pending_grads()
 
+  # Recordings (R/ag_capture.R) point into the persistent pool and own buffers
+  # of their own, which must be freed while the backend still exists.
+  if ("persistent" %in% pools) .ag_capture_free_all()
+
   for (sc in pools) {
     # Resident VALUES need the same rescue, and for a stronger reason: a weight
     # with $data NULL exists nowhere else, so freeing its buffer without this
@@ -404,7 +463,7 @@ ag_to_device <- function(tensor, device) {
   if (!is.null(ctx)) .ag_ctx_flush(ctx, scope = scope)
 
   # Size the new context so the request fits even when it exceeds the default.
-  per     <- as.double(ggml_tensor_overhead())
+  per     <- .ag_tensor_overhead()
   need_mb <- ceiling((per * (as.double(n) + 1)) / (1024 * 1024))
   mb      <- max(as.double(.ag_device_state$ctx_mb), need_mb,
                  as.double(.ag_min_ctx_mb()))
@@ -561,7 +620,7 @@ ag_to_device <- function(tensor, device) {
 .ag_run_op <- function(op_fn, inputs, out_shape, mem_mb = 32L,
                        dtype = .ag_device_state$dtype, node_hook = NULL,
                        resident = FALSE, scope = "pass", out = NULL) {
-  scope <- match.arg(scope, .ag_scopes)
+  scope <- .ag_scope_arg(scope)
   backend   <- .ag_device_state$backend
   ggml_type <- .ag_dtype_to_ggml(.ag_compute_dtype(dtype))
 
@@ -614,7 +673,7 @@ ag_to_device <- function(tensor, device) {
   # A handle contributes its existing pointer; a matrix gets a fresh tensor
   # that is filled below.
   ptrs <- lapply(inputs, function(m) {
-    if (.ag_is_handle(m)) m$ptr
+    if (.ag_is_handle(m)) .ag_graph_operand(m, ctx)   # leaf alias if computed
     else ggml_new_tensor_2d(ctx, ggml_type, nrow(m), ncol(m))
   })
   fstage("create")
@@ -659,9 +718,12 @@ ag_to_device <- function(tensor, device) {
       ups[[length(ups) + 1L]] <- list(ptr = ptrs[[i]],
                                       val = as.numeric(inputs[[i]]))
     }
+    # Epoch read BEFORE the push: in check mode the push drains at once, and
+    # the node must then count as computed (see .ag_handle_computed).
+    ep <- .ag_defer$epoch
     .ag_defer_push(node, ups)
     if (fprof) .ag_fwd_prof_record(facc)
-    return(.ag_handle(node, out_shape, scope = scope, pending = TRUE))
+    return(.ag_handle(node, out_shape, scope = scope, pending = TRUE, epoch = ep))
   }
 
   # Not deferring -- because the caller wants a value (resident = FALSE), or
@@ -736,7 +798,7 @@ ag_to_device <- function(tensor, device) {
 
   graph <- ggml_build_forward_expand(ctx_graph, root)
   fstage("graph")
-  ggml_backend_graph_compute(backend, graph)
+  .ag_graph_compute(backend, graph, "per-op")
   fstage("compute")
 
   # The destination already holds the result; handing back the caller's own
@@ -803,8 +865,8 @@ ag_to_device <- function(tensor, device) {
   if (.ag_is_handle(a_data)) {
     return(.ag_run_op(
       op_fn = function(ctx, ptrs)
-                ggml_mul_mat(ctx, ggml_cont(ctx, ggml_transpose(ctx, ptrs[[1L]])),
-                             ptrs[[2L]]),
+                .ag_mul_mat(ctx, ggml_cont(ctx, ggml_transpose(ctx, ptrs[[1L]])),
+                            ptrs[[2L]]),
       inputs    = list(a_data, b_data),
       out_shape = c(nr_a, nc_b),
       resident  = .ag_is_handle(b_data) || .ag_is_handle(a_data)))
@@ -812,7 +874,7 @@ ag_to_device <- function(tensor, device) {
 
   at_data <- t(a_data)                          # [k, m]
   .ag_run_op(
-    op_fn    = function(ctx, ptrs) ggml_mul_mat(ctx, ptrs[[1L]], ptrs[[2L]]),
+    op_fn    = function(ctx, ptrs) .ag_mul_mat(ctx, ptrs[[1L]], ptrs[[2L]]),
     inputs   = list(at_data, b_data),
     out_shape = c(nr_a, nc_b),
     resident = .ag_is_handle(b_data)
@@ -825,6 +887,20 @@ ag_to_device <- function(tensor, device) {
 # a Gram matrix whose ||x_i||^2 + ||x_j||^2 - 2 G[i,j] distances feed kNN, where
 # the f16 noise reorders nearest neighbours. GGML_PREC_F32 selects the f32 kernel.
 GGML_PREC_F32 <- 10L
+
+# ggml_mul_mat for the ag_* forward and the graph backward's input gradient.
+# ag_matmul_precision("f32") marks the node GGML_PREC_F32, which on an
+# fp16/coopmat Vulkan device selects the f32-tile kernel (the default one keeps
+# its tiles in f16: ~4e-4 relative error once the batch exceeds 8 columns).
+# With "default" the node is exactly what ggml_mul_mat builds (verified bit for
+# bit against a PPO run from before this helper existed).
+.ag_mul_mat <- function(ctx, a, b) {
+  r <- ggml_mul_mat(ctx, a, b)
+  if (identical(.ag_device_state$matmul_precision, "f32"))
+    .Call("R_ggml_mul_mat_set_prec", r, GGML_PREC_F32, PACKAGE = "ggmlR")
+  r
+}
+
 .ag_gpu_matmul_f32 <- function(a_data, b_data) {
   nr_a <- .ag_nrow(a_data); nc_b <- .ag_ncol(b_data)
   # Transpose in R -- see .ag_gpu_matmul above for why the graph version was
@@ -851,19 +927,30 @@ GGML_PREC_F32 <- 10L
   )
 }
 
+# Resident (graph-mode) when an operand is already a device handle, exactly like
+# .ag_gpu_add; host matrices (sc_contracts.R) keep the old compute-and-return.
 .ag_gpu_sub <- function(a_data, b_data) {
   .ag_run_op(
     op_fn    = function(ctx, ptrs) ggml_sub(ctx, ptrs[[1L]], ptrs[[2L]]),
     inputs   = list(a_data, b_data),
-    out_shape = .ag_dim(a_data)
+    out_shape = .ag_dim(a_data),
+    resident  = .ag_is_handle(a_data) || .ag_is_handle(b_data)
   )
 }
 
+# ggml_mul broadcasts its SECOND operand over the first. Multiplication
+# commutes, so when the first is the smaller one ([1,n] or [m,1] times [m,n])
+# the operands are swapped -- the output takes the larger shape either way.
 .ag_gpu_mul <- function(a_data, b_data) {
+  da <- .ag_dim(a_data); db <- .ag_dim(b_data)
+  if (!is.null(da) && !is.null(db) && prod(da) < prod(db)) {
+    tmp <- a_data; a_data <- b_data; b_data <- tmp
+  }
   .ag_run_op(
     op_fn    = function(ctx, ptrs) ggml_mul(ctx, ptrs[[1L]], ptrs[[2L]]),
     inputs   = list(a_data, b_data),
-    out_shape = .ag_dim(a_data)
+    out_shape = .ag_dim(a_data),
+    resident  = .ag_is_handle(a_data) || .ag_is_handle(b_data)
   )
 }
 
@@ -872,7 +959,8 @@ GGML_PREC_F32 <- 10L
   .ag_run_op(
     op_fn    = function(ctx, ptrs) ggml_scale(ctx, ptrs[[1L]], s),
     inputs   = list(x_data),
-    out_shape = .ag_dim(x_data)
+    out_shape = .ag_dim(x_data),
+    resident  = .ag_is_handle(x_data)
   )
 }
 
@@ -926,16 +1014,39 @@ GGML_PREC_F32 <- 10L
   .ag_run_op(
     op_fn    = function(ctx, ptrs) ggml_exp(ctx, ptrs[[1L]]),
     inputs   = list(x_data),
-    out_shape = .ag_dim(x_data)
+    out_shape = .ag_dim(x_data),
+    resident  = .ag_is_handle(x_data)
   )
 }
 
+# ggml_clamp is a VIEW of its input written in place. Inside one fused graph
+# that would overwrite the input for every other consumer (PPO uses ratio both
+# clamped and unclamped), so it clamps a copy.
 .ag_gpu_clamp <- function(x_data, lo, hi) {
   lo <- as.double(lo); hi <- as.double(hi)
   .ag_run_op(
-    op_fn    = function(ctx, ptrs) ggml_clamp(ctx, ptrs[[1L]], lo, hi),
+    op_fn    = function(ctx, ptrs) ggml_clamp(ctx, ggml_dup(ctx, ptrs[[1L]]), lo, hi),
     inputs   = list(x_data),
-    out_shape = .ag_dim(x_data)
+    out_shape = .ag_dim(x_data),
+    resident  = .ag_is_handle(x_data)
+  )
+}
+
+# d clamp(x, lo, hi) / dx = 1 strictly inside (lo, hi), 0 on and outside the
+# limits -- the closure's (x > lo & x < hi). ggml_step is x > 0 ? 1 : 0, so
+# step(x - lo) * step(hi - x) has exactly that boundary. Built on the device so
+# the backward snapshot never leaves it.
+.ag_gpu_clamp_mask <- function(x_data, lo, hi) {
+  lo <- as.double(lo); hi <- as.double(hi)
+  .ag_run_op(
+    op_fn = function(ctx, ptrs) {
+      x <- ptrs[[1L]]
+      ggml_mul(ctx, ggml_step(ctx, ggml_scale_bias(ctx, x,  1, -lo)),
+                    ggml_step(ctx, ggml_scale_bias(ctx, x, -1,  hi)))
+    },
+    inputs    = list(x_data),
+    out_shape = .ag_dim(x_data),
+    resident  = TRUE
   )
 }
 
@@ -944,15 +1055,21 @@ GGML_PREC_F32 <- 10L
   .ag_run_op(
     op_fn    = function(ctx, ptrs) ggml_sum(ctx, ptrs[[1L]]),
     inputs   = list(x_data),
-    out_shape = c(1L, 1L)
+    out_shape = c(1L, 1L),
+    resident  = .ag_is_handle(x_data)
   )
 }
 
+# Not ggml_mean: it reduces along ne0 only and returns [1, ne1, ...] -- the
+# column means of an R matrix -- so the [1,1] read kept just the first column.
+# n from the shape: length() of a handle is the length of the list.
 .ag_gpu_mean_all <- function(x_data) {
+  n <- prod(.ag_dim(x_data))
   .ag_run_op(
-    op_fn    = function(ctx, ptrs) ggml_mean(ctx, ptrs[[1L]]),
+    op_fn    = function(ctx, ptrs) ggml_scale(ctx, ggml_sum(ctx, ptrs[[1L]]), 1.0 / n),
     inputs   = list(x_data),
-    out_shape = c(1L, 1L)
+    out_shape = c(1L, 1L),
+    resident  = .ag_is_handle(x_data)
   )
 }
 
@@ -962,13 +1079,28 @@ GGML_PREC_F32 <- 10L
   .ag_run_op(
     op_fn    = function(ctx, ptrs) ggml_sum_rows(ctx, ptrs[[1L]]),
     inputs   = list(x_data),
-    out_shape = c(1L, .ag_ncol(x_data))
+    out_shape = c(1L, .ag_ncol(x_data)),
+    resident  = .ag_is_handle(x_data)
   )
 }
 
-# ag_sum(dim=1) = rowSums: CPU fallback (Vulkan transpose+sum_rows not supported).
+# ag_sum(dim=1) = rowSums [m,1]. sum_rows reduces ne0 (R's rows), so transpose
+# to [n,m] first -- as a contiguous copy, sum_rows over a transposed VIEW walks
+# the wrong memory -- then reshape [1,m] to [m,1]. Same construction as the
+# graph backward's add rule, verified on this backend. A host matrix (no device
+# operand) keeps the plain R computation.
+.ag_gpu_rowsum_node <- function(ctx, x, m) {
+  ggml_reshape_2d(ctx, ggml_sum_rows(ctx, ggml_cont(ctx, ggml_transpose(ctx, x))), m, 1L)
+}
 .ag_gpu_sum_rows <- function(x_data) {
-  matrix(rowSums(x_data), nrow = nrow(x_data), ncol = 1L)
+  if (!.ag_is_handle(x_data)) return(matrix(rowSums(x_data), nrow = nrow(x_data), ncol = 1L))
+  m <- .ag_nrow(x_data)
+  .ag_run_op(
+    op_fn    = function(ctx, ptrs) .ag_gpu_rowsum_node(ctx, ptrs[[1L]], m),
+    inputs   = list(x_data),
+    out_shape = c(m, 1L),
+    resident  = TRUE
+  )
 }
 
 # ag_mean(dim=2) = colMeans = colSums / nrow
@@ -980,13 +1112,21 @@ GGML_PREC_F32 <- 10L
       ggml_scale(ctx, ggml_sum_rows(ctx, ptrs[[1L]]), 1.0 / nr)
     },
     inputs   = list(x_data),
-    out_shape = c(1L, .ag_ncol(x_data))
+    out_shape = c(1L, .ag_ncol(x_data)),
+    resident  = .ag_is_handle(x_data)
   )
 }
 
-# ag_mean(dim=1) = rowMeans: CPU fallback.
+# ag_mean(dim=1) = rowMeans [m,1], on the device like .ag_gpu_sum_rows.
 .ag_gpu_mean_rows <- function(x_data) {
-  matrix(rowMeans(x_data), nrow = nrow(x_data), ncol = 1L)
+  if (!.ag_is_handle(x_data)) return(matrix(rowMeans(x_data), nrow = nrow(x_data), ncol = 1L))
+  m <- .ag_nrow(x_data); nc <- .ag_ncol(x_data)
+  .ag_run_op(
+    op_fn    = function(ctx, ptrs) ggml_scale(ctx, .ag_gpu_rowsum_node(ctx, ptrs[[1L]], m), 1.0 / nc),
+    inputs   = list(x_data),
+    out_shape = c(m, 1L),
+    resident  = TRUE
+  )
 }
 
 # ag_pow(x, p) = x^p
@@ -1049,136 +1189,44 @@ GGML_PREC_F32 <- 10L
 # Bias correction is two scalars (1 - beta^t). They are computed in R and folded
 # into ggml_scale, rather than uploaded as tensors: a scalar in a push constant
 # costs nothing, a 1x1 tensor costs an allocation and a crossing.
-.ag_adam_step_device <- function(env, nm, p, g) {
+.ag_adam_step_device <- function(env, i, p, g) {
   # ⚠️ Never deferred. Every graph below is ordered by hand relative to the
   # copies at the end -- read m, v and w first, write them afterwards -- and a
   # queue that postpones the reads until the first write folds the two into one
   # graph. Symptom when this wrapper was missing: the loss sat at 0.212 for four
   # steps and the weight never moved at all. See .ag_defer_suspend.
-  .ag_defer_suspend(.ag_adam_step_device_impl(env, nm, p, g))
+  .ag_defer_suspend(.ag_adam_step_device_impl(env, i, p, g))
 }
 
-.ag_adam_step_device_impl <- function(env, nm, p, g) {
-  m  <- env$m[[nm]]
-  v  <- env$v[[nm]]
+.ag_adam_step_device_impl <- function(env, i, p, g) {
+  m  <- env$m[[i]]
+  v  <- env$v[[i]]
   wh <- .ag_handle_of(p)
   sh <- .ag_dim(m)
-
-  # The gradient is read into R first, deliberately.
-  #
-  # It arrives as a handle into the PASS pool -- from the resident backward, or
-  # uploaded a few lines up in optimizer_adam(). The graphs below each allocate
-  # in that same pool, and a pass-pool operand read across those allocations is
-  # not reliable: that is the same exposure the copy ordering below addresses,
-  # arriving from the other side.
-  #
-  # Tried without it, after the ordering fix landed: the closed-form check still
-  # passed (0.7499999 for three constant-gradient steps) but two suite tests
-  # failed, so the ordering rule alone does not cover every caller.
-  #
-  # It is copied into the PERSISTENT pool rather than read back to R. Passing a
-  # matrix instead made the step upload it once per graph -- three graphs plus
-  # the copies, measured as 6 uploads and 2 downloads per step against 2 before,
-  # which is worse than the download it was meant to avoid. A persistent tensor
-  # is uploaded once and then simply referenced, and nothing this step allocates
-  # can disturb it, since every allocation here goes to the pass pool.
-  if (.ag_is_handle(g)) {
-    gbuf <- env$gbuf[[nm]]
-    if (is.null(gbuf) || !.ag_handle_live(gbuf)) {
-      gbuf <- .ag_handle(.ag_r_to_gpu(matrix(0, sh[1L], sh[2L]),
-                                      scope = "persistent"),
-                         sh, scope = "persistent")
-      env$gbuf[[nm]] <- gbuf
-    }
-    .ag_run_op(function(ctx, ptrs) ggml_dup(ctx, ptrs[[1L]]),
-               inputs = list(g), out_shape = sh, scope = "pass", out = gbuf)
-    g <- gbuf
-  }
 
   b1 <- env$beta1; b2 <- env$beta2
   bc1 <- 1 - b1^env$t                     # bias correction, m
   bc2 <- 1 - b2^env$t                     # bias correction, v
+  lr <- env$lr; eps <- env$eps
 
   # scope = "pass" and out = <persistent handle> is the combination that makes
-  # this free of leaks, and the two arguments mean different things:
-  #   scope  where the op's own intermediate nodes are allocated -- the scaled
-  #          moment, the squared gradient, the divisor. These are garbage the
-  #          moment the step ends, so they belong in the pool that the next tape
-  #          reset frees.
-  #   out    where the RESULT lands: a tensor already in the persistent pool.
-  # Allocating the intermediates persistently instead would grow that pool by a
-  # few nodes every step, and it has no collector -- it cannot be reset while
-  # the weights in it are live. Measured before this was fixed: 4 KB to 37 KB
-  # over ten steps, growing without bound.
-
+  # this free of leaks: the intermediates are garbage the moment the step ends
+  # and go to the pool the next tape reset frees; the RESULT lands in a tensor
+  # already in the persistent pool. Allocating the intermediates persistently
+  # would grow that pool every step -- it has no collector while weights are
+  # live (measured: 4 KB to 37 KB over ten steps).
+  #
   # ⚠️ A tensor must not be both an operand and the destination of the SAME
-  # graph. `out =` appends a ggml_cpy whose source is the expression reading
-  # that tensor, so "m <- b1*m + ..." has the kernel writing m while another
-  # node still reads it. Nothing orders those, and nothing reports it.
+  # graph: `out =` appends a ggml_cpy whose source reads that tensor, and
+  # nothing orders the write against the read. It hides at step 1 (zeros over
+  # zeros) and drifts from step 2 on. So the new values are computed into
+  # pass-pool tensors first and copied into m, v and w afterwards, each copy
+  # its own graph.
   #
-  # It hides at step 1 and only then: the moments start at zero, so writing
-  # zeros over zeros lands on the same values whatever the order. From step 2 on
-  # the two paths drift -- measured as W1 maxdiff 0 after one step, 0.0465 after
-  # two, 0.239 after five, while the GRADIENT stayed bit-identical throughout.
-  # That shape of evidence (correct gradient, correct first step, growing
-  # divergence) is what points here rather than at the backward pass.
-  #
-  # Same family as the sched-level trap in the notes: an op that writes into its
-  # own src loses the write. Here the fix is to compute into a fresh pass-pool
-  # tensor and copy that into the moment afterwards -- two graphs, no aliasing.
-  # ORDER MATTERS: the weight is computed FIRST, while m and v still hold the
-  # previous step's values, and only afterwards are the moments advanced.
-  #
-  # Computing the moments first and feeding their results into the weight update
-  # is what produced a weight one step ahead: traced, w came out 0.832808 where
-  # 0.85 was correct, which is exactly the value obtained from m = 0.076 instead
-  # of 0.04 -- the gradient applied twice. The moment graphs run before the
-  # weight graph, and by the time the weight graph reads m the tensor no longer
-  # holds what it did at entry.
-  #
-  # The weight graph recomputes b1*m + (1-b1)*g internally, so it needs nothing
-  # from those earlier graphs -- every operand it takes is a tensor this call
-  # has not written yet.
-
-  # w <- w - lr * (m/bc1) / (sqrt(v/bc2) + eps)
-  #
-  # The division by bc1 is folded into the lr scale, and the one by bc2 into the
-  # scale under the square root, so the correction costs no extra nodes.
-  # ggml_scale_bias(a, s, b) computes a*s + b, which is exactly "sqrt(v_hat)
-  # plus epsilon" in one op.
-  # The update reads the NEW moments -- Adam's m and v are the ones from this
-  # step, not the previous. They are still in their own tensors here, so the
-  # aliasing rule above is respected: nothing reads m or v while they are being
-  # written.
-  lr <- env$lr; eps <- env$eps
-  # ⚠️ The whole update in ONE graph, from m, v and g -- not from the new_m and
-  # new_v computed above.
-  #
-  # Reading new_m back as an operand of a second graph does not work: it is a
-  # handle onto a node, and by the time that node is read the moment tensor it
-  # was computed from has been rewritten. Traced, the weight came out as
-  # 0.832808 instead of 0.85, which is exactly the value obtained by applying
-  # the gradient TWICE (m = 0.076 instead of 0.04) -- the update saw moments a
-  # step ahead of where they should have been.
-  #
-  # Recomputing b1*m + (1-b1)*g inside this graph costs two cheap nodes and
-  # removes the dependency on a previous graph's output entirely: every operand
-  # here is a tensor whose contents nothing in this call has touched.
-  new_w <- .ag_run_op(function(ctx, ptrs) {
-               w_ <- ptrs[[1L]]; m_ <- ptrs[[2L]]; v_ <- ptrs[[3L]]; g_ <- ptrs[[4L]]
-               nm_ <- ggml_add(ctx, ggml_scale(ctx, m_, b1),
-                               ggml_scale(ctx, g_, 1 - b1))
-               nv_ <- ggml_add(ctx, ggml_scale(ctx, v_, b2),
-                               ggml_scale(ctx, ggml_sqr(ctx, g_), 1 - b2))
-               num <- ggml_scale(ctx, nm_, lr / bc1)
-               den <- ggml_scale_bias(ctx,
-                        ggml_sqrt(ctx, ggml_scale(ctx, nv_, 1 / bc2)), 1, eps)
-               ggml_sub(ctx, w_, ggml_div(ctx, num, den))
-             },
-             inputs = list(wh, m, v, g), out_shape = sh,
-             scope = "pass", resident = TRUE)
-
-  # Now the moments, from the values they still hold.
+  # Reading new_m / new_v from the weight graph is safe: a computed handle
+  # enters a new graph as a leaf alias (.ag_graph_operand), not as its node, so
+  # nothing re-runs from m and v. The copies below only start once all three
+  # results are computed.
   new_m <- .ag_run_op(function(ctx, ptrs)
                         ggml_add(ctx,
                                  ggml_scale(ctx, ptrs[[1L]], b1),
@@ -1193,73 +1241,170 @@ GGML_PREC_F32 <- 10L
                       inputs = list(v, g), out_shape = sh,
                       scope = "pass", resident = TRUE)
 
-  # Only now, with every read finished, are the persistent tensors overwritten.
-  # Each copy is its own graph, so a destination is never also a source.
-  #
-  # ggml_cpy, not ggml_scale(x, 1): scaling by one is not a no-op on this
-  # backend. The value goes through a kernel and comes back rounded to the
-  # compute precision, so a "copy" written that way loses a little of m, v and w
-  # on EVERY step -- which compounds into a visibly different trajectory while
-  # looking like an identity operation in the source.
-  # ggml_dup, and the destination through `out =`.
-  #
-  # Three ways to write this copy are wrong, and each failed differently:
-  #   ggml_scale(x, 1)          not an identity on this backend -- the value
-  #                             goes through a kernel and comes back rounded to
-  #                             the compute precision, losing a little of m, v
-  #                             and w on every step.
+  # w <- w - lr * (m/bc1) / (sqrt(v/bc2) + eps). The division by bc1 is folded
+  # into the lr scale and the one by bc2 under the square root;
+  # ggml_scale_bias(a, s, b) = a*s + b is "sqrt(v_hat) plus epsilon" in one op.
+  new_w <- .ag_run_op(function(ctx, ptrs) {
+               num <- ggml_scale(ctx, ptrs[[2L]], lr / bc1)
+               den <- ggml_scale_bias(ctx,
+                        ggml_sqrt(ctx, ggml_scale(ctx, ptrs[[3L]], 1 / bc2)), 1, eps)
+               ggml_sub(ctx, ptrs[[1L]], ggml_div(ctx, num, den))
+             },
+             inputs = list(wh, new_m, new_v), out_shape = sh,
+             scope = "pass", resident = TRUE)
+
+  # ggml_dup with the destination through `out =`. Three other ways to write
+  # this copy are wrong:
+  #   ggml_scale(x, 1)          not an identity on this backend -- rounds to the
+  #                             compute precision, losing a little every step.
   #   ggml_cpy with dst in
-  #   `inputs`                  dst becomes an ordinary operand, so a fresh
-  #                             tensor is built for it and the result is a view
-  #                             of that: "leaf_0 (copy of node_2) has no backend
-  #                             buffer".
-  #   returning ptrs[[1]]       not an operation at all. The graph has no node
-  #                             to execute, so nothing is copied and the weight
-  #                             silently never changes.
-  # ggml_dup is a real op that reproduces its operand exactly, and `out =` lets
-  # .ag_run_op append the copy into the tensor the caller already owns.
+  #   `inputs`                  dst becomes an ordinary operand: "leaf_0 (copy
+  #                             of node_2) has no backend buffer".
+  #   returning ptrs[[1]]       no node to execute; the weight never changes.
   cpy <- function(src, dst)
     .ag_run_op(function(ctx, ptrs) ggml_dup(ctx, ptrs[[1L]]),
                inputs = list(src), out_shape = sh, scope = "pass", out = dst)
-  # The weight is copied FIRST.
-  #
-  # new_m, new_v and new_w are all pass-pool nodes, and every cpy() is itself an
-  # .ag_run_op that allocates in that same pool. Copying the moments first
-  # therefore disturbs the pool while new_w is still only a handle into it, and
-  # the value read out afterwards is no longer the one the graph produced:
-  # traced, new_w measured 0.85 immediately after its compute and 0.832808 by
-  # the time it was copied -- the difference between a correct step and moments
-  # advanced twice.
-  #
-  # Ordering the copies by how soon each result is needed removes the exposure:
-  # after this line the weight is in its persistent tensor, and nothing later in
-  # the step reads it.
   cpy(new_w, wh)
   cpy(new_m, m)
   cpy(new_v, v)
-
-  # Opt-in trace: print what the step actually fed the update, as opposed to
-  # what the formula says it should have. Section 8 of
-  # inst/scripts/diag_ag_run_op_out.R showed m and v correct while w came out
-  # wrong on the FIRST step, with every node of the expression verified correct
-  # in isolation -- so the remaining question is which values the expression
-  # received, and only the step itself can answer it.
-  if (identical(Sys.getenv("GGMLR_AG_ADAM_TRACE"), "1")) {
-    pk <- function(h) tryCatch(.ag_as_matrix(h)[1L], error = function(e) NA_real_)
-    message(sprintf(
-      "adam[%s] t=%d bc1=%.6f bc2=%.6f | g=%.8f m=%.8f v=%.10f new_m=%.8f new_v=%.10f w=%.8f -> %.8f",
-      nm, env$t, bc1, bc2, pk(g), pk(m), pk(v), pk(new_m), pk(new_v),
-      pk(wh), pk(new_w)))
-    # Read after the copies, so these are the values that were stored, not the
-    # ones the graphs produced. The two differ if a pass-pool result is read
-    # after something else has allocated in that pool -- the failure this
-    # ordering exists to avoid.
-  }
 
   # The weight's buffer changed underneath any cached host copy.
   p$data     <- NULL
   p$data_gen <- NULL
   invisible(NULL)
+}
+
+# Fused device Adam: the step of EVERY parameter as one graph of native
+# GGML_OP_OPT_STEP_ADAMW nodes, instead of seven per-op launches per parameter.
+#
+# Measured on PPO (tictactoe, hidden 64, 8 parameters): the per-op step above
+# was 448 of the update's 456 launches -- 56 per optimizer step -- while the
+# forward and backward already ran as one deferred graph per step.
+#
+# Why the native kernel and not the per-op chain in one graph: the chain needs
+# "read m, v, w, then write them" ordered across nodes, which is exactly what
+# broke twice above (weight never moving; gradient applied twice). The kernel
+# reads and writes each element in one invocation, so there is no cross-node
+# order to keep. The nodes of different parameters share no tensor, so the
+# backend may run them in any order.
+#
+# Same formula as .ag_adam_step_device_impl and the host step (eps outside the
+# square root, bias correction as 1/bc factors, no weight decay: wd = 0 makes
+# the kernel's decay factor exactly 1.0f). Not bit-identical to the per-op path:
+# lr * (m * (1/bc1)) rounds differently from (lr / bc1) * m, about 1 ULP a step.
+# And one SYSTEMATIC difference: the kernel takes beta2 as float and forms
+# 1.0f - beta2 itself, so the g^2 weight is 1 - fl(beta2) instead of the
+# host's 1 - beta2 -- relative error 9.5e-7 (0.99), 1.29e-5 (0.999), 1.66e-4
+# (0.9999). The per-op path computes 1 - b2 in double first. On the weight it
+# is about half that, through the square root; accepted (ggml-opt.cpp feeds the
+# same kernel the same way).
+#
+# `items` is a list of list(i, p, g): optimizer slot, parameter, gradient
+# handle. Returns FALSE, having done nothing, when the step cannot be fused (a
+# non-F32 tensor -- the kernels are F32-only -- or a dead handle); the caller
+# then takes the per-op path for every item.
+.ag_adam_step_device_fused <- function(env, items) {
+  # Never deferred, like the per-op step; this also drains the queue first, so
+  # pending gradients from the deferred backward are computed before use.
+  .ag_defer_suspend(.ag_adam_step_device_fused_impl(env, items))
+}
+
+# ON by default; GGMLR_AG_ADAM_FUSED=0 switches back to the per-op step (A/B
+# checks). Read per step, not at load, so a test can flip it within one session.
+#
+# History: it was briefly off while fused and per-op training disagreed in
+# graph mode. Against a CPU reference the PER-OP path was the wrong one: a
+# computed gradient handle entered its graphs as a node, so the gradient of the
+# 2nd parameter was re-computed with the weight the 1st step had just moved
+# (-9%). Fixed for every graph operand by leaf aliases (.ag_graph_operand).
+# Measured on PPO (tictactoe, hidden 64): update 456 -> 16 launches,
+# 238.5 -> 128.7 ms.
+.ag_adam_fused_enabled <- function() {
+  !identical(Sys.getenv("GGMLR_AG_ADAM_FUSED"), "0")
+}
+
+# Parameters per graph. Each contributes one node and four leaves (w, g, m, v)
+# against the default graph size (GGML_DEFAULT_GRAPH_SIZE = 8192 here), so
+# 256 (1280 entries) keeps a wide margin; a larger model takes
+# ceiling(n / 256) launches instead of failing to build.
+.ag_adam_fused_chunk <- 256L
+
+# Hyperparameters: one persistent 7-float tensor per optimizer, rewritten
+# each step (28 bytes; t changes every step, and lr may be changed by a
+# scheduler between steps -- it is read from env at upload, never cached).
+# Shared with ag_capture_step(), whose recorded Adam graph reads it by pointer.
+.ag_adam_hp <- function(env) {
+  hp <- env$adamw_hp
+  if (is.null(hp) || !.ag_handle_live(hp)) {
+    hp <- .ag_handle(.ag_r_to_gpu(matrix(0, 7L, 1L), dtype = "f32",
+                                  scope = "persistent"),
+                     c(7L, 1L), scope = "persistent")
+    env$adamw_hp <- hp
+  }
+  hp
+}
+
+# The 7 values in the order the kernel reads them: alpha, beta1, beta2, eps,
+# weight decay, 1/(1 - beta1^t), 1/(1 - beta2^t).
+.ag_adam_hp_values <- function(env, t) {
+  c(env$lr, env$beta1, env$beta2, env$eps, 0,
+    1 / (1 - env$beta1^t), 1 / (1 - env$beta2^t))
+}
+
+.ag_adam_hp_upload <- function(env, hp, t) {
+  .ag_xfer_up(hp$ptr, .ag_adam_hp_values(env, t), "adam params")
+}
+
+.ag_adam_step_device_fused_impl <- function(env, items) {
+  if (!length(items)) return(invisible(TRUE))
+
+  # Resolve every operand up front and refuse the whole step, not part of it,
+  # if anything is ineligible: a half-applied step would advance some
+  # parameters by t and leave others behind.
+  ops <- lapply(items, function(it) {
+    wh <- .ag_handle_of(it$p)
+    list(i = it$i, p = it$p, w = wh, g = it$g,
+         m = env$m[[it$i]], v = env$v[[it$i]])
+  })
+  ok <- vapply(ops, function(o) {
+    hs <- list(o$w, o$g, o$m, o$v)
+    all(vapply(hs, function(h) !is.null(h) && .ag_handle_live(h), logical(1))) &&
+      all(vapply(hs, function(h) ggml_tensor_type(h$ptr) == GGML_TYPE_F32,
+                 logical(1)))
+  }, logical(1))
+  if (!all(ok)) return(invisible(FALSE))
+
+  hp <- .ag_adam_hp(env)
+  .ag_adam_hp_upload(env, hp, env$t)
+
+  backend <- .ag_device_state$backend
+  for (chunk in split(ops, ceiling(seq_along(ops) / .ag_adam_fused_chunk))) {
+    # The nodes are views of the weights: no memory of their own. Their buffer
+    # is set by ggml_opt_step_adamw() itself -- NOT by a flush here, which
+    # skips a context holding only views and leaves the node unbound; Vulkan
+    # then drops it silently (measured: weights never moved, launch counted).
+    # Two descriptors per parameter: the step node and the leaf alias of its
+    # gradient (.ag_graph_operand); overflowing a context aborts R in ggml.
+    ctx <- .ag_ctx_ensure(2L * length(chunk) + 4L, scope = "pass")
+    nodes <- lapply(chunk, function(o)
+      ggml_opt_step_adamw(ctx, o$w$ptr, .ag_graph_operand(o$g, ctx), o$m$ptr, o$v$ptr, hp$ptr))
+
+    ctx_graph <- ggml_init(.ag_graph_ctx_bytes(), no_alloc = TRUE)
+    if (is.null(ctx_graph))
+      stop("ggmlR: failed to create a ggml context for the Adam step graph.",
+           call. = FALSE)
+    graph <- ggml_build_forward_expand(ctx_graph, nodes[[1L]])
+    for (nd in nodes[-1L]) ggml_graph_expand(graph, nd)
+    tryCatch(.ag_graph_compute(backend, graph, "adam step"),
+             finally = ggml_free(ctx_graph))
+  }
+
+  # Every weight's buffer changed underneath any cached host copy.
+  for (o in ops) {
+    o$p$data     <- NULL
+    o$p$data_gen <- NULL
+  }
+  invisible(TRUE)
 }
 
 # MSE on the device: the difference stays resident, only the scalar comes back.
@@ -1374,7 +1519,7 @@ GGML_PREC_F32 <- 10L
 # Upload an R matrix to a ggml tensor in the global param context.
 # The global ctx must already exist (set up by .ag_reset_ggml_ctx).
 .ag_r_to_gpu <- function(data, dtype = .ag_device_state$dtype, scope = "pass") {
-  scope <- match.arg(scope, .ag_scopes)
+  scope <- .ag_scope_arg(scope)
   if (is.null(.ag_device_state$backend))
     stop("GPU backend not initialised. Call ag_device('gpu') first.")
   if (is.vector(data) && !is.list(data)) data <- matrix(data, ncol = 1L)
@@ -1409,7 +1554,7 @@ GGML_PREC_F32 <- 10L
 # first, allocated in one batch, and only then filled — one buffer for the whole
 # group rather than one per tensor.
 .ag_r_to_gpu_batch <- function(mats, dtype = .ag_device_state$dtype, scope = "pass") {
-  scope <- match.arg(scope, .ag_scopes)
+  scope <- .ag_scope_arg(scope)
   if (is.null(.ag_device_state$backend))
     stop("GPU backend not initialised. Call ag_device('gpu') first.")
   if (!length(mats)) return(list())
@@ -1492,6 +1637,11 @@ GGML_PREC_F32 <- 10L
            "pointer, ", .ag_tensor_scope(t), " pool, generation ",
            t$ctx_gen %||% NA, " < ", .ag_scope_gen(.ag_tensor_scope(t)),
            ") and it has no CPU copy to fall back on.",
+           if (identical(.ag_tensor_scope(t), "pass"))
+             paste0(" Most likely it was computed by ag_* operations on the device ",
+                    "BEFORE with_grad_tape(), which frees the pass pool on entry. ",
+                    "Build such inputs inside the tape (or from host matrices); ",
+                    "only ag_param() weights survive a tape reset."),
            call. = FALSE)
     return(NULL)
   }
@@ -1526,6 +1676,8 @@ GGML_PREC_F32 <- 10L
   t$data_gen <- NULL
   if (!is.null(t$ptr)) {
     t$ptr       <- NULL
+    t$ptr_pending <- FALSE
+    t$ptr_epoch   <- NULL
     t$ctx_gen   <- NULL
     t$ctx_scope <- NULL
     t$shape     <- NULL
@@ -1579,6 +1731,11 @@ GGML_PREC_F32 <- 10L
          " (current is ", .ag_scope_gen(.ag_handle_scope(h)), ").",
          call. = FALSE)
   t$ptr       <- h$ptr
+  # Pending state travels with the pointer: a handle rebuilt from the tensor
+  # (.ag_handle_of) must still know it is an uncomputed node of the current
+  # queue, or .ag_graph_operand would alias memory that holds nothing yet.
+  t$ptr_pending <- isTRUE(h$pending)
+  t$ptr_epoch   <- h$epoch
   t$shape     <- h$shape
   t$ctx_gen   <- h$gen
   # The pool travels with the pointer: $ctx_gen is only meaningful next to the
@@ -1741,6 +1898,8 @@ GGML_PREC_F32 <- 10L
       t$data_gen <- NULL      # authoritative host value now, not a cache
     }
     t$ptr       <- NULL
+    t$ptr_pending <- FALSE
+    t$ptr_epoch   <- NULL
     t$ctx_gen   <- NULL
     t$ctx_scope <- NULL
     t$shape     <- NULL
@@ -1800,6 +1959,8 @@ GGML_PREC_F32 <- 10L
   # authoritative, and dropping it would force a download to read the batch
   # back. The pointer is a cache of it for this tape, nothing more.
   t$ptr       <- h$ptr
+  t$ptr_pending <- FALSE           # an upload: the data is there
+  t$ptr_epoch   <- NULL
   t$shape     <- h$shape
   t$ctx_gen   <- h$gen
   t$ctx_scope <- "pass"
@@ -1820,5 +1981,6 @@ GGML_PREC_F32 <- 10L
   # The tensor's own pool, not the default: a persistent weight handed a
   # pass-pool handle would be checked against the wrong generation counter and
   # rejected as stale at the first tape reset, even though its buffer is alive.
-  .ag_handle(t$ptr, t$shape, scope = .ag_tensor_scope(t))
+  .ag_handle(t$ptr, t$shape, scope = .ag_tensor_scope(t),
+             pending = isTRUE(t$ptr_pending), epoch = t$ptr_epoch)
 }

@@ -842,6 +842,44 @@ static void ggml_vk_load_shaders(vk_device& device) {
     }
 #undef CREATE_MM
 
+    // ggmlR: exact f32 x f32 for nodes with GGML_PREC_F32 (not upstream).
+    //
+    // On an fp16 or coopmat device every matmul_f32_f32 variant above keeps its
+    // shared-memory tiles in f16, so f32 x f32 with n > 8 (the mat-vec path ends
+    // at 8) carries ~4e-4 relative error. The _fp32 SPIR-V is always generated;
+    // here it is registered with SCALAR tiles (tm/tn/tk of the non-coopmat
+    // layout -- the coopmat ones would not match a non-coopmat shader) and only
+    // in the sizes whose f32 tiles fit in shared memory. Registration is cheap:
+    // pipelines compile lazily on first use, so callers that never ask for
+    // GGML_PREC_F32 (llamaR, sd2R) pay nothing.
+    if (!device->fp16 && !device->coopmat_support && !device->coopmat2) {
+        device->pipeline_matmul_f32_prec32 = device->pipeline_matmul_f32;   // already f32
+    } else {
+        if (!device->pipeline_matmul_f32_prec32 ||
+            device->pipeline_matmul_f32_prec32 == device->pipeline_matmul_f32) {
+            device->pipeline_matmul_f32_prec32 = std::make_shared<vk_matmul_pipeline_struct>();
+        }
+        const std::vector<uint32_t> p32_l = { 128, 128, 128, 16, subgroup_size_8 * 2, 64, 2, 4, 4, 1, subgroup_size_8 };
+        const std::vector<uint32_t> p32_m = { 128,  64,  64, 16, subgroup_size_8,     32, 2, 4, 2, 1, subgroup_size_8 };
+        const std::vector<uint32_t> p32_s = { subgroup_size_16, 32, 32, 16, 32,        32, 2, 2, 2, 1, subgroup_size_8 };
+        const std::array<uint32_t, 3> p32_l_wg = { 128, 128, 1 }, p32_m_wg = { 64, 64, 1 }, p32_s_wg = { 32, 32, 1 };
+        auto &p32 = device->pipeline_matmul_f32_prec32;
+        auto const &reg = [&](vk_pipeline &u, vk_pipeline &a, const char *nu, const char *na,
+                              const std::vector<uint32_t> &wt, const std::array<uint32_t, 3> &wg, uint32_t align) {
+            if (!ggml_vk_matmul_shmem_support(device, wt, false, GGML_TYPE_F32, true)) {
+                return;
+            }
+            ggml_vk_create_pipeline(device, u, nu, matmul_f32_f32_fp32_len, matmul_f32_f32_fp32_data, "main", 3, sizeof(vk_mat_mat_push_constants), wg, wt, 1);
+            ggml_vk_create_pipeline(device, a, na, matmul_f32_f32_aligned_fp32_len, matmul_f32_f32_aligned_fp32_data, "main", 3, sizeof(vk_mat_mat_push_constants), wg, wt, align);
+        };
+        reg(p32->l, p32->a_l, "matmul_f32_f32_prec32_l", "matmul_f32_f32_prec32_aligned_l", p32_l, p32_l_wg, 128);
+        reg(p32->m, p32->a_m, "matmul_f32_f32_prec32_m", "matmul_f32_f32_prec32_aligned_m", p32_m, p32_m_wg,  64);
+        reg(p32->s, p32->a_s, "matmul_f32_f32_prec32_s", "matmul_f32_f32_prec32_aligned_s", p32_s, p32_s_wg,  32);
+        if (p32->is_empty()) {
+            p32 = nullptr;   // ggml_vk_get_mul_mat_mat_pipeline warns once and falls back
+        }
+    }
+
     // mul mat vec
 
     // the number of rows computed per shader depends on GPU model and quant
@@ -1648,7 +1686,8 @@ static void ggml_vk_load_shaders(vk_device& device) {
         ggml_vk_create_pipeline(device, device->pipeline_ssm_scan_back_f32_d128, "ssm_scan_back_128_f32", ssm_scan_back_f32_len, ssm_scan_back_f32_data, "main", 10, sizeof(vk_op_ssm_scan_back_push_constants), {1, 1, 1}, {128}, 1);
         ggml_vk_create_pipeline(device, device->pipeline_ssm_scan_back_f32_d256, "ssm_scan_back_256_f32", ssm_scan_back_f32_len, ssm_scan_back_f32_data, "main", 10, sizeof(vk_op_ssm_scan_back_push_constants), {1, 1, 1}, {256}, 1);
     }
-    ggml_vk_create_pipeline(device, device->pipeline_out_prod_f32, "out_prod_f32", out_prod_f32_len, out_prod_f32_data, "main", 3, sizeof(vk_op_out_prod_push_constants), {32, 8, 1}, {}, 1);
+    // wg_denoms = the dst tile of one workgroup (TM x TN in out_prod.comp).
+    ggml_vk_create_pipeline(device, device->pipeline_out_prod_f32, "out_prod_f32", out_prod_f32_len, out_prod_f32_data, "main", 3, sizeof(vk_op_out_prod_push_constants), {32, 32, 1}, {}, 1);
     ggml_vk_create_pipeline(device, device->pipeline_cross_entropy_loss_back_f32, "cross_entropy_loss_back_f32", cross_entropy_loss_back_f32_len, cross_entropy_loss_back_f32_data, "main", 4, sizeof(vk_op_cross_entropy_loss_back_push_constants), {1, 1, 1}, {32}, 1);
 
     // ggmlR: backward of flash attention. Six buffers (q, k, v, mask, d, and the
@@ -1911,10 +1950,16 @@ static vk_device ggml_vk_get_device(size_t idx) {
                 if (max_hv > 0 && max_vram > 0 &&
                     (double)max_hv < GGML_VK_REBAR_MIN_HEAP_FRACTION * (double)max_vram) {
                     device->disable_host_visible_vidmem = true;
-                    GGML_LOG_INFO("ggml_vulkan: no Resizable BAR (host-visible VRAM heap "
-                                  "%.0f MiB of %.0f MiB) -- device buffers use device-local "
-                                  "memory only; GGML_VK_FORCE_HOST_VISIBLE_VIDMEM=1 overrides\n",
-                                  (double)max_hv / 1048576.0, (double)max_vram / 1048576.0);
+                    // Printed only under GGMLR_LOG_DEVICE, like the other device
+                    // telemetry: the decision itself is unconditional, but tests
+                    // create many contexts and the line would repeat for each.
+                    const char * log_dev = getenv("GGMLR_LOG_DEVICE");
+                    if (log_dev != nullptr && log_dev[0] != '\0' && log_dev[0] != '0') {
+                        GGML_LOG_INFO("ggml_vulkan: no Resizable BAR (host-visible VRAM heap "
+                                      "%.0f MiB of %.0f MiB) -- device buffers use device-local "
+                                      "memory only; GGML_VK_FORCE_HOST_VISIBLE_VIDMEM=1 overrides\n",
+                                      (double)max_hv / 1048576.0, (double)max_vram / 1048576.0);
+                    }
                 }
             }
         }
