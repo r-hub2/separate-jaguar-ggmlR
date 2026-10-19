@@ -435,6 +435,16 @@ variable name.</p>
 <td>Reshape tensor</td>
 </tr>
 <tr class="even">
+<td><code>ag_slice_rows(x, from, n)</code></td>
+<td>Rows <code>from+1..from+n</code> (0-based <code>from</code>);
+gradient zero outside</td>
+</tr>
+<tr class="odd">
+<td><code>ag_concat_rows(a, b)</code></td>
+<td><code>rbind(a, b)</code>, same number of columns; gradient split
+back by rows</td>
+</tr>
+<tr class="even">
 <td><code>ag_softmax_cross_entropy_loss(logits, y)</code></td>
 <td>Fused softmax + cross-entropy</td>
 </tr>
@@ -747,6 +757,36 @@ weight upload dominates.</p>
 <p>Residency lowers the size at which the GPU beats the CPU; it does not
 remove it. Below roughly <code>d = 128</code> the dispatch cost still
 outweighs the arithmetic.</p>
+</div>
+<div id="device-buffers" class="section level3">
+<h3>Device buffers</h3>
+<p>A table written a few columns at a time and read in random batches (a
+replay buffer in off-policy RL) is kept on the device with
+<code>ag_buffer()</code>: a write sends only the new columns, and
+<code>ag_get_rows()</code> sends only the indices. The same calls run on
+an R matrix on the CPU, as here.</p>
+<div class="sourceCode" id="cb18"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb18-1"><a href="#cb18-1" tabindex="-1"></a><span class="fu">ag_device</span>(<span class="st">&quot;cpu&quot;</span>)</span>
+<span id="cb18-2"><a href="#cb18-2" tabindex="-1"></a><span class="fu">set.seed</span>(<span class="dv">1</span>)</span>
+<span id="cb18-3"><a href="#cb18-3" tabindex="-1"></a>buf <span class="ot">&lt;-</span> <span class="fu">ag_buffer</span>(<span class="at">rows =</span> <span class="dv">6</span>, <span class="at">capacity =</span> <span class="dv">50</span>)       <span class="co"># one column per transition</span></span>
+<span id="cb18-4"><a href="#cb18-4" tabindex="-1"></a><span class="fu">ag_buffer_write</span>(buf, <span class="fu">matrix</span>(<span class="fu">rnorm</span>(<span class="dv">6</span> <span class="sc">*</span> <span class="dv">20</span>), <span class="dv">6</span>, <span class="dv">20</span>), <span class="at">col_offset =</span> <span class="dv">0</span>)</span>
+<span id="cb18-5"><a href="#cb18-5" tabindex="-1"></a></span>
+<span id="cb18-6"><a href="#cb18-6" tabindex="-1"></a>f <span class="ot">&lt;-</span> <span class="fu">ag_capture</span>(<span class="cf">function</span>(idx) {</span>
+<span id="cb18-7"><a href="#cb18-7" tabindex="-1"></a>  x <span class="ot">&lt;-</span> <span class="fu">ag_get_rows</span>(buf, idx)                    <span class="co"># 6 x B, no gradient</span></span>
+<span id="cb18-8"><a href="#cb18-8" tabindex="-1"></a>  <span class="fu">list</span>(<span class="at">obs =</span> <span class="fu">ag_slice_rows</span>(x, <span class="dv">0</span>, <span class="dv">3</span>),            <span class="co"># rows 1..3</span></span>
+<span id="cb18-9"><a href="#cb18-9" tabindex="-1"></a>       <span class="at">act =</span> <span class="fu">ag_slice_rows</span>(x, <span class="dv">3</span>, <span class="dv">2</span>))            <span class="co"># rows 4..5</span></span>
+<span id="cb18-10"><a href="#cb18-10" tabindex="-1"></a>}, <span class="at">params =</span> <span class="fu">list</span>(buf))</span>
+<span id="cb18-11"><a href="#cb18-11" tabindex="-1"></a>batch <span class="ot">&lt;-</span> <span class="fu">f</span>(<span class="at">idx =</span> <span class="fu">matrix</span>(<span class="fu">c</span>(<span class="dv">0</span>, <span class="dv">7</span>, <span class="dv">19</span>), <span class="at">ncol =</span> <span class="dv">1</span>))</span>
+<span id="cb18-12"><a href="#cb18-12" tabindex="-1"></a>batch<span class="sc">$</span>act</span>
+<span id="cb18-13"><a href="#cb18-13" tabindex="-1"></a></span>
+<span id="cb18-14"><a href="#cb18-14" tabindex="-1"></a><span class="fu">ag_buffer_read</span>(buf, <span class="at">col_offset =</span> <span class="dv">0</span>, <span class="at">k =</span> <span class="dv">2</span>)      <span class="co"># download a range</span></span>
+<span id="cb18-15"><a href="#cb18-15" tabindex="-1"></a><span class="fu">ag_buffer_free</span>(buf)                             <span class="co"># release now</span></span></code></pre></div>
+<p>Indices are 0-based and select columns (the name follows
+<code>ggml_get_rows</code>). Indices given from R are checked; inside a
+GPU recording they are clamped to <code>0..capacity-1</code>. List the
+buffer in <code>params</code> of <code>ag_capture()</code> so that
+freeing or re-uploading it records the graph anew. Switching to the CPU
+moves GPU buffers to the host first, which needs about twice their
+device size.</p>
 <hr />
 </div>
 </div>
@@ -754,7 +794,7 @@ outweighs the arithmetic.</p>
 <h2>12. Data-parallel training</h2>
 <p>For multi-GPU or faster single-GPU training see
 <code>dp_train()</code>:</p>
-<div class="sourceCode" id="cb18"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb18-1"><a href="#cb18-1" tabindex="-1"></a><span class="co"># Full example: inst/examples/dp_train_demo.R</span></span></code></pre></div>
+<div class="sourceCode" id="cb19"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb19-1"><a href="#cb19-1" tabindex="-1"></a><span class="co"># Full example: inst/examples/dp_train_demo.R</span></span></code></pre></div>
 <p>See also
 <code>vignette(&quot;data-parallel-training&quot;, package = &quot;ggmlR&quot;)</code>.</p>
 </div>

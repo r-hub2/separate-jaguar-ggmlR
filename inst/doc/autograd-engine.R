@@ -235,5 +235,22 @@ knitr::opts_chunk$set(eval = identical(Sys.getenv("NOT_CRAN"), "true"))
 # ggmlR:::ag_backward_resident(FALSE)  # download gradients into R matrices
 
 ## -----------------------------------------------------------------------------
+# ag_device("cpu")
+# set.seed(1)
+# buf <- ag_buffer(rows = 6, capacity = 50)       # one column per transition
+# ag_buffer_write(buf, matrix(rnorm(6 * 20), 6, 20), col_offset = 0)
+# 
+# f <- ag_capture(function(idx) {
+#   x <- ag_get_rows(buf, idx)                    # 6 x B, no gradient
+#   list(obs = ag_slice_rows(x, 0, 3),            # rows 1..3
+#        act = ag_slice_rows(x, 3, 2))            # rows 4..5
+# }, params = list(buf))
+# batch <- f(idx = matrix(c(0, 7, 19), ncol = 1))
+# batch$act
+# 
+# ag_buffer_read(buf, col_offset = 0, k = 2)      # download a range
+# ag_buffer_free(buf)                             # release now
+
+## -----------------------------------------------------------------------------
 # # Full example: inst/examples/dp_train_demo.R
 

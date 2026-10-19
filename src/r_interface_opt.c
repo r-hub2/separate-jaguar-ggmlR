@@ -494,6 +494,13 @@ SEXP R_ggml_opt_outputs_i(SEXP opt_ctx_ptr, SEXP ihead) {
     return r_opt_head_tensor(opt_ctx_ptr, ihead, ggml_opt_outputs_i, "outputs");
 }
 
+// Make the next ggml_opt_alloc() allocate again; see ggml_opt_invalidate_alloc().
+SEXP R_ggml_opt_invalidate_alloc(SEXP opt_ctx_ptr) {
+    ggml_opt_context_t opt_ctx = (ggml_opt_context_t) r_ptr_required(opt_ctx_ptr, "optimizer context");
+    ggml_opt_invalidate_alloc(opt_ctx);
+    return R_NilValue;
+}
+
 SEXP R_ggml_opt_labels_i(SEXP opt_ctx_ptr, SEXP ihead) {
     return r_opt_head_tensor(opt_ctx_ptr, ihead, ggml_opt_labels_i, "labels");
 }
@@ -1468,6 +1475,19 @@ SEXP R_ggml_opt_set_lr(SEXP ud_ptr, SEXP adamw_lr, SEXP sgd_lr) {
         ud->params.adamw.alpha = (float)asReal(adamw_lr);
     if (!ISNA(asReal(sgd_lr)))
         ud->params.sgd.alpha = (float)asReal(sgd_lr);
+
+    return R_NilValue;
+}
+
+// Set decoupled weight decay in the userdata, for AdamW and SGD alike. ggml
+// applies it to parameter tensors only, so a frozen weight -- never marked as a
+// parameter -- is not decayed. ggml asserts 0 <= wd <= 1; R checks that first.
+SEXP R_ggml_opt_set_wd(SEXP ud_ptr, SEXP wd) {
+    r_opt_lr_userdata * ud = (r_opt_lr_userdata *)R_ExternalPtrAddr(ud_ptr);
+    if (ud == NULL) error("Invalid LR userdata pointer");
+
+    ud->params.adamw.wd = (float)asReal(wd);
+    ud->params.sgd.wd   = (float)asReal(wd);
 
     return R_NilValue;
 }

@@ -97,6 +97,7 @@ extern SEXP R_ggml_opt_n_loss(SEXP);
 extern SEXP R_ggml_opt_outputs_i(SEXP, SEXP);
 extern SEXP R_ggml_opt_labels_i(SEXP, SEXP);
 extern SEXP R_ggml_opt_loss_weights_i(SEXP, SEXP);
+extern SEXP R_ggml_opt_invalidate_alloc(SEXP);
 extern SEXP R_ggml_opt_loss_i(SEXP, SEXP);
 extern SEXP R_ggml_opt_pred_i(SEXP, SEXP);
 extern SEXP R_ggml_opt_ncorrect_i(SEXP, SEXP);
@@ -125,6 +126,7 @@ extern SEXP R_ggml_opt_init_for_fit_multi(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SE
 extern SEXP R_ggml_sched_sync_threads(SEXP);
 extern SEXP R_ggml_opt_set_lr(SEXP, SEXP, SEXP);
 extern SEXP R_ggml_opt_get_lr(SEXP);
+extern SEXP R_ggml_opt_set_wd(SEXP, SEXP);
 
 // Extended backend functions (defined in r_interface_backend.c)
 // Device type constants
@@ -286,6 +288,7 @@ extern SEXP R_ggml_cross_entropy_loss_back(SEXP, SEXP, SEXP, SEXP);
 extern SEXP R_ggml_cumsum(SEXP, SEXP);
 extern SEXP R_ggml_flash_attn_ext_set_prec(SEXP, SEXP);
 extern SEXP R_ggml_mul_mat_set_prec(SEXP, SEXP);
+extern SEXP R_ggml_graph_set_matmul_prec(SEXP, SEXP);
 extern SEXP R_ggml_flash_attn_ext_get_prec(SEXP);
 extern SEXP R_ggml_flash_attn_ext_add_sinks(SEXP, SEXP);
 extern SEXP R_ggml_soft_max_add_sinks(SEXP, SEXP);
@@ -1019,6 +1022,7 @@ SEXP R_ggml_custom_ops(void);
 
 // Sequence/Token operations
 SEXP R_ggml_pad(SEXP ctx_ptr, SEXP a_ptr, SEXP p0, SEXP p1, SEXP p2, SEXP p3);
+SEXP R_ggml_pad_ext(SEXP ctx_ptr, SEXP a_ptr, SEXP lp, SEXP rp);
 SEXP R_ggml_argsort(SEXP ctx_ptr, SEXP a_ptr, SEXP order);
 SEXP R_ggml_top_k(SEXP ctx_ptr, SEXP a_ptr, SEXP k);
 SEXP R_ggml_repeat_back(SEXP ctx_ptr, SEXP a_ptr, SEXP b_ptr);
@@ -1569,6 +1573,7 @@ static const R_CallMethodDef CallEntries[] = {
 
     // Sequence/Token operations
     {"R_ggml_pad",            (DL_FUNC) &R_ggml_pad,            6},
+    {"R_ggml_pad_ext",        (DL_FUNC) &R_ggml_pad_ext,        4},
     {"R_ggml_argsort",        (DL_FUNC) &R_ggml_argsort,        3},
     {"R_ggml_top_k",          (DL_FUNC) &R_ggml_top_k,          3},
     {"R_ggml_repeat_back",    (DL_FUNC) &R_ggml_repeat_back,    3},
@@ -1740,6 +1745,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"R_ggml_opt_outputs_i",                    (DL_FUNC) &R_ggml_opt_outputs_i,                    2},
     {"R_ggml_opt_labels_i",                     (DL_FUNC) &R_ggml_opt_labels_i,                     2},
     {"R_ggml_opt_loss_weights_i",               (DL_FUNC) &R_ggml_opt_loss_weights_i,               2},
+    {"R_ggml_opt_invalidate_alloc",             (DL_FUNC) &R_ggml_opt_invalidate_alloc,             1},
     {"R_ggml_opt_loss_i",                       (DL_FUNC) &R_ggml_opt_loss_i,                       2},
     {"R_ggml_opt_pred_i",                       (DL_FUNC) &R_ggml_opt_pred_i,                       2},
     {"R_ggml_opt_ncorrect_i",                   (DL_FUNC) &R_ggml_opt_ncorrect_i,                   2},
@@ -1768,6 +1774,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"R_ggml_sched_sync_threads",                (DL_FUNC) &R_ggml_sched_sync_threads,                1},
     {"R_ggml_opt_set_lr",                        (DL_FUNC) &R_ggml_opt_set_lr,                        3},
     {"R_ggml_opt_get_lr",                        (DL_FUNC) &R_ggml_opt_get_lr,                        1},
+    {"R_ggml_opt_set_wd",                        (DL_FUNC) &R_ggml_opt_set_wd,                        2},
 
     // Extended backend functions
     {"R_ggml_backend_device_type_cpu",          (DL_FUNC) &R_ggml_backend_device_type_cpu,           0},
@@ -1899,6 +1906,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"R_ggml_cumsum",                           (DL_FUNC) &R_ggml_cumsum,                            2},
     {"R_ggml_flash_attn_ext_set_prec",          (DL_FUNC) &R_ggml_flash_attn_ext_set_prec,           2},
     {"R_ggml_mul_mat_set_prec",                 (DL_FUNC) &R_ggml_mul_mat_set_prec,                  2},
+    {"R_ggml_graph_set_matmul_prec",            (DL_FUNC) &R_ggml_graph_set_matmul_prec,             2},
     {"R_ggml_flash_attn_ext_get_prec",          (DL_FUNC) &R_ggml_flash_attn_ext_get_prec,           1},
     {"R_ggml_flash_attn_ext_add_sinks",         (DL_FUNC) &R_ggml_flash_attn_ext_add_sinks,          2},
     {"R_ggml_soft_max_add_sinks",               (DL_FUNC) &R_ggml_soft_max_add_sinks,                2},
