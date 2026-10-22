@@ -69,9 +69,114 @@ knitr::opts_chunk$set(eval = identical(Sys.getenv("NOT_CRAN"), "true"))
 # cat(sprintf("Reloaded model accuracy: %.4f\n", score2$accuracy))
 
 ## -----------------------------------------------------------------------------
+# set.seed(3)
+# vocab <- 20L; seq_len <- 6L
+# tok <- matrix(sample(0:(vocab - 1L), 200L * seq_len, replace = TRUE),
+#               200L, seq_len)
+# lab   <- as.integer(rowMeans(tok < 10L) > 0.5)   # mostly low tokens?
+# y_tok <- cbind(1 - lab, lab) * 1.0
+# 
+# model_emb <- ggml_model_sequential() |>
+#   ggml_layer_embedding(vocab_size = vocab, dim = 8L, input_shape = seq_len) |>
+#   ggml_layer_flatten() |>
+#   ggml_layer_dense(2L, activation = "softmax") |>
+#   ggml_compile(optimizer = "adam", loss = "categorical_crossentropy")
+# 
+# model_emb <- ggml_fit(model_emb, tok, y_tok,
+#                       epochs = 30L, batch_size = 20L, verbose = 0L)
+# cat(sprintf("embedding model accuracy: %.4f\n",
+#             tail(model_emb$history$train_accuracy, 1)))
+
+## -----------------------------------------------------------------------------
+# make_gen <- function(x, y, bs) {
+#   pos <- 0L
+#   function() {
+#     if (pos + bs > nrow(x)) { pos <<- 0L; return(NULL) }   # rewind, end epoch
+#     i <- pos + seq_len(bs)
+#     pos <<- pos + bs
+#     list(x[i, , drop = FALSE], y[i, , drop = FALSE])
+#   }
+# }
+# 
+# model_gen <- ggml_model_sequential() |>
+#   ggml_layer_dense(32L, activation = "relu", input_shape = 4L) |>
+#   ggml_layer_dense(3L,  activation = "softmax") |>
+#   ggml_compile(optimizer = "adam", loss = "categorical_crossentropy")
+# 
+# model_gen <- ggml_fit(model_gen, generator = make_gen(x_tr, y_tr, 24L),
+#                       epochs = 50L, batch_size = 24L, verbose = 0L)
+
+## -----------------------------------------------------------------------------
+# sampler <- function() {
+#   i <- sample(nrow(x_tr), 24L)
+#   list(x_tr[i, , drop = FALSE], y_tr[i, , drop = FALSE])
+# }
+# 
+# model_gen <- ggml_fit(model_gen, generator = sampler, steps_per_epoch = 5L,
+#                       epochs = 50L, batch_size = 24L, verbose = 0L)
+# cat(sprintf("generator model, val accuracy: %.4f\n",
+#             ggml_evaluate(model_gen, x_val, y_val, batch_size = 10L)$accuracy))
+
+## -----------------------------------------------------------------------------
+# set.seed(5)
+# model_tr <- ggml_model_sequential() |>
+#   ggml_layer_dense(32L, activation = "relu", input_shape = 4L) |>
+#   ggml_layer_batch_norm() |>
+#   ggml_layer_dense(3L,  activation = "softmax") |>
+#   ggml_compile(optimizer = "adam", loss = "categorical_crossentropy")
+# 
+# tr <- ggml_trainer(model_tr, batch_size = 30L)
+# 
+# for (i in seq_len(300L)) {
+#   b    <- sample(nrow(x_tr), 30L)
+#   loss <- tr$step(x_tr[b, , drop = FALSE], y_tr[b, , drop = FALSE])
+# }
+# cat(sprintf("last step loss: %.4f   val loss: %.4f\n",
+#             loss, tr$eval(x_val, y_val)))
+# 
+# tr$calibrate_bn(x_tr)
+# p_tr <- tr$predict(x_val)
+# cat(sprintf("trainer val accuracy: %.4f\n",
+#             mean(apply(p_tr, 1, which.max) == apply(y_val, 1, which.max))))
+
+## -----------------------------------------------------------------------------
+# target <- tr$snapshot()
+# b <- sample(nrow(x_tr), 30L)
+# tr$step(x_tr[b, , drop = FALSE], y_tr[b, , drop = FALSE])
+# tr$update_target(target, tau = 0.1)
+# ggml_snapshot_free(target)
+# 
+# model_tr <- tr$model()   # weights back into a model object
+# tr$free()
+
+## -----------------------------------------------------------------------------
+# # `model` from 1.2: dense, batch norm, dropout, dense, dense
+# model_ft <- ggml_freeze_weights(model, from = 1L, to = 2L)
+# model_ft <- ggml_freeze_bn_stats(model_ft)
+# model_ft <- ggml_fit(model_ft, x_tr, y_tr,
+#                      epochs = 20L, batch_size = 32L, verbose = 0L)
+# 
+# tryCatch(ggml_freeze_weights(model, prefix = "encoder_"),
+#          error = function(e) cat("Error:", conditionMessage(e), "\n"))
+
+## -----------------------------------------------------------------------------
+# model_wd <- ggml_model_sequential() |>
+#   ggml_layer_dense(32L, activation = "relu", input_shape = 4L) |>
+#   ggml_layer_dense(3L,  activation = "softmax") |>
+#   ggml_compile(optimizer = "adam", loss = "categorical_crossentropy",
+#                weight_decay = 0.01, predict_precision = "f32")
+# 
+# model_wd <- ggml_fit(model_wd, x_tr, y_tr,
+#                      epochs = 100L, batch_size = 32L, verbose = 0L)
+# p_wd <- ggml_predict(model_wd, x_val, batch_size = 10L)
+# p_16 <- ggml_predict(model_wd, x_val, batch_size = 10L,
+#                      matmul_precision = "default")   # this call only
+# cat(sprintf("max |f32 - default|: %.2e (0 on the CPU)\n", max(abs(p_wd - p_16))))
+
+## -----------------------------------------------------------------------------
 # inp  <- ggml_input(shape = 4L)
 # 
-# h    <- inp |> ggml_layer_dense(32L, activation = "relu") |> ggml_layer_batch_norm()
+# h    <- inp |> ggml_layer_dense(32L, activation = "relu") |> ggml_layer_rms_norm()
 # h    <- h   |> ggml_layer_dense(16L, activation = "relu")
 # out  <- h   |> ggml_layer_dense(3L,  activation = "softmax")
 # 

@@ -465,6 +465,180 @@ classification.</p>
 <span id="cb6-5"><a href="#cb6-5" tabindex="-1"></a>model2 <span class="ot">&lt;-</span> <span class="fu">ggml_load_model</span>(path)</span>
 <span id="cb6-6"><a href="#cb6-6" tabindex="-1"></a>score2 <span class="ot">&lt;-</span> <span class="fu">ggml_evaluate</span>(model2, x_val, y_val, <span class="at">batch_size =</span> <span class="dv">16</span><span class="dt">L</span>)</span>
 <span id="cb6-7"><a href="#cb6-7" tabindex="-1"></a><span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">&quot;Reloaded model accuracy: %.4f</span><span class="sc">\n</span><span class="st">&quot;</span>, score2<span class="sc">$</span>accuracy))</span></code></pre></div>
+<p>Only the weights are saved, not the optimizer state. On load, every
+saved tensor is checked by name and size against the layer it fills, so
+a file from another architecture stops with the layer named. Files are
+written in format 3, and <code>ggml_load_model()</code> refuses a format
+newer than it knows.</p>
+</div>
+<div id="embedding-as-the-first-layer" class="section level3">
+<h3>1.6 Embedding as the first layer</h3>
+<p><code>ggml_layer_embedding()</code> can open a sequential model: give
+it <code>input_shape =</code> the sequence length, and the input is a
+matrix of token indices, one row per sample. Indices are 0-based,
+<code>0 .. vocab_size - 1</code>; NA, fractions and out-of-vocabulary
+indices are errors, not silently clamped.</p>
+<div class="sourceCode" id="cb7"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb7-1"><a href="#cb7-1" tabindex="-1"></a><span class="fu">set.seed</span>(<span class="dv">3</span>)</span>
+<span id="cb7-2"><a href="#cb7-2" tabindex="-1"></a>vocab <span class="ot">&lt;-</span> <span class="dv">20</span><span class="dt">L</span>; seq_len <span class="ot">&lt;-</span> <span class="dv">6</span><span class="dt">L</span></span>
+<span id="cb7-3"><a href="#cb7-3" tabindex="-1"></a>tok <span class="ot">&lt;-</span> <span class="fu">matrix</span>(<span class="fu">sample</span>(<span class="dv">0</span><span class="sc">:</span>(vocab <span class="sc">-</span> <span class="dv">1</span><span class="dt">L</span>), <span class="dv">200</span><span class="dt">L</span> <span class="sc">*</span> seq_len, <span class="at">replace =</span> <span class="cn">TRUE</span>),</span>
+<span id="cb7-4"><a href="#cb7-4" tabindex="-1"></a>              <span class="dv">200</span><span class="dt">L</span>, seq_len)</span>
+<span id="cb7-5"><a href="#cb7-5" tabindex="-1"></a>lab   <span class="ot">&lt;-</span> <span class="fu">as.integer</span>(<span class="fu">rowMeans</span>(tok <span class="sc">&lt;</span> <span class="dv">10</span><span class="dt">L</span>) <span class="sc">&gt;</span> <span class="fl">0.5</span>)   <span class="co"># mostly low tokens?</span></span>
+<span id="cb7-6"><a href="#cb7-6" tabindex="-1"></a>y_tok <span class="ot">&lt;-</span> <span class="fu">cbind</span>(<span class="dv">1</span> <span class="sc">-</span> lab, lab) <span class="sc">*</span> <span class="fl">1.0</span></span>
+<span id="cb7-7"><a href="#cb7-7" tabindex="-1"></a></span>
+<span id="cb7-8"><a href="#cb7-8" tabindex="-1"></a>model_emb <span class="ot">&lt;-</span> <span class="fu">ggml_model_sequential</span>() <span class="sc">|&gt;</span></span>
+<span id="cb7-9"><a href="#cb7-9" tabindex="-1"></a>  <span class="fu">ggml_layer_embedding</span>(<span class="at">vocab_size =</span> vocab, <span class="at">dim =</span> <span class="dv">8</span><span class="dt">L</span>, <span class="at">input_shape =</span> seq_len) <span class="sc">|&gt;</span></span>
+<span id="cb7-10"><a href="#cb7-10" tabindex="-1"></a>  <span class="fu">ggml_layer_flatten</span>() <span class="sc">|&gt;</span></span>
+<span id="cb7-11"><a href="#cb7-11" tabindex="-1"></a>  <span class="fu">ggml_layer_dense</span>(<span class="dv">2</span><span class="dt">L</span>, <span class="at">activation =</span> <span class="st">&quot;softmax&quot;</span>) <span class="sc">|&gt;</span></span>
+<span id="cb7-12"><a href="#cb7-12" tabindex="-1"></a>  <span class="fu">ggml_compile</span>(<span class="at">optimizer =</span> <span class="st">&quot;adam&quot;</span>, <span class="at">loss =</span> <span class="st">&quot;categorical_crossentropy&quot;</span>)</span>
+<span id="cb7-13"><a href="#cb7-13" tabindex="-1"></a></span>
+<span id="cb7-14"><a href="#cb7-14" tabindex="-1"></a>model_emb <span class="ot">&lt;-</span> <span class="fu">ggml_fit</span>(model_emb, tok, y_tok,</span>
+<span id="cb7-15"><a href="#cb7-15" tabindex="-1"></a>                      <span class="at">epochs =</span> <span class="dv">30</span><span class="dt">L</span>, <span class="at">batch_size =</span> <span class="dv">20</span><span class="dt">L</span>, <span class="at">verbose =</span> <span class="dv">0</span><span class="dt">L</span>)</span>
+<span id="cb7-16"><a href="#cb7-16" tabindex="-1"></a><span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">&quot;embedding model accuracy: %.4f</span><span class="sc">\n</span><span class="st">&quot;</span>,</span>
+<span id="cb7-17"><a href="#cb7-17" tabindex="-1"></a>            <span class="fu">tail</span>(model_emb<span class="sc">$</span>history<span class="sc">$</span>train_accuracy, <span class="dv">1</span>)))</span></code></pre></div>
+</div>
+<div id="training-from-a-generator" class="section level3">
+<h3>1.7 Training from a generator</h3>
+<p>With <code>generator =</code>, <code>ggml_fit()</code> pulls batches
+from a function instead of slicing a matrix held in memory, so only the
+current batch is resident. The function takes no arguments and returns
+<code>list(x, y)</code> with exactly <code>batch_size</code> rows, or
+<code>NULL</code> to end the epoch. A finite generator has to rewind
+itself before returning <code>NULL</code>, or the next epoch gets
+nothing:</p>
+<div class="sourceCode" id="cb8"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb8-1"><a href="#cb8-1" tabindex="-1"></a>make_gen <span class="ot">&lt;-</span> <span class="cf">function</span>(x, y, bs) {</span>
+<span id="cb8-2"><a href="#cb8-2" tabindex="-1"></a>  pos <span class="ot">&lt;-</span> <span class="dv">0</span><span class="dt">L</span></span>
+<span id="cb8-3"><a href="#cb8-3" tabindex="-1"></a>  <span class="cf">function</span>() {</span>
+<span id="cb8-4"><a href="#cb8-4" tabindex="-1"></a>    <span class="cf">if</span> (pos <span class="sc">+</span> bs <span class="sc">&gt;</span> <span class="fu">nrow</span>(x)) { pos <span class="ot">&lt;&lt;-</span> <span class="dv">0</span><span class="dt">L</span>; <span class="fu">return</span>(<span class="cn">NULL</span>) }   <span class="co"># rewind, end epoch</span></span>
+<span id="cb8-5"><a href="#cb8-5" tabindex="-1"></a>    i <span class="ot">&lt;-</span> pos <span class="sc">+</span> <span class="fu">seq_len</span>(bs)</span>
+<span id="cb8-6"><a href="#cb8-6" tabindex="-1"></a>    pos <span class="ot">&lt;&lt;-</span> pos <span class="sc">+</span> bs</span>
+<span id="cb8-7"><a href="#cb8-7" tabindex="-1"></a>    <span class="fu">list</span>(x[i, , <span class="at">drop =</span> <span class="cn">FALSE</span>], y[i, , <span class="at">drop =</span> <span class="cn">FALSE</span>])</span>
+<span id="cb8-8"><a href="#cb8-8" tabindex="-1"></a>  }</span>
+<span id="cb8-9"><a href="#cb8-9" tabindex="-1"></a>}</span>
+<span id="cb8-10"><a href="#cb8-10" tabindex="-1"></a></span>
+<span id="cb8-11"><a href="#cb8-11" tabindex="-1"></a>model_gen <span class="ot">&lt;-</span> <span class="fu">ggml_model_sequential</span>() <span class="sc">|&gt;</span></span>
+<span id="cb8-12"><a href="#cb8-12" tabindex="-1"></a>  <span class="fu">ggml_layer_dense</span>(<span class="dv">32</span><span class="dt">L</span>, <span class="at">activation =</span> <span class="st">&quot;relu&quot;</span>, <span class="at">input_shape =</span> <span class="dv">4</span><span class="dt">L</span>) <span class="sc">|&gt;</span></span>
+<span id="cb8-13"><a href="#cb8-13" tabindex="-1"></a>  <span class="fu">ggml_layer_dense</span>(<span class="dv">3</span><span class="dt">L</span>,  <span class="at">activation =</span> <span class="st">&quot;softmax&quot;</span>) <span class="sc">|&gt;</span></span>
+<span id="cb8-14"><a href="#cb8-14" tabindex="-1"></a>  <span class="fu">ggml_compile</span>(<span class="at">optimizer =</span> <span class="st">&quot;adam&quot;</span>, <span class="at">loss =</span> <span class="st">&quot;categorical_crossentropy&quot;</span>)</span>
+<span id="cb8-15"><a href="#cb8-15" tabindex="-1"></a></span>
+<span id="cb8-16"><a href="#cb8-16" tabindex="-1"></a>model_gen <span class="ot">&lt;-</span> <span class="fu">ggml_fit</span>(model_gen, <span class="at">generator =</span> <span class="fu">make_gen</span>(x_tr, y_tr, <span class="dv">24</span><span class="dt">L</span>),</span>
+<span id="cb8-17"><a href="#cb8-17" tabindex="-1"></a>                      <span class="at">epochs =</span> <span class="dv">50</span><span class="dt">L</span>, <span class="at">batch_size =</span> <span class="dv">24</span><span class="dt">L</span>, <span class="at">verbose =</span> <span class="dv">0</span><span class="dt">L</span>)</span></code></pre></div>
+<p>A generator that never returns <code>NULL</code> — augmentation, a
+simulator — needs <code>steps_per_epoch</code> to say where an epoch
+ends:</p>
+<div class="sourceCode" id="cb9"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb9-1"><a href="#cb9-1" tabindex="-1"></a>sampler <span class="ot">&lt;-</span> <span class="cf">function</span>() {</span>
+<span id="cb9-2"><a href="#cb9-2" tabindex="-1"></a>  i <span class="ot">&lt;-</span> <span class="fu">sample</span>(<span class="fu">nrow</span>(x_tr), <span class="dv">24</span><span class="dt">L</span>)</span>
+<span id="cb9-3"><a href="#cb9-3" tabindex="-1"></a>  <span class="fu">list</span>(x_tr[i, , <span class="at">drop =</span> <span class="cn">FALSE</span>], y_tr[i, , <span class="at">drop =</span> <span class="cn">FALSE</span>])</span>
+<span id="cb9-4"><a href="#cb9-4" tabindex="-1"></a>}</span>
+<span id="cb9-5"><a href="#cb9-5" tabindex="-1"></a></span>
+<span id="cb9-6"><a href="#cb9-6" tabindex="-1"></a>model_gen <span class="ot">&lt;-</span> <span class="fu">ggml_fit</span>(model_gen, <span class="at">generator =</span> sampler, <span class="at">steps_per_epoch =</span> <span class="dv">5</span><span class="dt">L</span>,</span>
+<span id="cb9-7"><a href="#cb9-7" tabindex="-1"></a>                      <span class="at">epochs =</span> <span class="dv">50</span><span class="dt">L</span>, <span class="at">batch_size =</span> <span class="dv">24</span><span class="dt">L</span>, <span class="at">verbose =</span> <span class="dv">0</span><span class="dt">L</span>)</span>
+<span id="cb9-8"><a href="#cb9-8" tabindex="-1"></a><span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">&quot;generator model, val accuracy: %.4f</span><span class="sc">\n</span><span class="st">&quot;</span>,</span>
+<span id="cb9-9"><a href="#cb9-9" tabindex="-1"></a>            <span class="fu">ggml_evaluate</span>(model_gen, x_val, y_val, <span class="at">batch_size =</span> <span class="dv">10</span><span class="dt">L</span>)<span class="sc">$</span>accuracy))</span></code></pre></div>
+<p><code>validation_generator</code> and <code>validation_steps</code>
+validate the same way. The arguments that need the whole data set —
+<code>validation_split</code>, <code>validation_data</code>,
+<code>class_weight</code>, <code>sample_weight</code> — are rejected
+with a generator rather than ignored.</p>
+</div>
+<div id="your-own-training-loop-ggml_trainer" class="section level3">
+<h3>1.8 Your own training loop: <code>ggml_trainer()</code></h3>
+<p>When progress is not counted in passes over a data set —
+reinforcement learning, curricula — <code>ggml_trainer()</code> returns
+a context that keeps the weights, the Adam moments and the graph alive,
+and you step it yourself. <code>$step(x, y)</code> runs one forward and
+backward pass and returns the loss; <code>$eval(x, y)</code> measures
+without training. Both take batches of exactly <code>batch_size</code>
+rows; <code>$predict(x)</code> takes any number.</p>
+<p>A step normalizes each batch by its own statistics and does not
+update the running ones a sequential batch norm predicts with, so a
+model with batch norm warns when the trainer is created.
+<code>$calibrate_bn(x)</code> sets them from representative inputs; call
+it before predicting, snapshotting or saving.</p>
+<div class="sourceCode" id="cb10"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb10-1"><a href="#cb10-1" tabindex="-1"></a><span class="fu">set.seed</span>(<span class="dv">5</span>)</span>
+<span id="cb10-2"><a href="#cb10-2" tabindex="-1"></a>model_tr <span class="ot">&lt;-</span> <span class="fu">ggml_model_sequential</span>() <span class="sc">|&gt;</span></span>
+<span id="cb10-3"><a href="#cb10-3" tabindex="-1"></a>  <span class="fu">ggml_layer_dense</span>(<span class="dv">32</span><span class="dt">L</span>, <span class="at">activation =</span> <span class="st">&quot;relu&quot;</span>, <span class="at">input_shape =</span> <span class="dv">4</span><span class="dt">L</span>) <span class="sc">|&gt;</span></span>
+<span id="cb10-4"><a href="#cb10-4" tabindex="-1"></a>  <span class="fu">ggml_layer_batch_norm</span>() <span class="sc">|&gt;</span></span>
+<span id="cb10-5"><a href="#cb10-5" tabindex="-1"></a>  <span class="fu">ggml_layer_dense</span>(<span class="dv">3</span><span class="dt">L</span>,  <span class="at">activation =</span> <span class="st">&quot;softmax&quot;</span>) <span class="sc">|&gt;</span></span>
+<span id="cb10-6"><a href="#cb10-6" tabindex="-1"></a>  <span class="fu">ggml_compile</span>(<span class="at">optimizer =</span> <span class="st">&quot;adam&quot;</span>, <span class="at">loss =</span> <span class="st">&quot;categorical_crossentropy&quot;</span>)</span>
+<span id="cb10-7"><a href="#cb10-7" tabindex="-1"></a></span>
+<span id="cb10-8"><a href="#cb10-8" tabindex="-1"></a>tr <span class="ot">&lt;-</span> <span class="fu">ggml_trainer</span>(model_tr, <span class="at">batch_size =</span> <span class="dv">30</span><span class="dt">L</span>)</span>
+<span id="cb10-9"><a href="#cb10-9" tabindex="-1"></a></span>
+<span id="cb10-10"><a href="#cb10-10" tabindex="-1"></a><span class="cf">for</span> (i <span class="cf">in</span> <span class="fu">seq_len</span>(<span class="dv">300</span><span class="dt">L</span>)) {</span>
+<span id="cb10-11"><a href="#cb10-11" tabindex="-1"></a>  b    <span class="ot">&lt;-</span> <span class="fu">sample</span>(<span class="fu">nrow</span>(x_tr), <span class="dv">30</span><span class="dt">L</span>)</span>
+<span id="cb10-12"><a href="#cb10-12" tabindex="-1"></a>  loss <span class="ot">&lt;-</span> tr<span class="sc">$</span><span class="fu">step</span>(x_tr[b, , <span class="at">drop =</span> <span class="cn">FALSE</span>], y_tr[b, , <span class="at">drop =</span> <span class="cn">FALSE</span>])</span>
+<span id="cb10-13"><a href="#cb10-13" tabindex="-1"></a>}</span>
+<span id="cb10-14"><a href="#cb10-14" tabindex="-1"></a><span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">&quot;last step loss: %.4f   val loss: %.4f</span><span class="sc">\n</span><span class="st">&quot;</span>,</span>
+<span id="cb10-15"><a href="#cb10-15" tabindex="-1"></a>            loss, tr<span class="sc">$</span><span class="fu">eval</span>(x_val, y_val)))</span>
+<span id="cb10-16"><a href="#cb10-16" tabindex="-1"></a></span>
+<span id="cb10-17"><a href="#cb10-17" tabindex="-1"></a>tr<span class="sc">$</span><span class="fu">calibrate_bn</span>(x_tr)</span>
+<span id="cb10-18"><a href="#cb10-18" tabindex="-1"></a>p_tr <span class="ot">&lt;-</span> tr<span class="sc">$</span><span class="fu">predict</span>(x_val)</span>
+<span id="cb10-19"><a href="#cb10-19" tabindex="-1"></a><span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">&quot;trainer val accuracy: %.4f</span><span class="sc">\n</span><span class="st">&quot;</span>,</span>
+<span id="cb10-20"><a href="#cb10-20" tabindex="-1"></a>            <span class="fu">mean</span>(<span class="fu">apply</span>(p_tr, <span class="dv">1</span>, which.max) <span class="sc">==</span> <span class="fu">apply</span>(y_val, <span class="dv">1</span>, which.max))))</span></code></pre></div>
+<p>For target networks, <code>$snapshot()</code> returns an independent
+model that later steps do not move, and
+<code>$update_target(target, tau)</code> moves it towards the current
+weights (<code>tau = 1</code> is a hard copy, a small <code>tau</code>
+the Polyak average):</p>
+<div class="sourceCode" id="cb11"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb11-1"><a href="#cb11-1" tabindex="-1"></a>target <span class="ot">&lt;-</span> tr<span class="sc">$</span><span class="fu">snapshot</span>()</span>
+<span id="cb11-2"><a href="#cb11-2" tabindex="-1"></a>b <span class="ot">&lt;-</span> <span class="fu">sample</span>(<span class="fu">nrow</span>(x_tr), <span class="dv">30</span><span class="dt">L</span>)</span>
+<span id="cb11-3"><a href="#cb11-3" tabindex="-1"></a>tr<span class="sc">$</span><span class="fu">step</span>(x_tr[b, , <span class="at">drop =</span> <span class="cn">FALSE</span>], y_tr[b, , <span class="at">drop =</span> <span class="cn">FALSE</span>])</span>
+<span id="cb11-4"><a href="#cb11-4" tabindex="-1"></a>tr<span class="sc">$</span><span class="fu">update_target</span>(target, <span class="at">tau =</span> <span class="fl">0.1</span>)</span>
+<span id="cb11-5"><a href="#cb11-5" tabindex="-1"></a><span class="fu">ggml_snapshot_free</span>(target)</span>
+<span id="cb11-6"><a href="#cb11-6" tabindex="-1"></a></span>
+<span id="cb11-7"><a href="#cb11-7" tabindex="-1"></a>model_tr <span class="ot">&lt;-</span> tr<span class="sc">$</span><span class="fu">model</span>()   <span class="co"># weights back into a model object</span></span>
+<span id="cb11-8"><a href="#cb11-8" tabindex="-1"></a>tr<span class="sc">$</span><span class="fu">free</span>()</span></code></pre></div>
+<p>With <code>ggml_trainer(loss_mask = )</code> the loss becomes a
+weighted MSE and <code>$step()</code> takes a
+<code>sample_weight</code>, so only the outputs whose label is known are
+trained — one action of a Q-network, say.</p>
+</div>
+<div id="fine-tuning-freezing-layers-and-batch-norm-statistics" class="section level3">
+<h3>1.9 Fine-tuning: freezing layers and batch-norm statistics</h3>
+<p><code>ggml_freeze_weights()</code> marks layers as not trainable — by
+index (<code>from</code>, <code>to</code>), by <code>layer_names</code>,
+or by <code>prefix</code>, which selects every layer whose name starts
+with it (a whole block, say <code>prefix = &quot;block1_&quot;</code>).
+<code>ggml_unfreeze_weights()</code> undoes it. A name or prefix that
+matches no layer stops with an error rather than being ignored.</p>
+<p>Freezing a batch-norm layer stops <code>gamma</code> and
+<code>beta</code> only. <code>ggml_freeze_bn_stats()</code> also fixes
+its running statistics: training then normalizes with the stored
+statistics, as prediction does, and they are no longer recalibrated —
+the usual setting for fine-tuning on small batches.</p>
+<div class="sourceCode" id="cb12"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb12-1"><a href="#cb12-1" tabindex="-1"></a><span class="co"># `model` from 1.2: dense, batch norm, dropout, dense, dense</span></span>
+<span id="cb12-2"><a href="#cb12-2" tabindex="-1"></a>model_ft <span class="ot">&lt;-</span> <span class="fu">ggml_freeze_weights</span>(model, <span class="at">from =</span> <span class="dv">1</span><span class="dt">L</span>, <span class="at">to =</span> <span class="dv">2</span><span class="dt">L</span>)</span>
+<span id="cb12-3"><a href="#cb12-3" tabindex="-1"></a>model_ft <span class="ot">&lt;-</span> <span class="fu">ggml_freeze_bn_stats</span>(model_ft)</span>
+<span id="cb12-4"><a href="#cb12-4" tabindex="-1"></a>model_ft <span class="ot">&lt;-</span> <span class="fu">ggml_fit</span>(model_ft, x_tr, y_tr,</span>
+<span id="cb12-5"><a href="#cb12-5" tabindex="-1"></a>                     <span class="at">epochs =</span> <span class="dv">20</span><span class="dt">L</span>, <span class="at">batch_size =</span> <span class="dv">32</span><span class="dt">L</span>, <span class="at">verbose =</span> <span class="dv">0</span><span class="dt">L</span>)</span>
+<span id="cb12-6"><a href="#cb12-6" tabindex="-1"></a></span>
+<span id="cb12-7"><a href="#cb12-7" tabindex="-1"></a><span class="fu">tryCatch</span>(<span class="fu">ggml_freeze_weights</span>(model, <span class="at">prefix =</span> <span class="st">&quot;encoder_&quot;</span>),</span>
+<span id="cb12-8"><a href="#cb12-8" tabindex="-1"></a>         <span class="at">error =</span> <span class="cf">function</span>(e) <span class="fu">cat</span>(<span class="st">&quot;Error:&quot;</span>, <span class="fu">conditionMessage</span>(e), <span class="st">&quot;</span><span class="sc">\n</span><span class="st">&quot;</span>))</span></code></pre></div>
+</div>
+<div id="weight-decay-and-prediction-precision" class="section level3">
+<h3>1.10 Weight decay and prediction precision</h3>
+<p><code>weight_decay</code> in <code>ggml_compile()</code> (and
+<code>ggml_trainer()</code>) is decoupled weight decay, AdamW-style, for
+<code>&quot;adam&quot;</code> and <code>&quot;sgd&quot;</code>; frozen weights are not
+decayed.</p>
+<p>On a Vulkan device with fp16 support, matrix multiplies keep their
+tiles in f16 by default, so predictions carry a relative error around
+1e-3 that depends on the batch size.
+<code>predict_precision = &quot;f32&quot;</code> makes every prediction match the
+CPU to about 1e-6; <code>matmul_precision</code> does the same for one
+<code>ggml_predict()</code> or <code>$predict()</code> call. Training is
+unaffected.</p>
+<div class="sourceCode" id="cb13"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb13-1"><a href="#cb13-1" tabindex="-1"></a>model_wd <span class="ot">&lt;-</span> <span class="fu">ggml_model_sequential</span>() <span class="sc">|&gt;</span></span>
+<span id="cb13-2"><a href="#cb13-2" tabindex="-1"></a>  <span class="fu">ggml_layer_dense</span>(<span class="dv">32</span><span class="dt">L</span>, <span class="at">activation =</span> <span class="st">&quot;relu&quot;</span>, <span class="at">input_shape =</span> <span class="dv">4</span><span class="dt">L</span>) <span class="sc">|&gt;</span></span>
+<span id="cb13-3"><a href="#cb13-3" tabindex="-1"></a>  <span class="fu">ggml_layer_dense</span>(<span class="dv">3</span><span class="dt">L</span>,  <span class="at">activation =</span> <span class="st">&quot;softmax&quot;</span>) <span class="sc">|&gt;</span></span>
+<span id="cb13-4"><a href="#cb13-4" tabindex="-1"></a>  <span class="fu">ggml_compile</span>(<span class="at">optimizer =</span> <span class="st">&quot;adam&quot;</span>, <span class="at">loss =</span> <span class="st">&quot;categorical_crossentropy&quot;</span>,</span>
+<span id="cb13-5"><a href="#cb13-5" tabindex="-1"></a>               <span class="at">weight_decay =</span> <span class="fl">0.01</span>, <span class="at">predict_precision =</span> <span class="st">&quot;f32&quot;</span>)</span>
+<span id="cb13-6"><a href="#cb13-6" tabindex="-1"></a></span>
+<span id="cb13-7"><a href="#cb13-7" tabindex="-1"></a>model_wd <span class="ot">&lt;-</span> <span class="fu">ggml_fit</span>(model_wd, x_tr, y_tr,</span>
+<span id="cb13-8"><a href="#cb13-8" tabindex="-1"></a>                     <span class="at">epochs =</span> <span class="dv">100</span><span class="dt">L</span>, <span class="at">batch_size =</span> <span class="dv">32</span><span class="dt">L</span>, <span class="at">verbose =</span> <span class="dv">0</span><span class="dt">L</span>)</span>
+<span id="cb13-9"><a href="#cb13-9" tabindex="-1"></a>p_wd <span class="ot">&lt;-</span> <span class="fu">ggml_predict</span>(model_wd, x_val, <span class="at">batch_size =</span> <span class="dv">10</span><span class="dt">L</span>)</span>
+<span id="cb13-10"><a href="#cb13-10" tabindex="-1"></a>p_16 <span class="ot">&lt;-</span> <span class="fu">ggml_predict</span>(model_wd, x_val, <span class="at">batch_size =</span> <span class="dv">10</span><span class="dt">L</span>,</span>
+<span id="cb13-11"><a href="#cb13-11" tabindex="-1"></a>                     <span class="at">matmul_precision =</span> <span class="st">&quot;default&quot;</span>)   <span class="co"># this call only</span></span>
+<span id="cb13-12"><a href="#cb13-12" tabindex="-1"></a><span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">&quot;max |f32 - default|: %.2e (0 on the CPU)</span><span class="sc">\n</span><span class="st">&quot;</span>, <span class="fu">max</span>(<span class="fu">abs</span>(p_wd <span class="sc">-</span> p_16))))</span></code></pre></div>
 <hr />
 </div>
 </div>
@@ -475,76 +649,81 @@ inputs/branches/outputs. Use <code>ggml_input()</code> to declare
 inputs, pipe through layers, then call <code>ggml_model()</code>.</p>
 <div id="single-input-dag-residual-style-network-on-iris" class="section level3">
 <h3>2.1 Single-input DAG — residual-style network on iris</h3>
-<div class="sourceCode" id="cb7"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb7-1"><a href="#cb7-1" tabindex="-1"></a>inp  <span class="ot">&lt;-</span> <span class="fu">ggml_input</span>(<span class="at">shape =</span> <span class="dv">4</span><span class="dt">L</span>)</span>
-<span id="cb7-2"><a href="#cb7-2" tabindex="-1"></a></span>
-<span id="cb7-3"><a href="#cb7-3" tabindex="-1"></a>h    <span class="ot">&lt;-</span> inp <span class="sc">|&gt;</span> <span class="fu">ggml_layer_dense</span>(<span class="dv">32</span><span class="dt">L</span>, <span class="at">activation =</span> <span class="st">&quot;relu&quot;</span>) <span class="sc">|&gt;</span> <span class="fu">ggml_layer_batch_norm</span>()</span>
-<span id="cb7-4"><a href="#cb7-4" tabindex="-1"></a>h    <span class="ot">&lt;-</span> h   <span class="sc">|&gt;</span> <span class="fu">ggml_layer_dense</span>(<span class="dv">16</span><span class="dt">L</span>, <span class="at">activation =</span> <span class="st">&quot;relu&quot;</span>)</span>
-<span id="cb7-5"><a href="#cb7-5" tabindex="-1"></a>out  <span class="ot">&lt;-</span> h   <span class="sc">|&gt;</span> <span class="fu">ggml_layer_dense</span>(<span class="dv">3</span><span class="dt">L</span>,  <span class="at">activation =</span> <span class="st">&quot;softmax&quot;</span>)</span>
-<span id="cb7-6"><a href="#cb7-6" tabindex="-1"></a></span>
-<span id="cb7-7"><a href="#cb7-7" tabindex="-1"></a>model_fn <span class="ot">&lt;-</span> <span class="fu">ggml_model</span>(<span class="at">inputs =</span> inp, <span class="at">outputs =</span> out) <span class="sc">|&gt;</span></span>
-<span id="cb7-8"><a href="#cb7-8" tabindex="-1"></a>  <span class="fu">ggml_compile</span>(<span class="at">optimizer =</span> <span class="st">&quot;adam&quot;</span>, <span class="at">loss =</span> <span class="st">&quot;categorical_crossentropy&quot;</span>,</span>
-<span id="cb7-9"><a href="#cb7-9" tabindex="-1"></a>               <span class="at">metrics =</span> <span class="fu">c</span>(<span class="st">&quot;accuracy&quot;</span>))</span>
-<span id="cb7-10"><a href="#cb7-10" tabindex="-1"></a></span>
-<span id="cb7-11"><a href="#cb7-11" tabindex="-1"></a>model_fn <span class="ot">&lt;-</span> <span class="fu">ggml_fit</span>(model_fn, x_tr, y_tr,</span>
-<span id="cb7-12"><a href="#cb7-12" tabindex="-1"></a>                     <span class="at">epochs =</span> <span class="dv">100</span><span class="dt">L</span>, <span class="at">batch_size =</span> <span class="dv">32</span><span class="dt">L</span>, <span class="at">verbose =</span> <span class="dv">0</span><span class="dt">L</span>)</span>
-<span id="cb7-13"><a href="#cb7-13" tabindex="-1"></a></span>
-<span id="cb7-14"><a href="#cb7-14" tabindex="-1"></a>score_fn <span class="ot">&lt;-</span> <span class="fu">ggml_evaluate</span>(model_fn, x_val, y_val, <span class="at">batch_size =</span> <span class="dv">16</span><span class="dt">L</span>)</span>
-<span id="cb7-15"><a href="#cb7-15" tabindex="-1"></a><span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">&quot;Functional model accuracy: %.4f</span><span class="sc">\n</span><span class="st">&quot;</span>, score_fn<span class="sc">$</span>accuracy))</span></code></pre></div>
+<div class="sourceCode" id="cb14"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb14-1"><a href="#cb14-1" tabindex="-1"></a>inp  <span class="ot">&lt;-</span> <span class="fu">ggml_input</span>(<span class="at">shape =</span> <span class="dv">4</span><span class="dt">L</span>)</span>
+<span id="cb14-2"><a href="#cb14-2" tabindex="-1"></a></span>
+<span id="cb14-3"><a href="#cb14-3" tabindex="-1"></a>h    <span class="ot">&lt;-</span> inp <span class="sc">|&gt;</span> <span class="fu">ggml_layer_dense</span>(<span class="dv">32</span><span class="dt">L</span>, <span class="at">activation =</span> <span class="st">&quot;relu&quot;</span>) <span class="sc">|&gt;</span> <span class="fu">ggml_layer_rms_norm</span>()</span>
+<span id="cb14-4"><a href="#cb14-4" tabindex="-1"></a>h    <span class="ot">&lt;-</span> h   <span class="sc">|&gt;</span> <span class="fu">ggml_layer_dense</span>(<span class="dv">16</span><span class="dt">L</span>, <span class="at">activation =</span> <span class="st">&quot;relu&quot;</span>)</span>
+<span id="cb14-5"><a href="#cb14-5" tabindex="-1"></a>out  <span class="ot">&lt;-</span> h   <span class="sc">|&gt;</span> <span class="fu">ggml_layer_dense</span>(<span class="dv">3</span><span class="dt">L</span>,  <span class="at">activation =</span> <span class="st">&quot;softmax&quot;</span>)</span>
+<span id="cb14-6"><a href="#cb14-6" tabindex="-1"></a></span>
+<span id="cb14-7"><a href="#cb14-7" tabindex="-1"></a>model_fn <span class="ot">&lt;-</span> <span class="fu">ggml_model</span>(<span class="at">inputs =</span> inp, <span class="at">outputs =</span> out) <span class="sc">|&gt;</span></span>
+<span id="cb14-8"><a href="#cb14-8" tabindex="-1"></a>  <span class="fu">ggml_compile</span>(<span class="at">optimizer =</span> <span class="st">&quot;adam&quot;</span>, <span class="at">loss =</span> <span class="st">&quot;categorical_crossentropy&quot;</span>,</span>
+<span id="cb14-9"><a href="#cb14-9" tabindex="-1"></a>               <span class="at">metrics =</span> <span class="fu">c</span>(<span class="st">&quot;accuracy&quot;</span>))</span>
+<span id="cb14-10"><a href="#cb14-10" tabindex="-1"></a></span>
+<span id="cb14-11"><a href="#cb14-11" tabindex="-1"></a>model_fn <span class="ot">&lt;-</span> <span class="fu">ggml_fit</span>(model_fn, x_tr, y_tr,</span>
+<span id="cb14-12"><a href="#cb14-12" tabindex="-1"></a>                     <span class="at">epochs =</span> <span class="dv">100</span><span class="dt">L</span>, <span class="at">batch_size =</span> <span class="dv">32</span><span class="dt">L</span>, <span class="at">verbose =</span> <span class="dv">0</span><span class="dt">L</span>)</span>
+<span id="cb14-13"><a href="#cb14-13" tabindex="-1"></a></span>
+<span id="cb14-14"><a href="#cb14-14" tabindex="-1"></a>score_fn <span class="ot">&lt;-</span> <span class="fu">ggml_evaluate</span>(model_fn, x_val, y_val, <span class="at">batch_size =</span> <span class="dv">16</span><span class="dt">L</span>)</span>
+<span id="cb14-15"><a href="#cb14-15" tabindex="-1"></a><span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">&quot;Functional model accuracy: %.4f</span><span class="sc">\n</span><span class="st">&quot;</span>, score_fn<span class="sc">$</span>accuracy))</span></code></pre></div>
+<p>Normalization in the functional API is per-sample RMS normalization
+(<code>ggml_layer_rms_norm()</code>), with no batch statistics. A
+functional <code>ggml_layer_batch_norm()</code> is the same layer under
+an older name, not the mean/variance batch norm of the sequential model
+in 1.2.</p>
 </div>
 <div id="multi-input-model-mtcars-regression" class="section level3">
 <h3>2.2 Multi-input model — mtcars regression</h3>
 <p>Predict <code>mpg</code> from two input groups: engine features and
 transmission features.</p>
-<div class="sourceCode" id="cb8"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb8-1"><a href="#cb8-1" tabindex="-1"></a><span class="fu">data</span>(mtcars)</span>
-<span id="cb8-2"><a href="#cb8-2" tabindex="-1"></a><span class="fu">set.seed</span>(<span class="dv">7</span>)</span>
-<span id="cb8-3"><a href="#cb8-3" tabindex="-1"></a></span>
-<span id="cb8-4"><a href="#cb8-4" tabindex="-1"></a><span class="co"># Input group 1: engine (disp, hp, wt)</span></span>
-<span id="cb8-5"><a href="#cb8-5" tabindex="-1"></a><span class="co"># Input group 2: transmission / gearbox (cyl, gear, carb, am)</span></span>
-<span id="cb8-6"><a href="#cb8-6" tabindex="-1"></a>engine <span class="ot">&lt;-</span> <span class="fu">as.matrix</span>(<span class="fu">scale</span>(mtcars[, <span class="fu">c</span>(<span class="st">&quot;disp&quot;</span>,<span class="st">&quot;hp&quot;</span>,<span class="st">&quot;wt&quot;</span>)]))</span>
-<span id="cb8-7"><a href="#cb8-7" tabindex="-1"></a>trans  <span class="ot">&lt;-</span> <span class="fu">as.matrix</span>(<span class="fu">scale</span>(mtcars[, <span class="fu">c</span>(<span class="st">&quot;cyl&quot;</span>,<span class="st">&quot;gear&quot;</span>,<span class="st">&quot;carb&quot;</span>,<span class="st">&quot;am&quot;</span>)]))</span>
-<span id="cb8-8"><a href="#cb8-8" tabindex="-1"></a>y_mpg  <span class="ot">&lt;-</span> <span class="fu">matrix</span>(<span class="fu">scale</span>(mtcars<span class="sc">$</span>mpg), <span class="at">ncol =</span> <span class="dv">1</span><span class="dt">L</span>)          <span class="co"># [32 x 1]</span></span>
-<span id="cb8-9"><a href="#cb8-9" tabindex="-1"></a></span>
-<span id="cb8-10"><a href="#cb8-10" tabindex="-1"></a><span class="co"># small dataset — use all for training, evaluate on same data for demo</span></span>
-<span id="cb8-11"><a href="#cb8-11" tabindex="-1"></a>x1 <span class="ot">&lt;-</span> engine;  x2 <span class="ot">&lt;-</span> trans</span>
-<span id="cb8-12"><a href="#cb8-12" tabindex="-1"></a></span>
-<span id="cb8-13"><a href="#cb8-13" tabindex="-1"></a>inp1 <span class="ot">&lt;-</span> <span class="fu">ggml_input</span>(<span class="at">shape =</span> <span class="dv">3</span><span class="dt">L</span>, <span class="at">name =</span> <span class="st">&quot;engine&quot;</span>)</span>
-<span id="cb8-14"><a href="#cb8-14" tabindex="-1"></a>inp2 <span class="ot">&lt;-</span> <span class="fu">ggml_input</span>(<span class="at">shape =</span> <span class="dv">4</span><span class="dt">L</span>, <span class="at">name =</span> <span class="st">&quot;transmission&quot;</span>)</span>
-<span id="cb8-15"><a href="#cb8-15" tabindex="-1"></a></span>
-<span id="cb8-16"><a href="#cb8-16" tabindex="-1"></a>branch1 <span class="ot">&lt;-</span> inp1 <span class="sc">|&gt;</span> <span class="fu">ggml_layer_dense</span>(<span class="dv">16</span><span class="dt">L</span>, <span class="at">activation =</span> <span class="st">&quot;relu&quot;</span>)</span>
-<span id="cb8-17"><a href="#cb8-17" tabindex="-1"></a>branch2 <span class="ot">&lt;-</span> inp2 <span class="sc">|&gt;</span> <span class="fu">ggml_layer_dense</span>(<span class="dv">16</span><span class="dt">L</span>, <span class="at">activation =</span> <span class="st">&quot;relu&quot;</span>)</span>
-<span id="cb8-18"><a href="#cb8-18" tabindex="-1"></a></span>
-<span id="cb8-19"><a href="#cb8-19" tabindex="-1"></a>merged  <span class="ot">&lt;-</span> <span class="fu">ggml_layer_add</span>(<span class="fu">list</span>(branch1, branch2))        <span class="co"># element-wise add</span></span>
-<span id="cb8-20"><a href="#cb8-20" tabindex="-1"></a>out_reg <span class="ot">&lt;-</span> merged <span class="sc">|&gt;</span></span>
-<span id="cb8-21"><a href="#cb8-21" tabindex="-1"></a>  <span class="fu">ggml_layer_dense</span>(<span class="dv">8</span><span class="dt">L</span>, <span class="at">activation =</span> <span class="st">&quot;relu&quot;</span>) <span class="sc">|&gt;</span></span>
-<span id="cb8-22"><a href="#cb8-22" tabindex="-1"></a>  <span class="fu">ggml_layer_dense</span>(<span class="dv">1</span><span class="dt">L</span>)</span>
-<span id="cb8-23"><a href="#cb8-23" tabindex="-1"></a></span>
-<span id="cb8-24"><a href="#cb8-24" tabindex="-1"></a>model_reg <span class="ot">&lt;-</span> <span class="fu">ggml_model</span>(<span class="at">inputs =</span> <span class="fu">list</span>(inp1, inp2), <span class="at">outputs =</span> out_reg) <span class="sc">|&gt;</span></span>
-<span id="cb8-25"><a href="#cb8-25" tabindex="-1"></a>  <span class="fu">ggml_compile</span>(<span class="at">optimizer =</span> <span class="st">&quot;adam&quot;</span>, <span class="at">loss =</span> <span class="st">&quot;mse&quot;</span>)</span>
-<span id="cb8-26"><a href="#cb8-26" tabindex="-1"></a></span>
-<span id="cb8-27"><a href="#cb8-27" tabindex="-1"></a>model_reg <span class="ot">&lt;-</span> <span class="fu">ggml_fit</span>(model_reg,</span>
-<span id="cb8-28"><a href="#cb8-28" tabindex="-1"></a>                      <span class="at">x =</span> <span class="fu">list</span>(x1, x2), <span class="at">y =</span> y_mpg,</span>
-<span id="cb8-29"><a href="#cb8-29" tabindex="-1"></a>                      <span class="at">epochs =</span> <span class="dv">200</span><span class="dt">L</span>, <span class="at">batch_size =</span> <span class="dv">16</span><span class="dt">L</span>, <span class="at">verbose =</span> <span class="dv">0</span><span class="dt">L</span>)</span>
-<span id="cb8-30"><a href="#cb8-30" tabindex="-1"></a></span>
-<span id="cb8-31"><a href="#cb8-31" tabindex="-1"></a>preds <span class="ot">&lt;-</span> <span class="fu">ggml_predict</span>(model_reg, <span class="at">x =</span> <span class="fu">list</span>(x1, x2), <span class="at">batch_size =</span> <span class="dv">16</span><span class="dt">L</span>)</span>
-<span id="cb8-32"><a href="#cb8-32" tabindex="-1"></a><span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">&quot;Pearson r (scaled mpg): %.4f</span><span class="sc">\n</span><span class="st">&quot;</span>, <span class="fu">cor</span>(preds, y_mpg)))</span></code></pre></div>
+<div class="sourceCode" id="cb15"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb15-1"><a href="#cb15-1" tabindex="-1"></a><span class="fu">data</span>(mtcars)</span>
+<span id="cb15-2"><a href="#cb15-2" tabindex="-1"></a><span class="fu">set.seed</span>(<span class="dv">7</span>)</span>
+<span id="cb15-3"><a href="#cb15-3" tabindex="-1"></a></span>
+<span id="cb15-4"><a href="#cb15-4" tabindex="-1"></a><span class="co"># Input group 1: engine (disp, hp, wt)</span></span>
+<span id="cb15-5"><a href="#cb15-5" tabindex="-1"></a><span class="co"># Input group 2: transmission / gearbox (cyl, gear, carb, am)</span></span>
+<span id="cb15-6"><a href="#cb15-6" tabindex="-1"></a>engine <span class="ot">&lt;-</span> <span class="fu">as.matrix</span>(<span class="fu">scale</span>(mtcars[, <span class="fu">c</span>(<span class="st">&quot;disp&quot;</span>,<span class="st">&quot;hp&quot;</span>,<span class="st">&quot;wt&quot;</span>)]))</span>
+<span id="cb15-7"><a href="#cb15-7" tabindex="-1"></a>trans  <span class="ot">&lt;-</span> <span class="fu">as.matrix</span>(<span class="fu">scale</span>(mtcars[, <span class="fu">c</span>(<span class="st">&quot;cyl&quot;</span>,<span class="st">&quot;gear&quot;</span>,<span class="st">&quot;carb&quot;</span>,<span class="st">&quot;am&quot;</span>)]))</span>
+<span id="cb15-8"><a href="#cb15-8" tabindex="-1"></a>y_mpg  <span class="ot">&lt;-</span> <span class="fu">matrix</span>(<span class="fu">scale</span>(mtcars<span class="sc">$</span>mpg), <span class="at">ncol =</span> <span class="dv">1</span><span class="dt">L</span>)          <span class="co"># [32 x 1]</span></span>
+<span id="cb15-9"><a href="#cb15-9" tabindex="-1"></a></span>
+<span id="cb15-10"><a href="#cb15-10" tabindex="-1"></a><span class="co"># small dataset — use all for training, evaluate on same data for demo</span></span>
+<span id="cb15-11"><a href="#cb15-11" tabindex="-1"></a>x1 <span class="ot">&lt;-</span> engine;  x2 <span class="ot">&lt;-</span> trans</span>
+<span id="cb15-12"><a href="#cb15-12" tabindex="-1"></a></span>
+<span id="cb15-13"><a href="#cb15-13" tabindex="-1"></a>inp1 <span class="ot">&lt;-</span> <span class="fu">ggml_input</span>(<span class="at">shape =</span> <span class="dv">3</span><span class="dt">L</span>, <span class="at">name =</span> <span class="st">&quot;engine&quot;</span>)</span>
+<span id="cb15-14"><a href="#cb15-14" tabindex="-1"></a>inp2 <span class="ot">&lt;-</span> <span class="fu">ggml_input</span>(<span class="at">shape =</span> <span class="dv">4</span><span class="dt">L</span>, <span class="at">name =</span> <span class="st">&quot;transmission&quot;</span>)</span>
+<span id="cb15-15"><a href="#cb15-15" tabindex="-1"></a></span>
+<span id="cb15-16"><a href="#cb15-16" tabindex="-1"></a>branch1 <span class="ot">&lt;-</span> inp1 <span class="sc">|&gt;</span> <span class="fu">ggml_layer_dense</span>(<span class="dv">16</span><span class="dt">L</span>, <span class="at">activation =</span> <span class="st">&quot;relu&quot;</span>)</span>
+<span id="cb15-17"><a href="#cb15-17" tabindex="-1"></a>branch2 <span class="ot">&lt;-</span> inp2 <span class="sc">|&gt;</span> <span class="fu">ggml_layer_dense</span>(<span class="dv">16</span><span class="dt">L</span>, <span class="at">activation =</span> <span class="st">&quot;relu&quot;</span>)</span>
+<span id="cb15-18"><a href="#cb15-18" tabindex="-1"></a></span>
+<span id="cb15-19"><a href="#cb15-19" tabindex="-1"></a>merged  <span class="ot">&lt;-</span> <span class="fu">ggml_layer_add</span>(<span class="fu">list</span>(branch1, branch2))        <span class="co"># element-wise add</span></span>
+<span id="cb15-20"><a href="#cb15-20" tabindex="-1"></a>out_reg <span class="ot">&lt;-</span> merged <span class="sc">|&gt;</span></span>
+<span id="cb15-21"><a href="#cb15-21" tabindex="-1"></a>  <span class="fu">ggml_layer_dense</span>(<span class="dv">8</span><span class="dt">L</span>, <span class="at">activation =</span> <span class="st">&quot;relu&quot;</span>) <span class="sc">|&gt;</span></span>
+<span id="cb15-22"><a href="#cb15-22" tabindex="-1"></a>  <span class="fu">ggml_layer_dense</span>(<span class="dv">1</span><span class="dt">L</span>)</span>
+<span id="cb15-23"><a href="#cb15-23" tabindex="-1"></a></span>
+<span id="cb15-24"><a href="#cb15-24" tabindex="-1"></a>model_reg <span class="ot">&lt;-</span> <span class="fu">ggml_model</span>(<span class="at">inputs =</span> <span class="fu">list</span>(inp1, inp2), <span class="at">outputs =</span> out_reg) <span class="sc">|&gt;</span></span>
+<span id="cb15-25"><a href="#cb15-25" tabindex="-1"></a>  <span class="fu">ggml_compile</span>(<span class="at">optimizer =</span> <span class="st">&quot;adam&quot;</span>, <span class="at">loss =</span> <span class="st">&quot;mse&quot;</span>)</span>
+<span id="cb15-26"><a href="#cb15-26" tabindex="-1"></a></span>
+<span id="cb15-27"><a href="#cb15-27" tabindex="-1"></a>model_reg <span class="ot">&lt;-</span> <span class="fu">ggml_fit</span>(model_reg,</span>
+<span id="cb15-28"><a href="#cb15-28" tabindex="-1"></a>                      <span class="at">x =</span> <span class="fu">list</span>(x1, x2), <span class="at">y =</span> y_mpg,</span>
+<span id="cb15-29"><a href="#cb15-29" tabindex="-1"></a>                      <span class="at">epochs =</span> <span class="dv">200</span><span class="dt">L</span>, <span class="at">batch_size =</span> <span class="dv">16</span><span class="dt">L</span>, <span class="at">verbose =</span> <span class="dv">0</span><span class="dt">L</span>)</span>
+<span id="cb15-30"><a href="#cb15-30" tabindex="-1"></a></span>
+<span id="cb15-31"><a href="#cb15-31" tabindex="-1"></a>preds <span class="ot">&lt;-</span> <span class="fu">ggml_predict</span>(model_reg, <span class="at">x =</span> <span class="fu">list</span>(x1, x2), <span class="at">batch_size =</span> <span class="dv">16</span><span class="dt">L</span>)</span>
+<span id="cb15-32"><a href="#cb15-32" tabindex="-1"></a><span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">&quot;Pearson r (scaled mpg): %.4f</span><span class="sc">\n</span><span class="st">&quot;</span>, <span class="fu">cor</span>(preds, y_mpg)))</span></code></pre></div>
 <p><code>ggml_layer_add()</code> requires the branches to have the same
 width. <code>ggml_layer_concatenate()</code> does not — it stacks them
 along an axis, keeping each branch’s features distinct instead of
 summing them. Both are trainable: gradients flow back into every
 branch.</p>
-<div class="sourceCode" id="cb9"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb9-1"><a href="#cb9-1" tabindex="-1"></a>br1 <span class="ot">&lt;-</span> inp1 <span class="sc">|&gt;</span> <span class="fu">ggml_layer_dense</span>(<span class="dv">8</span><span class="dt">L</span>,  <span class="at">activation =</span> <span class="st">&quot;relu&quot;</span>)</span>
-<span id="cb9-2"><a href="#cb9-2" tabindex="-1"></a>br2 <span class="ot">&lt;-</span> inp2 <span class="sc">|&gt;</span> <span class="fu">ggml_layer_dense</span>(<span class="dv">12</span><span class="dt">L</span>, <span class="at">activation =</span> <span class="st">&quot;relu&quot;</span>)   <span class="co"># widths differ</span></span>
-<span id="cb9-3"><a href="#cb9-3" tabindex="-1"></a></span>
-<span id="cb9-4"><a href="#cb9-4" tabindex="-1"></a>out_cat <span class="ot">&lt;-</span> <span class="fu">ggml_layer_concatenate</span>(<span class="fu">list</span>(br1, br2), <span class="at">axis =</span> <span class="dv">0</span><span class="dt">L</span>) <span class="sc">|&gt;</span></span>
-<span id="cb9-5"><a href="#cb9-5" tabindex="-1"></a>  <span class="fu">ggml_layer_dense</span>(<span class="dv">1</span><span class="dt">L</span>)</span>
-<span id="cb9-6"><a href="#cb9-6" tabindex="-1"></a></span>
-<span id="cb9-7"><a href="#cb9-7" tabindex="-1"></a>model_cat <span class="ot">&lt;-</span> <span class="fu">ggml_model</span>(<span class="at">inputs =</span> <span class="fu">list</span>(inp1, inp2), <span class="at">outputs =</span> out_cat) <span class="sc">|&gt;</span></span>
-<span id="cb9-8"><a href="#cb9-8" tabindex="-1"></a>  <span class="fu">ggml_compile</span>(<span class="at">optimizer =</span> <span class="st">&quot;adam&quot;</span>, <span class="at">loss =</span> <span class="st">&quot;mse&quot;</span>)</span>
-<span id="cb9-9"><a href="#cb9-9" tabindex="-1"></a>model_cat <span class="ot">&lt;-</span> <span class="fu">ggml_fit</span>(model_cat, <span class="at">x =</span> <span class="fu">list</span>(x1, x2), <span class="at">y =</span> y_mpg,</span>
-<span id="cb9-10"><a href="#cb9-10" tabindex="-1"></a>                      <span class="at">epochs =</span> <span class="dv">200</span><span class="dt">L</span>, <span class="at">batch_size =</span> <span class="dv">16</span><span class="dt">L</span>, <span class="at">verbose =</span> <span class="dv">0</span><span class="dt">L</span>)</span>
-<span id="cb9-11"><a href="#cb9-11" tabindex="-1"></a></span>
-<span id="cb9-12"><a href="#cb9-12" tabindex="-1"></a>p_cat <span class="ot">&lt;-</span> <span class="fu">ggml_predict</span>(model_cat, <span class="at">x =</span> <span class="fu">list</span>(x1, x2), <span class="at">batch_size =</span> <span class="dv">16</span><span class="dt">L</span>)</span>
-<span id="cb9-13"><a href="#cb9-13" tabindex="-1"></a><span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">&quot;Concatenate variant, Pearson r: %.4f</span><span class="sc">\n</span><span class="st">&quot;</span>, <span class="fu">cor</span>(p_cat, y_mpg)))</span></code></pre></div>
+<div class="sourceCode" id="cb16"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb16-1"><a href="#cb16-1" tabindex="-1"></a>br1 <span class="ot">&lt;-</span> inp1 <span class="sc">|&gt;</span> <span class="fu">ggml_layer_dense</span>(<span class="dv">8</span><span class="dt">L</span>,  <span class="at">activation =</span> <span class="st">&quot;relu&quot;</span>)</span>
+<span id="cb16-2"><a href="#cb16-2" tabindex="-1"></a>br2 <span class="ot">&lt;-</span> inp2 <span class="sc">|&gt;</span> <span class="fu">ggml_layer_dense</span>(<span class="dv">12</span><span class="dt">L</span>, <span class="at">activation =</span> <span class="st">&quot;relu&quot;</span>)   <span class="co"># widths differ</span></span>
+<span id="cb16-3"><a href="#cb16-3" tabindex="-1"></a></span>
+<span id="cb16-4"><a href="#cb16-4" tabindex="-1"></a>out_cat <span class="ot">&lt;-</span> <span class="fu">ggml_layer_concatenate</span>(<span class="fu">list</span>(br1, br2), <span class="at">axis =</span> <span class="dv">0</span><span class="dt">L</span>) <span class="sc">|&gt;</span></span>
+<span id="cb16-5"><a href="#cb16-5" tabindex="-1"></a>  <span class="fu">ggml_layer_dense</span>(<span class="dv">1</span><span class="dt">L</span>)</span>
+<span id="cb16-6"><a href="#cb16-6" tabindex="-1"></a></span>
+<span id="cb16-7"><a href="#cb16-7" tabindex="-1"></a>model_cat <span class="ot">&lt;-</span> <span class="fu">ggml_model</span>(<span class="at">inputs =</span> <span class="fu">list</span>(inp1, inp2), <span class="at">outputs =</span> out_cat) <span class="sc">|&gt;</span></span>
+<span id="cb16-8"><a href="#cb16-8" tabindex="-1"></a>  <span class="fu">ggml_compile</span>(<span class="at">optimizer =</span> <span class="st">&quot;adam&quot;</span>, <span class="at">loss =</span> <span class="st">&quot;mse&quot;</span>)</span>
+<span id="cb16-9"><a href="#cb16-9" tabindex="-1"></a>model_cat <span class="ot">&lt;-</span> <span class="fu">ggml_fit</span>(model_cat, <span class="at">x =</span> <span class="fu">list</span>(x1, x2), <span class="at">y =</span> y_mpg,</span>
+<span id="cb16-10"><a href="#cb16-10" tabindex="-1"></a>                      <span class="at">epochs =</span> <span class="dv">200</span><span class="dt">L</span>, <span class="at">batch_size =</span> <span class="dv">16</span><span class="dt">L</span>, <span class="at">verbose =</span> <span class="dv">0</span><span class="dt">L</span>)</span>
+<span id="cb16-11"><a href="#cb16-11" tabindex="-1"></a></span>
+<span id="cb16-12"><a href="#cb16-12" tabindex="-1"></a>p_cat <span class="ot">&lt;-</span> <span class="fu">ggml_predict</span>(model_cat, <span class="at">x =</span> <span class="fu">list</span>(x1, x2), <span class="at">batch_size =</span> <span class="dv">16</span><span class="dt">L</span>)</span>
+<span id="cb16-13"><a href="#cb16-13" tabindex="-1"></a><span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">&quot;Concatenate variant, Pearson r: %.4f</span><span class="sc">\n</span><span class="st">&quot;</span>, <span class="fu">cor</span>(p_cat, y_mpg)))</span></code></pre></div>
 </div>
 <div id="multi-output-model-one-trunk-two-heads" class="section level3">
 <h3>2.3 Multi-output model — one trunk, two heads</h3>
@@ -554,35 +733,35 @@ gets its own loss and weight, and the optimizer minimizes
 classification head and a regression head share one trunk.</p>
 <p>Pass <code>y</code> as a <strong>list</strong>, one matrix per head,
 matched by output name.</p>
-<div class="sourceCode" id="cb10"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb10-1"><a href="#cb10-1" tabindex="-1"></a><span class="fu">set.seed</span>(<span class="dv">11</span>)</span>
-<span id="cb10-2"><a href="#cb10-2" tabindex="-1"></a></span>
-<span id="cb10-3"><a href="#cb10-3" tabindex="-1"></a><span class="co"># Two targets from the same cars: efficient or not (class), and mpg (value).</span></span>
-<span id="cb10-4"><a href="#cb10-4" tabindex="-1"></a>y_cls <span class="ot">&lt;-</span> <span class="fu">as.integer</span>(mtcars<span class="sc">$</span>mpg <span class="sc">&gt;</span> <span class="fu">median</span>(mtcars<span class="sc">$</span>mpg))</span>
-<span id="cb10-5"><a href="#cb10-5" tabindex="-1"></a>y_cls <span class="ot">&lt;-</span> <span class="fu">cbind</span>(<span class="dv">1</span> <span class="sc">-</span> y_cls, y_cls) <span class="sc">*</span> <span class="fl">1.0</span>         <span class="co"># one-hot [32 x 2]</span></span>
-<span id="cb10-6"><a href="#cb10-6" tabindex="-1"></a>x_all <span class="ot">&lt;-</span> <span class="fu">as.matrix</span>(<span class="fu">scale</span>(mtcars[, <span class="fu">c</span>(<span class="st">&quot;disp&quot;</span>,<span class="st">&quot;hp&quot;</span>,<span class="st">&quot;wt&quot;</span>,<span class="st">&quot;cyl&quot;</span>)]))</span>
-<span id="cb10-7"><a href="#cb10-7" tabindex="-1"></a></span>
-<span id="cb10-8"><a href="#cb10-8" tabindex="-1"></a>inp_mo <span class="ot">&lt;-</span> <span class="fu">ggml_input</span>(<span class="at">shape =</span> <span class="dv">4</span><span class="dt">L</span>, <span class="at">name =</span> <span class="st">&quot;features&quot;</span>)</span>
-<span id="cb10-9"><a href="#cb10-9" tabindex="-1"></a>trunk  <span class="ot">&lt;-</span> inp_mo <span class="sc">|&gt;</span> <span class="fu">ggml_layer_dense</span>(<span class="dv">16</span><span class="dt">L</span>, <span class="at">activation =</span> <span class="st">&quot;relu&quot;</span>, <span class="at">name =</span> <span class="st">&quot;trunk&quot;</span>)</span>
-<span id="cb10-10"><a href="#cb10-10" tabindex="-1"></a>head_c <span class="ot">&lt;-</span> trunk  <span class="sc">|&gt;</span> <span class="fu">ggml_layer_dense</span>(<span class="dv">2</span><span class="dt">L</span>, <span class="at">activation =</span> <span class="st">&quot;softmax&quot;</span>, <span class="at">name =</span> <span class="st">&quot;class&quot;</span>)</span>
-<span id="cb10-11"><a href="#cb10-11" tabindex="-1"></a>head_v <span class="ot">&lt;-</span> trunk  <span class="sc">|&gt;</span> <span class="fu">ggml_layer_dense</span>(<span class="dv">1</span><span class="dt">L</span>, <span class="at">name =</span> <span class="st">&quot;value&quot;</span>)</span>
-<span id="cb10-12"><a href="#cb10-12" tabindex="-1"></a></span>
-<span id="cb10-13"><a href="#cb10-13" tabindex="-1"></a>model_mo <span class="ot">&lt;-</span> <span class="fu">ggml_model</span>(<span class="at">inputs =</span> inp_mo, <span class="at">outputs =</span> <span class="fu">list</span>(head_c, head_v)) <span class="sc">|&gt;</span></span>
-<span id="cb10-14"><a href="#cb10-14" tabindex="-1"></a>  <span class="fu">ggml_compile</span>(<span class="at">optimizer =</span> <span class="st">&quot;adam&quot;</span>,</span>
-<span id="cb10-15"><a href="#cb10-15" tabindex="-1"></a>               <span class="at">loss         =</span> <span class="fu">list</span>(<span class="at">class =</span> <span class="st">&quot;categorical_crossentropy&quot;</span>,</span>
-<span id="cb10-16"><a href="#cb10-16" tabindex="-1"></a>                                   <span class="at">value =</span> <span class="st">&quot;mse&quot;</span>),</span>
-<span id="cb10-17"><a href="#cb10-17" tabindex="-1"></a>               <span class="at">loss_weights =</span> <span class="fu">c</span>(<span class="at">class =</span> <span class="fl">1.0</span>, <span class="at">value =</span> <span class="fl">0.5</span>))</span>
-<span id="cb10-18"><a href="#cb10-18" tabindex="-1"></a></span>
-<span id="cb10-19"><a href="#cb10-19" tabindex="-1"></a>model_mo <span class="ot">&lt;-</span> <span class="fu">ggml_fit</span>(model_mo, x_all,</span>
-<span id="cb10-20"><a href="#cb10-20" tabindex="-1"></a>                     <span class="at">y =</span> <span class="fu">list</span>(<span class="at">class =</span> y_cls, <span class="at">value =</span> y_mpg),</span>
-<span id="cb10-21"><a href="#cb10-21" tabindex="-1"></a>                     <span class="at">epochs =</span> <span class="dv">150</span><span class="dt">L</span>, <span class="at">batch_size =</span> <span class="dv">16</span><span class="dt">L</span>, <span class="at">verbose =</span> <span class="dv">0</span><span class="dt">L</span>)</span>
-<span id="cb10-22"><a href="#cb10-22" tabindex="-1"></a></span>
-<span id="cb10-23"><a href="#cb10-23" tabindex="-1"></a><span class="co"># Per-head losses, so a head that stops learning is visible on its own</span></span>
-<span id="cb10-24"><a href="#cb10-24" tabindex="-1"></a><span class="co"># rather than hidden inside the total.</span></span>
-<span id="cb10-25"><a href="#cb10-25" tabindex="-1"></a>h <span class="ot">&lt;-</span> model_mo<span class="sc">$</span>history</span>
-<span id="cb10-26"><a href="#cb10-26" tabindex="-1"></a><span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">&quot;class loss: %.4f -&gt; %.4f</span><span class="sc">\n</span><span class="st">&quot;</span>,</span>
-<span id="cb10-27"><a href="#cb10-27" tabindex="-1"></a>            h<span class="sc">$</span>train_class_loss[<span class="dv">1</span>], <span class="fu">tail</span>(h<span class="sc">$</span>train_class_loss, <span class="dv">1</span>)))</span>
-<span id="cb10-28"><a href="#cb10-28" tabindex="-1"></a><span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">&quot;value loss: %.4f -&gt; %.4f</span><span class="sc">\n</span><span class="st">&quot;</span>,</span>
-<span id="cb10-29"><a href="#cb10-29" tabindex="-1"></a>            h<span class="sc">$</span>train_value_loss[<span class="dv">1</span>], <span class="fu">tail</span>(h<span class="sc">$</span>train_value_loss, <span class="dv">1</span>)))</span></code></pre></div>
+<div class="sourceCode" id="cb17"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb17-1"><a href="#cb17-1" tabindex="-1"></a><span class="fu">set.seed</span>(<span class="dv">11</span>)</span>
+<span id="cb17-2"><a href="#cb17-2" tabindex="-1"></a></span>
+<span id="cb17-3"><a href="#cb17-3" tabindex="-1"></a><span class="co"># Two targets from the same cars: efficient or not (class), and mpg (value).</span></span>
+<span id="cb17-4"><a href="#cb17-4" tabindex="-1"></a>y_cls <span class="ot">&lt;-</span> <span class="fu">as.integer</span>(mtcars<span class="sc">$</span>mpg <span class="sc">&gt;</span> <span class="fu">median</span>(mtcars<span class="sc">$</span>mpg))</span>
+<span id="cb17-5"><a href="#cb17-5" tabindex="-1"></a>y_cls <span class="ot">&lt;-</span> <span class="fu">cbind</span>(<span class="dv">1</span> <span class="sc">-</span> y_cls, y_cls) <span class="sc">*</span> <span class="fl">1.0</span>         <span class="co"># one-hot [32 x 2]</span></span>
+<span id="cb17-6"><a href="#cb17-6" tabindex="-1"></a>x_all <span class="ot">&lt;-</span> <span class="fu">as.matrix</span>(<span class="fu">scale</span>(mtcars[, <span class="fu">c</span>(<span class="st">&quot;disp&quot;</span>,<span class="st">&quot;hp&quot;</span>,<span class="st">&quot;wt&quot;</span>,<span class="st">&quot;cyl&quot;</span>)]))</span>
+<span id="cb17-7"><a href="#cb17-7" tabindex="-1"></a></span>
+<span id="cb17-8"><a href="#cb17-8" tabindex="-1"></a>inp_mo <span class="ot">&lt;-</span> <span class="fu">ggml_input</span>(<span class="at">shape =</span> <span class="dv">4</span><span class="dt">L</span>, <span class="at">name =</span> <span class="st">&quot;features&quot;</span>)</span>
+<span id="cb17-9"><a href="#cb17-9" tabindex="-1"></a>trunk  <span class="ot">&lt;-</span> inp_mo <span class="sc">|&gt;</span> <span class="fu">ggml_layer_dense</span>(<span class="dv">16</span><span class="dt">L</span>, <span class="at">activation =</span> <span class="st">&quot;relu&quot;</span>, <span class="at">name =</span> <span class="st">&quot;trunk&quot;</span>)</span>
+<span id="cb17-10"><a href="#cb17-10" tabindex="-1"></a>head_c <span class="ot">&lt;-</span> trunk  <span class="sc">|&gt;</span> <span class="fu">ggml_layer_dense</span>(<span class="dv">2</span><span class="dt">L</span>, <span class="at">activation =</span> <span class="st">&quot;softmax&quot;</span>, <span class="at">name =</span> <span class="st">&quot;class&quot;</span>)</span>
+<span id="cb17-11"><a href="#cb17-11" tabindex="-1"></a>head_v <span class="ot">&lt;-</span> trunk  <span class="sc">|&gt;</span> <span class="fu">ggml_layer_dense</span>(<span class="dv">1</span><span class="dt">L</span>, <span class="at">name =</span> <span class="st">&quot;value&quot;</span>)</span>
+<span id="cb17-12"><a href="#cb17-12" tabindex="-1"></a></span>
+<span id="cb17-13"><a href="#cb17-13" tabindex="-1"></a>model_mo <span class="ot">&lt;-</span> <span class="fu">ggml_model</span>(<span class="at">inputs =</span> inp_mo, <span class="at">outputs =</span> <span class="fu">list</span>(head_c, head_v)) <span class="sc">|&gt;</span></span>
+<span id="cb17-14"><a href="#cb17-14" tabindex="-1"></a>  <span class="fu">ggml_compile</span>(<span class="at">optimizer =</span> <span class="st">&quot;adam&quot;</span>,</span>
+<span id="cb17-15"><a href="#cb17-15" tabindex="-1"></a>               <span class="at">loss         =</span> <span class="fu">list</span>(<span class="at">class =</span> <span class="st">&quot;categorical_crossentropy&quot;</span>,</span>
+<span id="cb17-16"><a href="#cb17-16" tabindex="-1"></a>                                   <span class="at">value =</span> <span class="st">&quot;mse&quot;</span>),</span>
+<span id="cb17-17"><a href="#cb17-17" tabindex="-1"></a>               <span class="at">loss_weights =</span> <span class="fu">c</span>(<span class="at">class =</span> <span class="fl">1.0</span>, <span class="at">value =</span> <span class="fl">0.5</span>))</span>
+<span id="cb17-18"><a href="#cb17-18" tabindex="-1"></a></span>
+<span id="cb17-19"><a href="#cb17-19" tabindex="-1"></a>model_mo <span class="ot">&lt;-</span> <span class="fu">ggml_fit</span>(model_mo, x_all,</span>
+<span id="cb17-20"><a href="#cb17-20" tabindex="-1"></a>                     <span class="at">y =</span> <span class="fu">list</span>(<span class="at">class =</span> y_cls, <span class="at">value =</span> y_mpg),</span>
+<span id="cb17-21"><a href="#cb17-21" tabindex="-1"></a>                     <span class="at">epochs =</span> <span class="dv">150</span><span class="dt">L</span>, <span class="at">batch_size =</span> <span class="dv">16</span><span class="dt">L</span>, <span class="at">verbose =</span> <span class="dv">0</span><span class="dt">L</span>)</span>
+<span id="cb17-22"><a href="#cb17-22" tabindex="-1"></a></span>
+<span id="cb17-23"><a href="#cb17-23" tabindex="-1"></a><span class="co"># Per-head losses, so a head that stops learning is visible on its own</span></span>
+<span id="cb17-24"><a href="#cb17-24" tabindex="-1"></a><span class="co"># rather than hidden inside the total.</span></span>
+<span id="cb17-25"><a href="#cb17-25" tabindex="-1"></a>h <span class="ot">&lt;-</span> model_mo<span class="sc">$</span>history</span>
+<span id="cb17-26"><a href="#cb17-26" tabindex="-1"></a><span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">&quot;class loss: %.4f -&gt; %.4f</span><span class="sc">\n</span><span class="st">&quot;</span>,</span>
+<span id="cb17-27"><a href="#cb17-27" tabindex="-1"></a>            h<span class="sc">$</span>train_class_loss[<span class="dv">1</span>], <span class="fu">tail</span>(h<span class="sc">$</span>train_class_loss, <span class="dv">1</span>)))</span>
+<span id="cb17-28"><a href="#cb17-28" tabindex="-1"></a><span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">&quot;value loss: %.4f -&gt; %.4f</span><span class="sc">\n</span><span class="st">&quot;</span>,</span>
+<span id="cb17-29"><a href="#cb17-29" tabindex="-1"></a>            h<span class="sc">$</span>train_value_loss[<span class="dv">1</span>], <span class="fu">tail</span>(h<span class="sc">$</span>train_value_loss, <span class="dv">1</span>)))</span></code></pre></div>
 <p><code>ggml_predict()</code> returns a list, one matrix per head, and
 <code>ggml_evaluate()</code> reports a <code>&lt;output&gt;_loss</code>
 for each.</p>
@@ -597,44 +776,44 @@ needs no reshaping.</p>
 every position, sharing weights across the sequence — the position-wise
 feed-forward sublayer that completes a transformer block. (Without it a
 dense layer would flatten the sequence into a single vector.)</p>
-<div class="sourceCode" id="cb11"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb11-1"><a href="#cb11-1" tabindex="-1"></a><span class="fu">set.seed</span>(<span class="dv">13</span>)</span>
-<span id="cb11-2"><a href="#cb11-2" tabindex="-1"></a>n_seq <span class="ot">&lt;-</span> <span class="dv">128</span><span class="dt">L</span>; S <span class="ot">&lt;-</span> <span class="dv">6</span><span class="dt">L</span>; D <span class="ot">&lt;-</span> <span class="dv">8</span><span class="dt">L</span></span>
-<span id="cb11-3"><a href="#cb11-3" tabindex="-1"></a></span>
-<span id="cb11-4"><a href="#cb11-4" tabindex="-1"></a><span class="co"># A task that needs mixing across positions: is the sequence sum positive?</span></span>
-<span id="cb11-5"><a href="#cb11-5" tabindex="-1"></a>xs   <span class="ot">&lt;-</span> <span class="fu">array</span>(<span class="fu">runif</span>(n_seq <span class="sc">*</span> S <span class="sc">*</span> D, <span class="sc">-</span><span class="dv">1</span>, <span class="dv">1</span>), <span class="at">dim =</span> <span class="fu">c</span>(n_seq, S, D))</span>
-<span id="cb11-6"><a href="#cb11-6" tabindex="-1"></a>lab  <span class="ot">&lt;-</span> <span class="fu">as.integer</span>(<span class="fu">apply</span>(xs, <span class="dv">1</span>, mean) <span class="sc">&gt;</span> <span class="dv">0</span>)</span>
-<span id="cb11-7"><a href="#cb11-7" tabindex="-1"></a>y_sq <span class="ot">&lt;-</span> <span class="fu">cbind</span>(<span class="dv">1</span> <span class="sc">-</span> lab, lab) <span class="sc">*</span> <span class="fl">1.0</span></span>
-<span id="cb11-8"><a href="#cb11-8" tabindex="-1"></a></span>
-<span id="cb11-9"><a href="#cb11-9" tabindex="-1"></a>inp_t <span class="ot">&lt;-</span> <span class="fu">ggml_input</span>(<span class="at">shape =</span> <span class="fu">c</span>(S, D), <span class="at">name =</span> <span class="st">&quot;seq&quot;</span>)</span>
-<span id="cb11-10"><a href="#cb11-10" tabindex="-1"></a></span>
-<span id="cb11-11"><a href="#cb11-11" tabindex="-1"></a><span class="co"># Attention sublayer + residual</span></span>
-<span id="cb11-12"><a href="#cb11-12" tabindex="-1"></a>att <span class="ot">&lt;-</span> inp_t <span class="sc">|&gt;</span> <span class="fu">ggml_layer_attention</span>(<span class="at">d_model =</span> D, <span class="at">n_heads =</span> <span class="dv">2</span><span class="dt">L</span>, <span class="at">name =</span> <span class="st">&quot;mha&quot;</span>)</span>
-<span id="cb11-13"><a href="#cb11-13" tabindex="-1"></a>h1  <span class="ot">&lt;-</span> <span class="fu">ggml_layer_add</span>(<span class="fu">list</span>(inp_t, att))</span>
-<span id="cb11-14"><a href="#cb11-14" tabindex="-1"></a></span>
-<span id="cb11-15"><a href="#cb11-15" tabindex="-1"></a><span class="co"># Position-wise feed-forward sublayer + residual</span></span>
-<span id="cb11-16"><a href="#cb11-16" tabindex="-1"></a>ff  <span class="ot">&lt;-</span> h1 <span class="sc">|&gt;</span> <span class="fu">ggml_layer_dense</span>(D <span class="sc">*</span> <span class="dv">2</span><span class="dt">L</span>, <span class="at">activation =</span> <span class="st">&quot;relu&quot;</span>,</span>
-<span id="cb11-17"><a href="#cb11-17" tabindex="-1"></a>                              <span class="at">time_distributed =</span> <span class="cn">TRUE</span>, <span class="at">name =</span> <span class="st">&quot;ff1&quot;</span>)</span>
-<span id="cb11-18"><a href="#cb11-18" tabindex="-1"></a>ff  <span class="ot">&lt;-</span> ff <span class="sc">|&gt;</span> <span class="fu">ggml_layer_dense</span>(D, <span class="at">time_distributed =</span> <span class="cn">TRUE</span>, <span class="at">name =</span> <span class="st">&quot;ff2&quot;</span>)</span>
-<span id="cb11-19"><a href="#cb11-19" tabindex="-1"></a>h2  <span class="ot">&lt;-</span> <span class="fu">ggml_layer_add</span>(<span class="fu">list</span>(h1, ff))</span>
-<span id="cb11-20"><a href="#cb11-20" tabindex="-1"></a></span>
-<span id="cb11-21"><a href="#cb11-21" tabindex="-1"></a>out_t <span class="ot">&lt;-</span> h2 <span class="sc">|&gt;</span> <span class="fu">ggml_layer_flatten</span>() <span class="sc">|&gt;</span></span>
-<span id="cb11-22"><a href="#cb11-22" tabindex="-1"></a>  <span class="fu">ggml_layer_dense</span>(<span class="dv">2</span><span class="dt">L</span>, <span class="at">activation =</span> <span class="st">&quot;softmax&quot;</span>, <span class="at">name =</span> <span class="st">&quot;cls&quot;</span>)</span>
-<span id="cb11-23"><a href="#cb11-23" tabindex="-1"></a></span>
-<span id="cb11-24"><a href="#cb11-24" tabindex="-1"></a>model_t <span class="ot">&lt;-</span> <span class="fu">ggml_model</span>(<span class="at">inputs =</span> inp_t, <span class="at">outputs =</span> out_t) <span class="sc">|&gt;</span></span>
-<span id="cb11-25"><a href="#cb11-25" tabindex="-1"></a>  <span class="fu">ggml_compile</span>(<span class="at">optimizer =</span> <span class="st">&quot;adam&quot;</span>, <span class="at">loss =</span> <span class="st">&quot;categorical_crossentropy&quot;</span>)</span>
-<span id="cb11-26"><a href="#cb11-26" tabindex="-1"></a></span>
-<span id="cb11-27"><a href="#cb11-27" tabindex="-1"></a>model_t <span class="ot">&lt;-</span> <span class="fu">ggml_fit</span>(model_t, xs, y_sq, <span class="at">epochs =</span> <span class="dv">30</span><span class="dt">L</span>, <span class="at">batch_size =</span> <span class="dv">32</span><span class="dt">L</span>,</span>
-<span id="cb11-28"><a href="#cb11-28" tabindex="-1"></a>                    <span class="at">verbose =</span> <span class="dv">0</span><span class="dt">L</span>)</span>
-<span id="cb11-29"><a href="#cb11-29" tabindex="-1"></a><span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">&quot;transformer block accuracy: %.4f</span><span class="sc">\n</span><span class="st">&quot;</span>,</span>
-<span id="cb11-30"><a href="#cb11-30" tabindex="-1"></a>            <span class="fu">tail</span>(model_t<span class="sc">$</span>history<span class="sc">$</span>train_accuracy, <span class="dv">1</span>)))</span></code></pre></div>
+<div class="sourceCode" id="cb18"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb18-1"><a href="#cb18-1" tabindex="-1"></a><span class="fu">set.seed</span>(<span class="dv">13</span>)</span>
+<span id="cb18-2"><a href="#cb18-2" tabindex="-1"></a>n_seq <span class="ot">&lt;-</span> <span class="dv">128</span><span class="dt">L</span>; S <span class="ot">&lt;-</span> <span class="dv">6</span><span class="dt">L</span>; D <span class="ot">&lt;-</span> <span class="dv">8</span><span class="dt">L</span></span>
+<span id="cb18-3"><a href="#cb18-3" tabindex="-1"></a></span>
+<span id="cb18-4"><a href="#cb18-4" tabindex="-1"></a><span class="co"># A task that needs mixing across positions: is the sequence sum positive?</span></span>
+<span id="cb18-5"><a href="#cb18-5" tabindex="-1"></a>xs   <span class="ot">&lt;-</span> <span class="fu">array</span>(<span class="fu">runif</span>(n_seq <span class="sc">*</span> S <span class="sc">*</span> D, <span class="sc">-</span><span class="dv">1</span>, <span class="dv">1</span>), <span class="at">dim =</span> <span class="fu">c</span>(n_seq, S, D))</span>
+<span id="cb18-6"><a href="#cb18-6" tabindex="-1"></a>lab  <span class="ot">&lt;-</span> <span class="fu">as.integer</span>(<span class="fu">apply</span>(xs, <span class="dv">1</span>, mean) <span class="sc">&gt;</span> <span class="dv">0</span>)</span>
+<span id="cb18-7"><a href="#cb18-7" tabindex="-1"></a>y_sq <span class="ot">&lt;-</span> <span class="fu">cbind</span>(<span class="dv">1</span> <span class="sc">-</span> lab, lab) <span class="sc">*</span> <span class="fl">1.0</span></span>
+<span id="cb18-8"><a href="#cb18-8" tabindex="-1"></a></span>
+<span id="cb18-9"><a href="#cb18-9" tabindex="-1"></a>inp_t <span class="ot">&lt;-</span> <span class="fu">ggml_input</span>(<span class="at">shape =</span> <span class="fu">c</span>(S, D), <span class="at">name =</span> <span class="st">&quot;seq&quot;</span>)</span>
+<span id="cb18-10"><a href="#cb18-10" tabindex="-1"></a></span>
+<span id="cb18-11"><a href="#cb18-11" tabindex="-1"></a><span class="co"># Attention sublayer + residual</span></span>
+<span id="cb18-12"><a href="#cb18-12" tabindex="-1"></a>att <span class="ot">&lt;-</span> inp_t <span class="sc">|&gt;</span> <span class="fu">ggml_layer_attention</span>(<span class="at">d_model =</span> D, <span class="at">n_heads =</span> <span class="dv">2</span><span class="dt">L</span>, <span class="at">name =</span> <span class="st">&quot;mha&quot;</span>)</span>
+<span id="cb18-13"><a href="#cb18-13" tabindex="-1"></a>h1  <span class="ot">&lt;-</span> <span class="fu">ggml_layer_add</span>(<span class="fu">list</span>(inp_t, att))</span>
+<span id="cb18-14"><a href="#cb18-14" tabindex="-1"></a></span>
+<span id="cb18-15"><a href="#cb18-15" tabindex="-1"></a><span class="co"># Position-wise feed-forward sublayer + residual</span></span>
+<span id="cb18-16"><a href="#cb18-16" tabindex="-1"></a>ff  <span class="ot">&lt;-</span> h1 <span class="sc">|&gt;</span> <span class="fu">ggml_layer_dense</span>(D <span class="sc">*</span> <span class="dv">2</span><span class="dt">L</span>, <span class="at">activation =</span> <span class="st">&quot;relu&quot;</span>,</span>
+<span id="cb18-17"><a href="#cb18-17" tabindex="-1"></a>                              <span class="at">time_distributed =</span> <span class="cn">TRUE</span>, <span class="at">name =</span> <span class="st">&quot;ff1&quot;</span>)</span>
+<span id="cb18-18"><a href="#cb18-18" tabindex="-1"></a>ff  <span class="ot">&lt;-</span> ff <span class="sc">|&gt;</span> <span class="fu">ggml_layer_dense</span>(D, <span class="at">time_distributed =</span> <span class="cn">TRUE</span>, <span class="at">name =</span> <span class="st">&quot;ff2&quot;</span>)</span>
+<span id="cb18-19"><a href="#cb18-19" tabindex="-1"></a>h2  <span class="ot">&lt;-</span> <span class="fu">ggml_layer_add</span>(<span class="fu">list</span>(h1, ff))</span>
+<span id="cb18-20"><a href="#cb18-20" tabindex="-1"></a></span>
+<span id="cb18-21"><a href="#cb18-21" tabindex="-1"></a>out_t <span class="ot">&lt;-</span> h2 <span class="sc">|&gt;</span> <span class="fu">ggml_layer_flatten</span>() <span class="sc">|&gt;</span></span>
+<span id="cb18-22"><a href="#cb18-22" tabindex="-1"></a>  <span class="fu">ggml_layer_dense</span>(<span class="dv">2</span><span class="dt">L</span>, <span class="at">activation =</span> <span class="st">&quot;softmax&quot;</span>, <span class="at">name =</span> <span class="st">&quot;cls&quot;</span>)</span>
+<span id="cb18-23"><a href="#cb18-23" tabindex="-1"></a></span>
+<span id="cb18-24"><a href="#cb18-24" tabindex="-1"></a>model_t <span class="ot">&lt;-</span> <span class="fu">ggml_model</span>(<span class="at">inputs =</span> inp_t, <span class="at">outputs =</span> out_t) <span class="sc">|&gt;</span></span>
+<span id="cb18-25"><a href="#cb18-25" tabindex="-1"></a>  <span class="fu">ggml_compile</span>(<span class="at">optimizer =</span> <span class="st">&quot;adam&quot;</span>, <span class="at">loss =</span> <span class="st">&quot;categorical_crossentropy&quot;</span>)</span>
+<span id="cb18-26"><a href="#cb18-26" tabindex="-1"></a></span>
+<span id="cb18-27"><a href="#cb18-27" tabindex="-1"></a>model_t <span class="ot">&lt;-</span> <span class="fu">ggml_fit</span>(model_t, xs, y_sq, <span class="at">epochs =</span> <span class="dv">30</span><span class="dt">L</span>, <span class="at">batch_size =</span> <span class="dv">32</span><span class="dt">L</span>,</span>
+<span id="cb18-28"><a href="#cb18-28" tabindex="-1"></a>                    <span class="at">verbose =</span> <span class="dv">0</span><span class="dt">L</span>)</span>
+<span id="cb18-29"><a href="#cb18-29" tabindex="-1"></a><span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">&quot;transformer block accuracy: %.4f</span><span class="sc">\n</span><span class="st">&quot;</span>,</span>
+<span id="cb18-30"><a href="#cb18-30" tabindex="-1"></a>            <span class="fu">tail</span>(model_t<span class="sc">$</span>history<span class="sc">$</span>train_accuracy, <span class="dv">1</span>)))</span></code></pre></div>
 <p><code>causal = TRUE</code> masks keys after the query, making the
 layer autoregressive (GPT-style). Cross-attention takes queries from one
 node and keys/values from another, which may have a different
 length:</p>
-<div class="sourceCode" id="cb12"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb12-1"><a href="#cb12-1" tabindex="-1"></a>dec <span class="ot">&lt;-</span> inp_t <span class="sc">|&gt;</span> <span class="fu">ggml_layer_attention</span>(D, <span class="at">n_heads =</span> <span class="dv">2</span><span class="dt">L</span>, <span class="at">causal =</span> <span class="cn">TRUE</span>)</span>
-<span id="cb12-2"><a href="#cb12-2" tabindex="-1"></a></span>
-<span id="cb12-3"><a href="#cb12-3" tabindex="-1"></a>ctx_seq <span class="ot">&lt;-</span> <span class="fu">ggml_input</span>(<span class="at">shape =</span> <span class="fu">c</span>(<span class="dv">10</span><span class="dt">L</span>, D))</span>
-<span id="cb12-4"><a href="#cb12-4" tabindex="-1"></a>x_cross <span class="ot">&lt;-</span> <span class="fu">ggml_apply</span>(<span class="fu">list</span>(dec, ctx_seq), <span class="fu">ggml_attention</span>(D, <span class="at">n_heads =</span> <span class="dv">2</span><span class="dt">L</span>))</span></code></pre></div>
+<div class="sourceCode" id="cb19"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb19-1"><a href="#cb19-1" tabindex="-1"></a>dec <span class="ot">&lt;-</span> inp_t <span class="sc">|&gt;</span> <span class="fu">ggml_layer_attention</span>(D, <span class="at">n_heads =</span> <span class="dv">2</span><span class="dt">L</span>, <span class="at">causal =</span> <span class="cn">TRUE</span>)</span>
+<span id="cb19-2"><a href="#cb19-2" tabindex="-1"></a></span>
+<span id="cb19-3"><a href="#cb19-3" tabindex="-1"></a>ctx_seq <span class="ot">&lt;-</span> <span class="fu">ggml_input</span>(<span class="at">shape =</span> <span class="fu">c</span>(<span class="dv">10</span><span class="dt">L</span>, D))</span>
+<span id="cb19-4"><a href="#cb19-4" tabindex="-1"></a>x_cross <span class="ot">&lt;-</span> <span class="fu">ggml_apply</span>(<span class="fu">list</span>(dec, ctx_seq), <span class="fu">ggml_attention</span>(D, <span class="at">n_heads =</span> <span class="dv">2</span><span class="dt">L</span>))</span></code></pre></div>
 <p><code>ggml_attention()</code> returns a reusable layer object:
 applying it to several nodes shares one set of projections, which is how
 an encoder block is reused across a stack. All heads are computed in one
@@ -648,51 +827,51 @@ batched pass, so the graph does not grow with <code>n_heads</code>.</p>
 <code>callbacks</code> argument.</p>
 <div id="early-stopping" class="section level3">
 <h3>3.1 Early stopping</h3>
-<div class="sourceCode" id="cb13"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb13-1"><a href="#cb13-1" tabindex="-1"></a>cb_stop <span class="ot">&lt;-</span> <span class="fu">ggml_callback_early_stopping</span>(</span>
-<span id="cb13-2"><a href="#cb13-2" tabindex="-1"></a>  <span class="at">monitor   =</span> <span class="st">&quot;val_loss&quot;</span>,</span>
-<span id="cb13-3"><a href="#cb13-3" tabindex="-1"></a>  <span class="at">patience  =</span> <span class="dv">15</span><span class="dt">L</span>,</span>
-<span id="cb13-4"><a href="#cb13-4" tabindex="-1"></a>  <span class="at">min_delta =</span> <span class="fl">1e-4</span></span>
-<span id="cb13-5"><a href="#cb13-5" tabindex="-1"></a>)</span>
-<span id="cb13-6"><a href="#cb13-6" tabindex="-1"></a></span>
-<span id="cb13-7"><a href="#cb13-7" tabindex="-1"></a>model_cb <span class="ot">&lt;-</span> <span class="fu">ggml_model_sequential</span>() <span class="sc">|&gt;</span></span>
-<span id="cb13-8"><a href="#cb13-8" tabindex="-1"></a>  <span class="fu">ggml_layer_dense</span>(<span class="dv">32</span><span class="dt">L</span>, <span class="at">activation =</span> <span class="st">&quot;relu&quot;</span>, <span class="at">input_shape =</span> <span class="dv">4</span><span class="dt">L</span>) <span class="sc">|&gt;</span></span>
-<span id="cb13-9"><a href="#cb13-9" tabindex="-1"></a>  <span class="fu">ggml_layer_dense</span>(<span class="dv">3</span><span class="dt">L</span>,  <span class="at">activation =</span> <span class="st">&quot;softmax&quot;</span>) <span class="sc">|&gt;</span></span>
-<span id="cb13-10"><a href="#cb13-10" tabindex="-1"></a>  <span class="fu">ggml_compile</span>(<span class="at">optimizer =</span> <span class="st">&quot;adam&quot;</span>, <span class="at">loss =</span> <span class="st">&quot;categorical_crossentropy&quot;</span>)</span>
-<span id="cb13-11"><a href="#cb13-11" tabindex="-1"></a></span>
-<span id="cb13-12"><a href="#cb13-12" tabindex="-1"></a>model_cb <span class="ot">&lt;-</span> <span class="fu">ggml_fit</span>(model_cb, x_tr, y_tr,</span>
-<span id="cb13-13"><a href="#cb13-13" tabindex="-1"></a>                     <span class="at">epochs           =</span> <span class="dv">300</span><span class="dt">L</span>,</span>
-<span id="cb13-14"><a href="#cb13-14" tabindex="-1"></a>                     <span class="at">batch_size       =</span> <span class="dv">32</span><span class="dt">L</span>,</span>
-<span id="cb13-15"><a href="#cb13-15" tabindex="-1"></a>                     <span class="at">validation_split =</span> <span class="fl">0.1</span>,</span>
-<span id="cb13-16"><a href="#cb13-16" tabindex="-1"></a>                     <span class="at">callbacks        =</span> <span class="fu">list</span>(cb_stop),</span>
-<span id="cb13-17"><a href="#cb13-17" tabindex="-1"></a>                     <span class="at">verbose          =</span> <span class="dv">0</span><span class="dt">L</span>)</span></code></pre></div>
+<div class="sourceCode" id="cb20"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb20-1"><a href="#cb20-1" tabindex="-1"></a>cb_stop <span class="ot">&lt;-</span> <span class="fu">ggml_callback_early_stopping</span>(</span>
+<span id="cb20-2"><a href="#cb20-2" tabindex="-1"></a>  <span class="at">monitor   =</span> <span class="st">&quot;val_loss&quot;</span>,</span>
+<span id="cb20-3"><a href="#cb20-3" tabindex="-1"></a>  <span class="at">patience  =</span> <span class="dv">15</span><span class="dt">L</span>,</span>
+<span id="cb20-4"><a href="#cb20-4" tabindex="-1"></a>  <span class="at">min_delta =</span> <span class="fl">1e-4</span></span>
+<span id="cb20-5"><a href="#cb20-5" tabindex="-1"></a>)</span>
+<span id="cb20-6"><a href="#cb20-6" tabindex="-1"></a></span>
+<span id="cb20-7"><a href="#cb20-7" tabindex="-1"></a>model_cb <span class="ot">&lt;-</span> <span class="fu">ggml_model_sequential</span>() <span class="sc">|&gt;</span></span>
+<span id="cb20-8"><a href="#cb20-8" tabindex="-1"></a>  <span class="fu">ggml_layer_dense</span>(<span class="dv">32</span><span class="dt">L</span>, <span class="at">activation =</span> <span class="st">&quot;relu&quot;</span>, <span class="at">input_shape =</span> <span class="dv">4</span><span class="dt">L</span>) <span class="sc">|&gt;</span></span>
+<span id="cb20-9"><a href="#cb20-9" tabindex="-1"></a>  <span class="fu">ggml_layer_dense</span>(<span class="dv">3</span><span class="dt">L</span>,  <span class="at">activation =</span> <span class="st">&quot;softmax&quot;</span>) <span class="sc">|&gt;</span></span>
+<span id="cb20-10"><a href="#cb20-10" tabindex="-1"></a>  <span class="fu">ggml_compile</span>(<span class="at">optimizer =</span> <span class="st">&quot;adam&quot;</span>, <span class="at">loss =</span> <span class="st">&quot;categorical_crossentropy&quot;</span>)</span>
+<span id="cb20-11"><a href="#cb20-11" tabindex="-1"></a></span>
+<span id="cb20-12"><a href="#cb20-12" tabindex="-1"></a>model_cb <span class="ot">&lt;-</span> <span class="fu">ggml_fit</span>(model_cb, x_tr, y_tr,</span>
+<span id="cb20-13"><a href="#cb20-13" tabindex="-1"></a>                     <span class="at">epochs           =</span> <span class="dv">300</span><span class="dt">L</span>,</span>
+<span id="cb20-14"><a href="#cb20-14" tabindex="-1"></a>                     <span class="at">batch_size       =</span> <span class="dv">32</span><span class="dt">L</span>,</span>
+<span id="cb20-15"><a href="#cb20-15" tabindex="-1"></a>                     <span class="at">validation_split =</span> <span class="fl">0.1</span>,</span>
+<span id="cb20-16"><a href="#cb20-16" tabindex="-1"></a>                     <span class="at">callbacks        =</span> <span class="fu">list</span>(cb_stop),</span>
+<span id="cb20-17"><a href="#cb20-17" tabindex="-1"></a>                     <span class="at">verbose          =</span> <span class="dv">0</span><span class="dt">L</span>)</span></code></pre></div>
 </div>
 <div id="learning-rate-schedulers" class="section level3">
 <h3>3.2 Learning-rate schedulers</h3>
-<div class="sourceCode" id="cb14"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb14-1"><a href="#cb14-1" tabindex="-1"></a><span class="co"># Cosine annealing</span></span>
-<span id="cb14-2"><a href="#cb14-2" tabindex="-1"></a>cb_cosine <span class="ot">&lt;-</span> <span class="fu">ggml_schedule_cosine_decay</span>(<span class="at">T_max =</span> <span class="dv">100</span><span class="dt">L</span>, <span class="at">eta_min =</span> <span class="fl">1e-5</span>)</span>
-<span id="cb14-3"><a href="#cb14-3" tabindex="-1"></a></span>
-<span id="cb14-4"><a href="#cb14-4" tabindex="-1"></a><span class="co"># Step decay: halve LR every 30 epochs</span></span>
-<span id="cb14-5"><a href="#cb14-5" tabindex="-1"></a>cb_step <span class="ot">&lt;-</span> <span class="fu">ggml_schedule_step_decay</span>(<span class="at">step_size =</span> <span class="dv">30</span><span class="dt">L</span>, <span class="at">gamma =</span> <span class="fl">0.5</span>)</span>
-<span id="cb14-6"><a href="#cb14-6" tabindex="-1"></a></span>
-<span id="cb14-7"><a href="#cb14-7" tabindex="-1"></a><span class="co"># Reduce on plateau</span></span>
-<span id="cb14-8"><a href="#cb14-8" tabindex="-1"></a>cb_plateau <span class="ot">&lt;-</span> <span class="fu">ggml_schedule_reduce_on_plateau</span>(</span>
-<span id="cb14-9"><a href="#cb14-9" tabindex="-1"></a>  <span class="at">monitor  =</span> <span class="st">&quot;val_loss&quot;</span>,</span>
-<span id="cb14-10"><a href="#cb14-10" tabindex="-1"></a>  <span class="at">factor   =</span> <span class="fl">0.5</span>,</span>
-<span id="cb14-11"><a href="#cb14-11" tabindex="-1"></a>  <span class="at">patience =</span> <span class="dv">10</span><span class="dt">L</span>,</span>
-<span id="cb14-12"><a href="#cb14-12" tabindex="-1"></a>  <span class="at">min_lr   =</span> <span class="fl">1e-6</span></span>
-<span id="cb14-13"><a href="#cb14-13" tabindex="-1"></a>)</span>
-<span id="cb14-14"><a href="#cb14-14" tabindex="-1"></a></span>
-<span id="cb14-15"><a href="#cb14-15" tabindex="-1"></a>model_lr <span class="ot">&lt;-</span> <span class="fu">ggml_model_sequential</span>() <span class="sc">|&gt;</span></span>
-<span id="cb14-16"><a href="#cb14-16" tabindex="-1"></a>  <span class="fu">ggml_layer_dense</span>(<span class="dv">32</span><span class="dt">L</span>, <span class="at">activation =</span> <span class="st">&quot;relu&quot;</span>, <span class="at">input_shape =</span> <span class="dv">4</span><span class="dt">L</span>) <span class="sc">|&gt;</span></span>
-<span id="cb14-17"><a href="#cb14-17" tabindex="-1"></a>  <span class="fu">ggml_layer_dense</span>(<span class="dv">3</span><span class="dt">L</span>,  <span class="at">activation =</span> <span class="st">&quot;softmax&quot;</span>) <span class="sc">|&gt;</span></span>
-<span id="cb14-18"><a href="#cb14-18" tabindex="-1"></a>  <span class="fu">ggml_compile</span>(<span class="at">optimizer =</span> <span class="st">&quot;adam&quot;</span>, <span class="at">loss =</span> <span class="st">&quot;categorical_crossentropy&quot;</span>)</span>
-<span id="cb14-19"><a href="#cb14-19" tabindex="-1"></a></span>
-<span id="cb14-20"><a href="#cb14-20" tabindex="-1"></a>model_lr <span class="ot">&lt;-</span> <span class="fu">ggml_fit</span>(model_lr, x_tr, y_tr,</span>
-<span id="cb14-21"><a href="#cb14-21" tabindex="-1"></a>                     <span class="at">epochs           =</span> <span class="dv">150</span><span class="dt">L</span>,</span>
-<span id="cb14-22"><a href="#cb14-22" tabindex="-1"></a>                     <span class="at">batch_size       =</span> <span class="dv">32</span><span class="dt">L</span>,</span>
-<span id="cb14-23"><a href="#cb14-23" tabindex="-1"></a>                     <span class="at">validation_split =</span> <span class="fl">0.1</span>,</span>
-<span id="cb14-24"><a href="#cb14-24" tabindex="-1"></a>                     <span class="at">callbacks        =</span> <span class="fu">list</span>(cb_cosine),</span>
-<span id="cb14-25"><a href="#cb14-25" tabindex="-1"></a>                     <span class="at">verbose          =</span> <span class="dv">0</span><span class="dt">L</span>)</span></code></pre></div>
+<div class="sourceCode" id="cb21"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb21-1"><a href="#cb21-1" tabindex="-1"></a><span class="co"># Cosine annealing</span></span>
+<span id="cb21-2"><a href="#cb21-2" tabindex="-1"></a>cb_cosine <span class="ot">&lt;-</span> <span class="fu">ggml_schedule_cosine_decay</span>(<span class="at">T_max =</span> <span class="dv">100</span><span class="dt">L</span>, <span class="at">eta_min =</span> <span class="fl">1e-5</span>)</span>
+<span id="cb21-3"><a href="#cb21-3" tabindex="-1"></a></span>
+<span id="cb21-4"><a href="#cb21-4" tabindex="-1"></a><span class="co"># Step decay: halve LR every 30 epochs</span></span>
+<span id="cb21-5"><a href="#cb21-5" tabindex="-1"></a>cb_step <span class="ot">&lt;-</span> <span class="fu">ggml_schedule_step_decay</span>(<span class="at">step_size =</span> <span class="dv">30</span><span class="dt">L</span>, <span class="at">gamma =</span> <span class="fl">0.5</span>)</span>
+<span id="cb21-6"><a href="#cb21-6" tabindex="-1"></a></span>
+<span id="cb21-7"><a href="#cb21-7" tabindex="-1"></a><span class="co"># Reduce on plateau</span></span>
+<span id="cb21-8"><a href="#cb21-8" tabindex="-1"></a>cb_plateau <span class="ot">&lt;-</span> <span class="fu">ggml_schedule_reduce_on_plateau</span>(</span>
+<span id="cb21-9"><a href="#cb21-9" tabindex="-1"></a>  <span class="at">monitor  =</span> <span class="st">&quot;val_loss&quot;</span>,</span>
+<span id="cb21-10"><a href="#cb21-10" tabindex="-1"></a>  <span class="at">factor   =</span> <span class="fl">0.5</span>,</span>
+<span id="cb21-11"><a href="#cb21-11" tabindex="-1"></a>  <span class="at">patience =</span> <span class="dv">10</span><span class="dt">L</span>,</span>
+<span id="cb21-12"><a href="#cb21-12" tabindex="-1"></a>  <span class="at">min_lr   =</span> <span class="fl">1e-6</span></span>
+<span id="cb21-13"><a href="#cb21-13" tabindex="-1"></a>)</span>
+<span id="cb21-14"><a href="#cb21-14" tabindex="-1"></a></span>
+<span id="cb21-15"><a href="#cb21-15" tabindex="-1"></a>model_lr <span class="ot">&lt;-</span> <span class="fu">ggml_model_sequential</span>() <span class="sc">|&gt;</span></span>
+<span id="cb21-16"><a href="#cb21-16" tabindex="-1"></a>  <span class="fu">ggml_layer_dense</span>(<span class="dv">32</span><span class="dt">L</span>, <span class="at">activation =</span> <span class="st">&quot;relu&quot;</span>, <span class="at">input_shape =</span> <span class="dv">4</span><span class="dt">L</span>) <span class="sc">|&gt;</span></span>
+<span id="cb21-17"><a href="#cb21-17" tabindex="-1"></a>  <span class="fu">ggml_layer_dense</span>(<span class="dv">3</span><span class="dt">L</span>,  <span class="at">activation =</span> <span class="st">&quot;softmax&quot;</span>) <span class="sc">|&gt;</span></span>
+<span id="cb21-18"><a href="#cb21-18" tabindex="-1"></a>  <span class="fu">ggml_compile</span>(<span class="at">optimizer =</span> <span class="st">&quot;adam&quot;</span>, <span class="at">loss =</span> <span class="st">&quot;categorical_crossentropy&quot;</span>)</span>
+<span id="cb21-19"><a href="#cb21-19" tabindex="-1"></a></span>
+<span id="cb21-20"><a href="#cb21-20" tabindex="-1"></a>model_lr <span class="ot">&lt;-</span> <span class="fu">ggml_fit</span>(model_lr, x_tr, y_tr,</span>
+<span id="cb21-21"><a href="#cb21-21" tabindex="-1"></a>                     <span class="at">epochs           =</span> <span class="dv">150</span><span class="dt">L</span>,</span>
+<span id="cb21-22"><a href="#cb21-22" tabindex="-1"></a>                     <span class="at">batch_size       =</span> <span class="dv">32</span><span class="dt">L</span>,</span>
+<span id="cb21-23"><a href="#cb21-23" tabindex="-1"></a>                     <span class="at">validation_split =</span> <span class="fl">0.1</span>,</span>
+<span id="cb21-24"><a href="#cb21-24" tabindex="-1"></a>                     <span class="at">callbacks        =</span> <span class="fu">list</span>(cb_cosine),</span>
+<span id="cb21-25"><a href="#cb21-25" tabindex="-1"></a>                     <span class="at">verbose          =</span> <span class="dv">0</span><span class="dt">L</span>)</span></code></pre></div>
 <hr />
 </div>
 </div>
@@ -703,169 +882,169 @@ graphs. Tensors are <strong>column-major</strong>: shape is
 <code>[features, batch]</code>.</p>
 <div id="prepare-data-iris-col-major" class="section level3">
 <h3>4.1 Prepare data (iris, col-major)</h3>
-<div class="sourceCode" id="cb15"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb15-1"><a href="#cb15-1" tabindex="-1"></a><span class="co"># ag_device()/ag_dtype() are package-level state, so a section that relies on a</span></span>
-<span id="cb15-2"><a href="#cb15-2" tabindex="-1"></a><span class="co"># particular device has to say so rather than inherit whatever ran before it.</span></span>
-<span id="cb15-3"><a href="#cb15-3" tabindex="-1"></a><span class="fu">ag_device</span>(<span class="st">&quot;cpu&quot;</span>)</span>
-<span id="cb15-4"><a href="#cb15-4" tabindex="-1"></a><span class="fu">ag_dtype</span>(<span class="st">&quot;f32&quot;</span>)</span>
-<span id="cb15-5"><a href="#cb15-5" tabindex="-1"></a></span>
-<span id="cb15-6"><a href="#cb15-6" tabindex="-1"></a><span class="co"># transpose: rows = features, cols = samples</span></span>
-<span id="cb15-7"><a href="#cb15-7" tabindex="-1"></a>x_tr_ag  <span class="ot">&lt;-</span> <span class="fu">t</span>(x_tr)    <span class="co"># [4, 120]</span></span>
-<span id="cb15-8"><a href="#cb15-8" tabindex="-1"></a>y_tr_ag  <span class="ot">&lt;-</span> <span class="fu">t</span>(y_tr)    <span class="co"># [3, 120]</span></span>
-<span id="cb15-9"><a href="#cb15-9" tabindex="-1"></a>x_val_ag <span class="ot">&lt;-</span> <span class="fu">t</span>(x_val)   <span class="co"># [4, 30]</span></span>
-<span id="cb15-10"><a href="#cb15-10" tabindex="-1"></a>y_val_ag <span class="ot">&lt;-</span> <span class="fu">t</span>(y_val)</span></code></pre></div>
+<div class="sourceCode" id="cb22"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb22-1"><a href="#cb22-1" tabindex="-1"></a><span class="co"># ag_device()/ag_dtype() are package-level state, so a section that relies on a</span></span>
+<span id="cb22-2"><a href="#cb22-2" tabindex="-1"></a><span class="co"># particular device has to say so rather than inherit whatever ran before it.</span></span>
+<span id="cb22-3"><a href="#cb22-3" tabindex="-1"></a><span class="fu">ag_device</span>(<span class="st">&quot;cpu&quot;</span>)</span>
+<span id="cb22-4"><a href="#cb22-4" tabindex="-1"></a><span class="fu">ag_dtype</span>(<span class="st">&quot;f32&quot;</span>)</span>
+<span id="cb22-5"><a href="#cb22-5" tabindex="-1"></a></span>
+<span id="cb22-6"><a href="#cb22-6" tabindex="-1"></a><span class="co"># transpose: rows = features, cols = samples</span></span>
+<span id="cb22-7"><a href="#cb22-7" tabindex="-1"></a>x_tr_ag  <span class="ot">&lt;-</span> <span class="fu">t</span>(x_tr)    <span class="co"># [4, 120]</span></span>
+<span id="cb22-8"><a href="#cb22-8" tabindex="-1"></a>y_tr_ag  <span class="ot">&lt;-</span> <span class="fu">t</span>(y_tr)    <span class="co"># [3, 120]</span></span>
+<span id="cb22-9"><a href="#cb22-9" tabindex="-1"></a>x_val_ag <span class="ot">&lt;-</span> <span class="fu">t</span>(x_val)   <span class="co"># [4, 30]</span></span>
+<span id="cb22-10"><a href="#cb22-10" tabindex="-1"></a>y_val_ag <span class="ot">&lt;-</span> <span class="fu">t</span>(y_val)</span></code></pre></div>
 </div>
 <div id="build-a-model-with-ag_sequential" class="section level3">
 <h3>4.2 Build a model with <code>ag_sequential</code></h3>
-<div class="sourceCode" id="cb16"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb16-1"><a href="#cb16-1" tabindex="-1"></a>ag_mod <span class="ot">&lt;-</span> <span class="fu">ag_sequential</span>(</span>
-<span id="cb16-2"><a href="#cb16-2" tabindex="-1"></a>  <span class="fu">ag_linear</span>(<span class="dv">4</span><span class="dt">L</span>,  <span class="dv">32</span><span class="dt">L</span>, <span class="at">activation =</span> <span class="st">&quot;relu&quot;</span>),</span>
-<span id="cb16-3"><a href="#cb16-3" tabindex="-1"></a>  <span class="fu">ag_batch_norm</span>(<span class="dv">32</span><span class="dt">L</span>),</span>
-<span id="cb16-4"><a href="#cb16-4" tabindex="-1"></a>  <span class="fu">ag_dropout</span>(<span class="fl">0.3</span>),</span>
-<span id="cb16-5"><a href="#cb16-5" tabindex="-1"></a>  <span class="fu">ag_linear</span>(<span class="dv">32</span><span class="dt">L</span>, <span class="dv">16</span><span class="dt">L</span>, <span class="at">activation =</span> <span class="st">&quot;relu&quot;</span>),</span>
-<span id="cb16-6"><a href="#cb16-6" tabindex="-1"></a>  <span class="fu">ag_linear</span>(<span class="dv">16</span><span class="dt">L</span>,  <span class="dv">3</span><span class="dt">L</span>)</span>
-<span id="cb16-7"><a href="#cb16-7" tabindex="-1"></a>)</span>
-<span id="cb16-8"><a href="#cb16-8" tabindex="-1"></a></span>
-<span id="cb16-9"><a href="#cb16-9" tabindex="-1"></a>params <span class="ot">&lt;-</span> ag_mod<span class="sc">$</span><span class="fu">parameters</span>()</span>
-<span id="cb16-10"><a href="#cb16-10" tabindex="-1"></a>opt    <span class="ot">&lt;-</span> <span class="fu">optimizer_adam</span>(params, <span class="at">lr =</span> <span class="fl">1e-3</span>)</span></code></pre></div>
+<div class="sourceCode" id="cb23"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb23-1"><a href="#cb23-1" tabindex="-1"></a>ag_mod <span class="ot">&lt;-</span> <span class="fu">ag_sequential</span>(</span>
+<span id="cb23-2"><a href="#cb23-2" tabindex="-1"></a>  <span class="fu">ag_linear</span>(<span class="dv">4</span><span class="dt">L</span>,  <span class="dv">32</span><span class="dt">L</span>, <span class="at">activation =</span> <span class="st">&quot;relu&quot;</span>),</span>
+<span id="cb23-3"><a href="#cb23-3" tabindex="-1"></a>  <span class="fu">ag_batch_norm</span>(<span class="dv">32</span><span class="dt">L</span>),</span>
+<span id="cb23-4"><a href="#cb23-4" tabindex="-1"></a>  <span class="fu">ag_dropout</span>(<span class="fl">0.3</span>),</span>
+<span id="cb23-5"><a href="#cb23-5" tabindex="-1"></a>  <span class="fu">ag_linear</span>(<span class="dv">32</span><span class="dt">L</span>, <span class="dv">16</span><span class="dt">L</span>, <span class="at">activation =</span> <span class="st">&quot;relu&quot;</span>),</span>
+<span id="cb23-6"><a href="#cb23-6" tabindex="-1"></a>  <span class="fu">ag_linear</span>(<span class="dv">16</span><span class="dt">L</span>,  <span class="dv">3</span><span class="dt">L</span>)</span>
+<span id="cb23-7"><a href="#cb23-7" tabindex="-1"></a>)</span>
+<span id="cb23-8"><a href="#cb23-8" tabindex="-1"></a></span>
+<span id="cb23-9"><a href="#cb23-9" tabindex="-1"></a>params <span class="ot">&lt;-</span> ag_mod<span class="sc">$</span><span class="fu">parameters</span>()</span>
+<span id="cb23-10"><a href="#cb23-10" tabindex="-1"></a>opt    <span class="ot">&lt;-</span> <span class="fu">optimizer_adam</span>(params, <span class="at">lr =</span> <span class="fl">1e-3</span>)</span></code></pre></div>
 </div>
 <div id="training-loop" class="section level3">
 <h3>4.3 Training loop</h3>
-<div class="sourceCode" id="cb17"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb17-1"><a href="#cb17-1" tabindex="-1"></a>BS <span class="ot">&lt;-</span> <span class="dv">32</span><span class="dt">L</span></span>
-<span id="cb17-2"><a href="#cb17-2" tabindex="-1"></a>n  <span class="ot">&lt;-</span> <span class="fu">ncol</span>(x_tr_ag)</span>
-<span id="cb17-3"><a href="#cb17-3" tabindex="-1"></a></span>
-<span id="cb17-4"><a href="#cb17-4" tabindex="-1"></a><span class="fu">ag_train</span>(ag_mod)</span>
-<span id="cb17-5"><a href="#cb17-5" tabindex="-1"></a><span class="fu">set.seed</span>(<span class="dv">42</span>)</span>
-<span id="cb17-6"><a href="#cb17-6" tabindex="-1"></a></span>
-<span id="cb17-7"><a href="#cb17-7" tabindex="-1"></a><span class="cf">for</span> (ep <span class="cf">in</span> <span class="fu">seq_len</span>(<span class="dv">150</span><span class="dt">L</span>)) {</span>
-<span id="cb17-8"><a href="#cb17-8" tabindex="-1"></a>  perm <span class="ot">&lt;-</span> <span class="fu">sample</span>(n)</span>
-<span id="cb17-9"><a href="#cb17-9" tabindex="-1"></a>  <span class="cf">for</span> (b <span class="cf">in</span> <span class="fu">seq_len</span>(<span class="fu">ceiling</span>(n <span class="sc">/</span> BS))) {</span>
-<span id="cb17-10"><a href="#cb17-10" tabindex="-1"></a>    idx <span class="ot">&lt;-</span> perm[<span class="fu">seq</span>((b<span class="dv">-1</span><span class="dt">L</span>)<span class="sc">*</span>BS <span class="sc">+</span> <span class="dv">1</span><span class="dt">L</span>, <span class="fu">min</span>(b<span class="sc">*</span>BS, n))]</span>
-<span id="cb17-11"><a href="#cb17-11" tabindex="-1"></a>    xb  <span class="ot">&lt;-</span> <span class="fu">ag_tensor</span>(x_tr_ag[, idx, <span class="at">drop =</span> <span class="cn">FALSE</span>])</span>
-<span id="cb17-12"><a href="#cb17-12" tabindex="-1"></a>    yb  <span class="ot">&lt;-</span> y_tr_ag[, idx, drop <span class="ot">=</span> <span class="cn">FALSE</span>]</span>
-<span id="cb17-13"><a href="#cb17-13" tabindex="-1"></a></span>
-<span id="cb17-14"><a href="#cb17-14" tabindex="-1"></a>    <span class="fu">with_grad_tape</span>({</span>
-<span id="cb17-15"><a href="#cb17-15" tabindex="-1"></a>      loss <span class="ot">&lt;-</span> <span class="fu">ag_softmax_cross_entropy_loss</span>(ag_mod<span class="sc">$</span><span class="fu">forward</span>(xb), yb)</span>
-<span id="cb17-16"><a href="#cb17-16" tabindex="-1"></a>    })</span>
-<span id="cb17-17"><a href="#cb17-17" tabindex="-1"></a>    grads <span class="ot">&lt;-</span> <span class="fu">backward</span>(loss)</span>
-<span id="cb17-18"><a href="#cb17-18" tabindex="-1"></a>    opt<span class="sc">$</span><span class="fu">step</span>(grads)</span>
-<span id="cb17-19"><a href="#cb17-19" tabindex="-1"></a>    opt<span class="sc">$</span><span class="fu">zero_grad</span>()</span>
-<span id="cb17-20"><a href="#cb17-20" tabindex="-1"></a>  }</span>
-<span id="cb17-21"><a href="#cb17-21" tabindex="-1"></a></span>
-<span id="cb17-22"><a href="#cb17-22" tabindex="-1"></a>  <span class="cf">if</span> (ep <span class="sc">%%</span> <span class="dv">50</span><span class="dt">L</span> <span class="sc">==</span> <span class="dv">0</span><span class="dt">L</span>)</span>
-<span id="cb17-23"><a href="#cb17-23" tabindex="-1"></a>    <span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">&quot;epoch %d  loss %.4f</span><span class="sc">\n</span><span class="st">&quot;</span>, ep, <span class="fu">as.matrix</span>(loss)[<span class="dv">1</span>]))</span>
-<span id="cb17-24"><a href="#cb17-24" tabindex="-1"></a>}</span></code></pre></div>
+<div class="sourceCode" id="cb24"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb24-1"><a href="#cb24-1" tabindex="-1"></a>BS <span class="ot">&lt;-</span> <span class="dv">32</span><span class="dt">L</span></span>
+<span id="cb24-2"><a href="#cb24-2" tabindex="-1"></a>n  <span class="ot">&lt;-</span> <span class="fu">ncol</span>(x_tr_ag)</span>
+<span id="cb24-3"><a href="#cb24-3" tabindex="-1"></a></span>
+<span id="cb24-4"><a href="#cb24-4" tabindex="-1"></a><span class="fu">ag_train</span>(ag_mod)</span>
+<span id="cb24-5"><a href="#cb24-5" tabindex="-1"></a><span class="fu">set.seed</span>(<span class="dv">42</span>)</span>
+<span id="cb24-6"><a href="#cb24-6" tabindex="-1"></a></span>
+<span id="cb24-7"><a href="#cb24-7" tabindex="-1"></a><span class="cf">for</span> (ep <span class="cf">in</span> <span class="fu">seq_len</span>(<span class="dv">150</span><span class="dt">L</span>)) {</span>
+<span id="cb24-8"><a href="#cb24-8" tabindex="-1"></a>  perm <span class="ot">&lt;-</span> <span class="fu">sample</span>(n)</span>
+<span id="cb24-9"><a href="#cb24-9" tabindex="-1"></a>  <span class="cf">for</span> (b <span class="cf">in</span> <span class="fu">seq_len</span>(<span class="fu">ceiling</span>(n <span class="sc">/</span> BS))) {</span>
+<span id="cb24-10"><a href="#cb24-10" tabindex="-1"></a>    idx <span class="ot">&lt;-</span> perm[<span class="fu">seq</span>((b<span class="dv">-1</span><span class="dt">L</span>)<span class="sc">*</span>BS <span class="sc">+</span> <span class="dv">1</span><span class="dt">L</span>, <span class="fu">min</span>(b<span class="sc">*</span>BS, n))]</span>
+<span id="cb24-11"><a href="#cb24-11" tabindex="-1"></a>    xb  <span class="ot">&lt;-</span> <span class="fu">ag_tensor</span>(x_tr_ag[, idx, <span class="at">drop =</span> <span class="cn">FALSE</span>])</span>
+<span id="cb24-12"><a href="#cb24-12" tabindex="-1"></a>    yb  <span class="ot">&lt;-</span> y_tr_ag[, idx, drop <span class="ot">=</span> <span class="cn">FALSE</span>]</span>
+<span id="cb24-13"><a href="#cb24-13" tabindex="-1"></a></span>
+<span id="cb24-14"><a href="#cb24-14" tabindex="-1"></a>    <span class="fu">with_grad_tape</span>({</span>
+<span id="cb24-15"><a href="#cb24-15" tabindex="-1"></a>      loss <span class="ot">&lt;-</span> <span class="fu">ag_softmax_cross_entropy_loss</span>(ag_mod<span class="sc">$</span><span class="fu">forward</span>(xb), yb)</span>
+<span id="cb24-16"><a href="#cb24-16" tabindex="-1"></a>    })</span>
+<span id="cb24-17"><a href="#cb24-17" tabindex="-1"></a>    grads <span class="ot">&lt;-</span> <span class="fu">backward</span>(loss)</span>
+<span id="cb24-18"><a href="#cb24-18" tabindex="-1"></a>    opt<span class="sc">$</span><span class="fu">step</span>(grads)</span>
+<span id="cb24-19"><a href="#cb24-19" tabindex="-1"></a>    opt<span class="sc">$</span><span class="fu">zero_grad</span>()</span>
+<span id="cb24-20"><a href="#cb24-20" tabindex="-1"></a>  }</span>
+<span id="cb24-21"><a href="#cb24-21" tabindex="-1"></a></span>
+<span id="cb24-22"><a href="#cb24-22" tabindex="-1"></a>  <span class="cf">if</span> (ep <span class="sc">%%</span> <span class="dv">50</span><span class="dt">L</span> <span class="sc">==</span> <span class="dv">0</span><span class="dt">L</span>)</span>
+<span id="cb24-23"><a href="#cb24-23" tabindex="-1"></a>    <span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">&quot;epoch %d  loss %.4f</span><span class="sc">\n</span><span class="st">&quot;</span>, ep, <span class="fu">as.matrix</span>(loss)[<span class="dv">1</span>]))</span>
+<span id="cb24-24"><a href="#cb24-24" tabindex="-1"></a>}</span></code></pre></div>
 </div>
 <div id="inference-and-accuracy" class="section level3">
 <h3>4.4 Inference and accuracy</h3>
-<div class="sourceCode" id="cb18"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb18-1"><a href="#cb18-1" tabindex="-1"></a><span class="fu">ag_eval</span>(ag_mod)</span>
-<span id="cb18-2"><a href="#cb18-2" tabindex="-1"></a></span>
-<span id="cb18-3"><a href="#cb18-3" tabindex="-1"></a><span class="co"># forward in chunks, apply softmax manually</span></span>
-<span id="cb18-4"><a href="#cb18-4" tabindex="-1"></a>ag_predict_cm <span class="ot">&lt;-</span> <span class="cf">function</span>(model, x_cm, <span class="at">chunk =</span> <span class="dv">64</span><span class="dt">L</span>) {</span>
-<span id="cb18-5"><a href="#cb18-5" tabindex="-1"></a>  n   <span class="ot">&lt;-</span> <span class="fu">ncol</span>(x_cm)</span>
-<span id="cb18-6"><a href="#cb18-6" tabindex="-1"></a>  out <span class="ot">&lt;-</span> <span class="fu">matrix</span>(<span class="fl">0.0</span>, <span class="fu">nrow</span>(<span class="fu">as.matrix</span>(model<span class="sc">$</span><span class="fu">forward</span>(<span class="fu">ag_tensor</span>(x_cm[,<span class="dv">1</span>,<span class="at">drop=</span><span class="cn">FALSE</span>])))), n)</span>
-<span id="cb18-7"><a href="#cb18-7" tabindex="-1"></a>  <span class="cf">for</span> (s <span class="cf">in</span> <span class="fu">seq</span>(<span class="dv">1</span><span class="dt">L</span>, n, <span class="at">by =</span> chunk)) {</span>
-<span id="cb18-8"><a href="#cb18-8" tabindex="-1"></a>    e  <span class="ot">&lt;-</span> <span class="fu">min</span>(s <span class="sc">+</span> chunk <span class="sc">-</span> <span class="dv">1</span><span class="dt">L</span>, n)</span>
-<span id="cb18-9"><a href="#cb18-9" tabindex="-1"></a>    lg <span class="ot">&lt;-</span> <span class="fu">as.matrix</span>(model<span class="sc">$</span><span class="fu">forward</span>(<span class="fu">ag_tensor</span>(x_cm[, s<span class="sc">:</span>e, <span class="at">drop =</span> <span class="cn">FALSE</span>])))</span>
-<span id="cb18-10"><a href="#cb18-10" tabindex="-1"></a>    ev <span class="ot">&lt;-</span> <span class="fu">exp</span>(lg <span class="sc">-</span> <span class="fu">apply</span>(lg, <span class="dv">2</span>, max))</span>
-<span id="cb18-11"><a href="#cb18-11" tabindex="-1"></a>    out[, s<span class="sc">:</span>e] <span class="ot">&lt;-</span> ev <span class="sc">/</span> <span class="fu">colSums</span>(ev)</span>
-<span id="cb18-12"><a href="#cb18-12" tabindex="-1"></a>  }</span>
-<span id="cb18-13"><a href="#cb18-13" tabindex="-1"></a>  out</span>
-<span id="cb18-14"><a href="#cb18-14" tabindex="-1"></a>}</span>
-<span id="cb18-15"><a href="#cb18-15" tabindex="-1"></a></span>
-<span id="cb18-16"><a href="#cb18-16" tabindex="-1"></a>probs_ag <span class="ot">&lt;-</span> <span class="fu">ag_predict_cm</span>(ag_mod, x_val_ag)          <span class="co"># [3, 30]</span></span>
-<span id="cb18-17"><a href="#cb18-17" tabindex="-1"></a>pred_ag  <span class="ot">&lt;-</span> <span class="fu">apply</span>(probs_ag, <span class="dv">2</span>, which.max)</span>
-<span id="cb18-18"><a href="#cb18-18" tabindex="-1"></a>true_ag  <span class="ot">&lt;-</span> <span class="fu">apply</span>(y_val_ag, <span class="dv">1</span>, which.max)            <span class="co"># col-major: rows = classes</span></span>
-<span id="cb18-19"><a href="#cb18-19" tabindex="-1"></a>acc_ag   <span class="ot">&lt;-</span> <span class="fu">mean</span>(pred_ag <span class="sc">==</span> true_ag)</span>
-<span id="cb18-20"><a href="#cb18-20" tabindex="-1"></a><span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">&quot;Autograd val accuracy: %.4f</span><span class="sc">\n</span><span class="st">&quot;</span>, acc_ag))</span></code></pre></div>
+<div class="sourceCode" id="cb25"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb25-1"><a href="#cb25-1" tabindex="-1"></a><span class="fu">ag_eval</span>(ag_mod)</span>
+<span id="cb25-2"><a href="#cb25-2" tabindex="-1"></a></span>
+<span id="cb25-3"><a href="#cb25-3" tabindex="-1"></a><span class="co"># forward in chunks, apply softmax manually</span></span>
+<span id="cb25-4"><a href="#cb25-4" tabindex="-1"></a>ag_predict_cm <span class="ot">&lt;-</span> <span class="cf">function</span>(model, x_cm, <span class="at">chunk =</span> <span class="dv">64</span><span class="dt">L</span>) {</span>
+<span id="cb25-5"><a href="#cb25-5" tabindex="-1"></a>  n   <span class="ot">&lt;-</span> <span class="fu">ncol</span>(x_cm)</span>
+<span id="cb25-6"><a href="#cb25-6" tabindex="-1"></a>  out <span class="ot">&lt;-</span> <span class="fu">matrix</span>(<span class="fl">0.0</span>, <span class="fu">nrow</span>(<span class="fu">as.matrix</span>(model<span class="sc">$</span><span class="fu">forward</span>(<span class="fu">ag_tensor</span>(x_cm[,<span class="dv">1</span>,<span class="at">drop=</span><span class="cn">FALSE</span>])))), n)</span>
+<span id="cb25-7"><a href="#cb25-7" tabindex="-1"></a>  <span class="cf">for</span> (s <span class="cf">in</span> <span class="fu">seq</span>(<span class="dv">1</span><span class="dt">L</span>, n, <span class="at">by =</span> chunk)) {</span>
+<span id="cb25-8"><a href="#cb25-8" tabindex="-1"></a>    e  <span class="ot">&lt;-</span> <span class="fu">min</span>(s <span class="sc">+</span> chunk <span class="sc">-</span> <span class="dv">1</span><span class="dt">L</span>, n)</span>
+<span id="cb25-9"><a href="#cb25-9" tabindex="-1"></a>    lg <span class="ot">&lt;-</span> <span class="fu">as.matrix</span>(model<span class="sc">$</span><span class="fu">forward</span>(<span class="fu">ag_tensor</span>(x_cm[, s<span class="sc">:</span>e, <span class="at">drop =</span> <span class="cn">FALSE</span>])))</span>
+<span id="cb25-10"><a href="#cb25-10" tabindex="-1"></a>    ev <span class="ot">&lt;-</span> <span class="fu">exp</span>(lg <span class="sc">-</span> <span class="fu">apply</span>(lg, <span class="dv">2</span>, max))</span>
+<span id="cb25-11"><a href="#cb25-11" tabindex="-1"></a>    out[, s<span class="sc">:</span>e] <span class="ot">&lt;-</span> ev <span class="sc">/</span> <span class="fu">colSums</span>(ev)</span>
+<span id="cb25-12"><a href="#cb25-12" tabindex="-1"></a>  }</span>
+<span id="cb25-13"><a href="#cb25-13" tabindex="-1"></a>  out</span>
+<span id="cb25-14"><a href="#cb25-14" tabindex="-1"></a>}</span>
+<span id="cb25-15"><a href="#cb25-15" tabindex="-1"></a></span>
+<span id="cb25-16"><a href="#cb25-16" tabindex="-1"></a>probs_ag <span class="ot">&lt;-</span> <span class="fu">ag_predict_cm</span>(ag_mod, x_val_ag)          <span class="co"># [3, 30]</span></span>
+<span id="cb25-17"><a href="#cb25-17" tabindex="-1"></a>pred_ag  <span class="ot">&lt;-</span> <span class="fu">apply</span>(probs_ag, <span class="dv">2</span>, which.max)</span>
+<span id="cb25-18"><a href="#cb25-18" tabindex="-1"></a>true_ag  <span class="ot">&lt;-</span> <span class="fu">apply</span>(y_val_ag, <span class="dv">1</span>, which.max)            <span class="co"># col-major: rows = classes</span></span>
+<span id="cb25-19"><a href="#cb25-19" tabindex="-1"></a>acc_ag   <span class="ot">&lt;-</span> <span class="fu">mean</span>(pred_ag <span class="sc">==</span> true_ag)</span>
+<span id="cb25-20"><a href="#cb25-20" tabindex="-1"></a><span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">&quot;Autograd val accuracy: %.4f</span><span class="sc">\n</span><span class="st">&quot;</span>, acc_ag))</span></code></pre></div>
 </div>
 <div id="lr-scheduler-gradient-clipping" class="section level3">
 <h3>4.5 LR scheduler + gradient clipping</h3>
-<div class="sourceCode" id="cb19"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb19-1"><a href="#cb19-1" tabindex="-1"></a>ag_mod2 <span class="ot">&lt;-</span> <span class="fu">ag_sequential</span>(</span>
-<span id="cb19-2"><a href="#cb19-2" tabindex="-1"></a>  <span class="fu">ag_linear</span>(<span class="dv">4</span><span class="dt">L</span>,  <span class="dv">64</span><span class="dt">L</span>, <span class="at">activation =</span> <span class="st">&quot;relu&quot;</span>),</span>
-<span id="cb19-3"><a href="#cb19-3" tabindex="-1"></a>  <span class="fu">ag_batch_norm</span>(<span class="dv">64</span><span class="dt">L</span>),</span>
-<span id="cb19-4"><a href="#cb19-4" tabindex="-1"></a>  <span class="fu">ag_dropout</span>(<span class="fl">0.3</span>),</span>
-<span id="cb19-5"><a href="#cb19-5" tabindex="-1"></a>  <span class="fu">ag_linear</span>(<span class="dv">64</span><span class="dt">L</span>, <span class="dv">32</span><span class="dt">L</span>, <span class="at">activation =</span> <span class="st">&quot;relu&quot;</span>),</span>
-<span id="cb19-6"><a href="#cb19-6" tabindex="-1"></a>  <span class="fu">ag_linear</span>(<span class="dv">32</span><span class="dt">L</span>,  <span class="dv">3</span><span class="dt">L</span>)</span>
-<span id="cb19-7"><a href="#cb19-7" tabindex="-1"></a>)</span>
-<span id="cb19-8"><a href="#cb19-8" tabindex="-1"></a>params2 <span class="ot">&lt;-</span> ag_mod2<span class="sc">$</span><span class="fu">parameters</span>()</span>
-<span id="cb19-9"><a href="#cb19-9" tabindex="-1"></a>opt2    <span class="ot">&lt;-</span> <span class="fu">optimizer_adam</span>(params2, <span class="at">lr =</span> <span class="fl">1e-3</span>)</span>
-<span id="cb19-10"><a href="#cb19-10" tabindex="-1"></a>sch2    <span class="ot">&lt;-</span> <span class="fu">lr_scheduler_cosine</span>(opt2, <span class="at">T_max =</span> <span class="dv">150</span><span class="dt">L</span>, <span class="at">lr_min =</span> <span class="fl">1e-5</span>)</span>
-<span id="cb19-11"><a href="#cb19-11" tabindex="-1"></a></span>
-<span id="cb19-12"><a href="#cb19-12" tabindex="-1"></a><span class="fu">ag_train</span>(ag_mod2)</span>
-<span id="cb19-13"><a href="#cb19-13" tabindex="-1"></a><span class="fu">set.seed</span>(<span class="dv">42</span>)</span>
-<span id="cb19-14"><a href="#cb19-14" tabindex="-1"></a></span>
-<span id="cb19-15"><a href="#cb19-15" tabindex="-1"></a><span class="cf">for</span> (ep <span class="cf">in</span> <span class="fu">seq_len</span>(<span class="dv">150</span><span class="dt">L</span>)) {</span>
-<span id="cb19-16"><a href="#cb19-16" tabindex="-1"></a>  perm <span class="ot">&lt;-</span> <span class="fu">sample</span>(n)</span>
-<span id="cb19-17"><a href="#cb19-17" tabindex="-1"></a>  <span class="cf">for</span> (b <span class="cf">in</span> <span class="fu">seq_len</span>(<span class="fu">ceiling</span>(n <span class="sc">/</span> BS))) {</span>
-<span id="cb19-18"><a href="#cb19-18" tabindex="-1"></a>    idx <span class="ot">&lt;-</span> perm[<span class="fu">seq</span>((b<span class="dv">-1</span><span class="dt">L</span>)<span class="sc">*</span>BS <span class="sc">+</span> <span class="dv">1</span><span class="dt">L</span>, <span class="fu">min</span>(b<span class="sc">*</span>BS, n))]</span>
-<span id="cb19-19"><a href="#cb19-19" tabindex="-1"></a>    xb  <span class="ot">&lt;-</span> <span class="fu">ag_tensor</span>(x_tr_ag[, idx, <span class="at">drop =</span> <span class="cn">FALSE</span>])</span>
-<span id="cb19-20"><a href="#cb19-20" tabindex="-1"></a>    yb  <span class="ot">&lt;-</span> y_tr_ag[, idx, drop <span class="ot">=</span> <span class="cn">FALSE</span>]</span>
-<span id="cb19-21"><a href="#cb19-21" tabindex="-1"></a></span>
-<span id="cb19-22"><a href="#cb19-22" tabindex="-1"></a>    <span class="fu">with_grad_tape</span>({</span>
-<span id="cb19-23"><a href="#cb19-23" tabindex="-1"></a>      loss2 <span class="ot">&lt;-</span> <span class="fu">ag_softmax_cross_entropy_loss</span>(ag_mod2<span class="sc">$</span><span class="fu">forward</span>(xb), yb)</span>
-<span id="cb19-24"><a href="#cb19-24" tabindex="-1"></a>    })</span>
-<span id="cb19-25"><a href="#cb19-25" tabindex="-1"></a>    grads2 <span class="ot">&lt;-</span> <span class="fu">backward</span>(loss2)</span>
-<span id="cb19-26"><a href="#cb19-26" tabindex="-1"></a>    <span class="fu">clip_grad_norm</span>(params2, grads2, <span class="at">max_norm =</span> <span class="fl">5.0</span>)</span>
-<span id="cb19-27"><a href="#cb19-27" tabindex="-1"></a>    opt2<span class="sc">$</span><span class="fu">step</span>(grads2)</span>
-<span id="cb19-28"><a href="#cb19-28" tabindex="-1"></a>    opt2<span class="sc">$</span><span class="fu">zero_grad</span>()</span>
-<span id="cb19-29"><a href="#cb19-29" tabindex="-1"></a>  }</span>
-<span id="cb19-30"><a href="#cb19-30" tabindex="-1"></a>  sch2<span class="sc">$</span><span class="fu">step</span>()</span>
-<span id="cb19-31"><a href="#cb19-31" tabindex="-1"></a>}</span>
-<span id="cb19-32"><a href="#cb19-32" tabindex="-1"></a></span>
-<span id="cb19-33"><a href="#cb19-33" tabindex="-1"></a><span class="fu">ag_eval</span>(ag_mod2)</span>
-<span id="cb19-34"><a href="#cb19-34" tabindex="-1"></a>probs2 <span class="ot">&lt;-</span> <span class="fu">ag_predict_cm</span>(ag_mod2, x_val_ag)</span>
-<span id="cb19-35"><a href="#cb19-35" tabindex="-1"></a>acc2   <span class="ot">&lt;-</span> <span class="fu">mean</span>(<span class="fu">apply</span>(probs2, <span class="dv">2</span>, which.max) <span class="sc">==</span> true_ag)</span>
-<span id="cb19-36"><a href="#cb19-36" tabindex="-1"></a><span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">&quot;ag + cosine + clip  val accuracy: %.4f</span><span class="sc">\n</span><span class="st">&quot;</span>, acc2))</span></code></pre></div>
+<div class="sourceCode" id="cb26"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb26-1"><a href="#cb26-1" tabindex="-1"></a>ag_mod2 <span class="ot">&lt;-</span> <span class="fu">ag_sequential</span>(</span>
+<span id="cb26-2"><a href="#cb26-2" tabindex="-1"></a>  <span class="fu">ag_linear</span>(<span class="dv">4</span><span class="dt">L</span>,  <span class="dv">64</span><span class="dt">L</span>, <span class="at">activation =</span> <span class="st">&quot;relu&quot;</span>),</span>
+<span id="cb26-3"><a href="#cb26-3" tabindex="-1"></a>  <span class="fu">ag_batch_norm</span>(<span class="dv">64</span><span class="dt">L</span>),</span>
+<span id="cb26-4"><a href="#cb26-4" tabindex="-1"></a>  <span class="fu">ag_dropout</span>(<span class="fl">0.3</span>),</span>
+<span id="cb26-5"><a href="#cb26-5" tabindex="-1"></a>  <span class="fu">ag_linear</span>(<span class="dv">64</span><span class="dt">L</span>, <span class="dv">32</span><span class="dt">L</span>, <span class="at">activation =</span> <span class="st">&quot;relu&quot;</span>),</span>
+<span id="cb26-6"><a href="#cb26-6" tabindex="-1"></a>  <span class="fu">ag_linear</span>(<span class="dv">32</span><span class="dt">L</span>,  <span class="dv">3</span><span class="dt">L</span>)</span>
+<span id="cb26-7"><a href="#cb26-7" tabindex="-1"></a>)</span>
+<span id="cb26-8"><a href="#cb26-8" tabindex="-1"></a>params2 <span class="ot">&lt;-</span> ag_mod2<span class="sc">$</span><span class="fu">parameters</span>()</span>
+<span id="cb26-9"><a href="#cb26-9" tabindex="-1"></a>opt2    <span class="ot">&lt;-</span> <span class="fu">optimizer_adam</span>(params2, <span class="at">lr =</span> <span class="fl">1e-3</span>)</span>
+<span id="cb26-10"><a href="#cb26-10" tabindex="-1"></a>sch2    <span class="ot">&lt;-</span> <span class="fu">lr_scheduler_cosine</span>(opt2, <span class="at">T_max =</span> <span class="dv">150</span><span class="dt">L</span>, <span class="at">lr_min =</span> <span class="fl">1e-5</span>)</span>
+<span id="cb26-11"><a href="#cb26-11" tabindex="-1"></a></span>
+<span id="cb26-12"><a href="#cb26-12" tabindex="-1"></a><span class="fu">ag_train</span>(ag_mod2)</span>
+<span id="cb26-13"><a href="#cb26-13" tabindex="-1"></a><span class="fu">set.seed</span>(<span class="dv">42</span>)</span>
+<span id="cb26-14"><a href="#cb26-14" tabindex="-1"></a></span>
+<span id="cb26-15"><a href="#cb26-15" tabindex="-1"></a><span class="cf">for</span> (ep <span class="cf">in</span> <span class="fu">seq_len</span>(<span class="dv">150</span><span class="dt">L</span>)) {</span>
+<span id="cb26-16"><a href="#cb26-16" tabindex="-1"></a>  perm <span class="ot">&lt;-</span> <span class="fu">sample</span>(n)</span>
+<span id="cb26-17"><a href="#cb26-17" tabindex="-1"></a>  <span class="cf">for</span> (b <span class="cf">in</span> <span class="fu">seq_len</span>(<span class="fu">ceiling</span>(n <span class="sc">/</span> BS))) {</span>
+<span id="cb26-18"><a href="#cb26-18" tabindex="-1"></a>    idx <span class="ot">&lt;-</span> perm[<span class="fu">seq</span>((b<span class="dv">-1</span><span class="dt">L</span>)<span class="sc">*</span>BS <span class="sc">+</span> <span class="dv">1</span><span class="dt">L</span>, <span class="fu">min</span>(b<span class="sc">*</span>BS, n))]</span>
+<span id="cb26-19"><a href="#cb26-19" tabindex="-1"></a>    xb  <span class="ot">&lt;-</span> <span class="fu">ag_tensor</span>(x_tr_ag[, idx, <span class="at">drop =</span> <span class="cn">FALSE</span>])</span>
+<span id="cb26-20"><a href="#cb26-20" tabindex="-1"></a>    yb  <span class="ot">&lt;-</span> y_tr_ag[, idx, drop <span class="ot">=</span> <span class="cn">FALSE</span>]</span>
+<span id="cb26-21"><a href="#cb26-21" tabindex="-1"></a></span>
+<span id="cb26-22"><a href="#cb26-22" tabindex="-1"></a>    <span class="fu">with_grad_tape</span>({</span>
+<span id="cb26-23"><a href="#cb26-23" tabindex="-1"></a>      loss2 <span class="ot">&lt;-</span> <span class="fu">ag_softmax_cross_entropy_loss</span>(ag_mod2<span class="sc">$</span><span class="fu">forward</span>(xb), yb)</span>
+<span id="cb26-24"><a href="#cb26-24" tabindex="-1"></a>    })</span>
+<span id="cb26-25"><a href="#cb26-25" tabindex="-1"></a>    grads2 <span class="ot">&lt;-</span> <span class="fu">backward</span>(loss2)</span>
+<span id="cb26-26"><a href="#cb26-26" tabindex="-1"></a>    <span class="fu">clip_grad_norm</span>(params2, grads2, <span class="at">max_norm =</span> <span class="fl">5.0</span>)</span>
+<span id="cb26-27"><a href="#cb26-27" tabindex="-1"></a>    opt2<span class="sc">$</span><span class="fu">step</span>(grads2)</span>
+<span id="cb26-28"><a href="#cb26-28" tabindex="-1"></a>    opt2<span class="sc">$</span><span class="fu">zero_grad</span>()</span>
+<span id="cb26-29"><a href="#cb26-29" tabindex="-1"></a>  }</span>
+<span id="cb26-30"><a href="#cb26-30" tabindex="-1"></a>  sch2<span class="sc">$</span><span class="fu">step</span>()</span>
+<span id="cb26-31"><a href="#cb26-31" tabindex="-1"></a>}</span>
+<span id="cb26-32"><a href="#cb26-32" tabindex="-1"></a></span>
+<span id="cb26-33"><a href="#cb26-33" tabindex="-1"></a><span class="fu">ag_eval</span>(ag_mod2)</span>
+<span id="cb26-34"><a href="#cb26-34" tabindex="-1"></a>probs2 <span class="ot">&lt;-</span> <span class="fu">ag_predict_cm</span>(ag_mod2, x_val_ag)</span>
+<span id="cb26-35"><a href="#cb26-35" tabindex="-1"></a>acc2   <span class="ot">&lt;-</span> <span class="fu">mean</span>(<span class="fu">apply</span>(probs2, <span class="dv">2</span>, which.max) <span class="sc">==</span> true_ag)</span>
+<span id="cb26-36"><a href="#cb26-36" tabindex="-1"></a><span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">&quot;ag + cosine + clip  val accuracy: %.4f</span><span class="sc">\n</span><span class="st">&quot;</span>, acc2))</span></code></pre></div>
 </div>
 <div id="manual-model-from-raw-ag_param" class="section level3">
 <h3>4.6 Manual model from raw <code>ag_param</code></h3>
 <p>For full control, build a network directly from parameters:</p>
-<div class="sourceCode" id="cb20"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb20-1"><a href="#cb20-1" tabindex="-1"></a>make_net <span class="ot">&lt;-</span> <span class="cf">function</span>(n_in, n_hidden, n_out) {</span>
-<span id="cb20-2"><a href="#cb20-2" tabindex="-1"></a>  W1 <span class="ot">&lt;-</span> <span class="fu">ag_param</span>(<span class="fu">matrix</span>(<span class="fu">rnorm</span>(n_hidden <span class="sc">*</span> n_in) <span class="sc">*</span> <span class="fu">sqrt</span>(<span class="dv">2</span><span class="sc">/</span>n_in),  n_hidden, n_in))</span>
-<span id="cb20-3"><a href="#cb20-3" tabindex="-1"></a>  b1 <span class="ot">&lt;-</span> <span class="fu">ag_param</span>(<span class="fu">matrix</span>(<span class="fl">0.0</span>, n_hidden, <span class="dv">1</span><span class="dt">L</span>))</span>
-<span id="cb20-4"><a href="#cb20-4" tabindex="-1"></a>  W2 <span class="ot">&lt;-</span> <span class="fu">ag_param</span>(<span class="fu">matrix</span>(<span class="fu">rnorm</span>(n_out <span class="sc">*</span> n_hidden) <span class="sc">*</span> <span class="fu">sqrt</span>(<span class="dv">2</span><span class="sc">/</span>n_hidden), n_out, n_hidden))</span>
-<span id="cb20-5"><a href="#cb20-5" tabindex="-1"></a>  b2 <span class="ot">&lt;-</span> <span class="fu">ag_param</span>(<span class="fu">matrix</span>(<span class="fl">0.0</span>, n_out, <span class="dv">1</span><span class="dt">L</span>))</span>
-<span id="cb20-6"><a href="#cb20-6" tabindex="-1"></a></span>
-<span id="cb20-7"><a href="#cb20-7" tabindex="-1"></a>  <span class="fu">list</span>(</span>
-<span id="cb20-8"><a href="#cb20-8" tabindex="-1"></a>    <span class="at">forward    =</span> <span class="cf">function</span>(x)</span>
-<span id="cb20-9"><a href="#cb20-9" tabindex="-1"></a>      <span class="fu">ag_add</span>(<span class="fu">ag_matmul</span>(W2, <span class="fu">ag_relu</span>(<span class="fu">ag_add</span>(<span class="fu">ag_matmul</span>(W1, x), b1))), b2),</span>
-<span id="cb20-10"><a href="#cb20-10" tabindex="-1"></a>    <span class="at">parameters =</span> <span class="cf">function</span>() <span class="fu">list</span>(<span class="at">W1=</span>W1, <span class="at">b1=</span>b1, <span class="at">W2=</span>W2, <span class="at">b2=</span>b2)</span>
-<span id="cb20-11"><a href="#cb20-11" tabindex="-1"></a>  )</span>
-<span id="cb20-12"><a href="#cb20-12" tabindex="-1"></a>}</span>
-<span id="cb20-13"><a href="#cb20-13" tabindex="-1"></a></span>
-<span id="cb20-14"><a href="#cb20-14" tabindex="-1"></a><span class="fu">set.seed</span>(<span class="dv">1</span>)</span>
-<span id="cb20-15"><a href="#cb20-15" tabindex="-1"></a>net    <span class="ot">&lt;-</span> <span class="fu">make_net</span>(<span class="dv">4</span><span class="dt">L</span>, <span class="dv">32</span><span class="dt">L</span>, <span class="dv">3</span><span class="dt">L</span>)</span>
-<span id="cb20-16"><a href="#cb20-16" tabindex="-1"></a>opt_r  <span class="ot">&lt;-</span> <span class="fu">optimizer_adam</span>(net<span class="sc">$</span><span class="fu">parameters</span>(), <span class="at">lr =</span> <span class="fl">1e-3</span>)</span>
-<span id="cb20-17"><a href="#cb20-17" tabindex="-1"></a></span>
-<span id="cb20-18"><a href="#cb20-18" tabindex="-1"></a><span class="cf">for</span> (ep <span class="cf">in</span> <span class="fu">seq_len</span>(<span class="dv">200</span><span class="dt">L</span>)) {</span>
-<span id="cb20-19"><a href="#cb20-19" tabindex="-1"></a>  perm <span class="ot">&lt;-</span> <span class="fu">sample</span>(n)</span>
-<span id="cb20-20"><a href="#cb20-20" tabindex="-1"></a>  <span class="cf">for</span> (b <span class="cf">in</span> <span class="fu">seq_len</span>(<span class="fu">ceiling</span>(n <span class="sc">/</span> BS))) {</span>
-<span id="cb20-21"><a href="#cb20-21" tabindex="-1"></a>    idx <span class="ot">&lt;-</span> perm[<span class="fu">seq</span>((b<span class="dv">-1</span><span class="dt">L</span>)<span class="sc">*</span>BS<span class="sc">+</span><span class="dv">1</span><span class="dt">L</span>, <span class="fu">min</span>(b<span class="sc">*</span>BS, n))]</span>
-<span id="cb20-22"><a href="#cb20-22" tabindex="-1"></a>    xb  <span class="ot">&lt;-</span> <span class="fu">ag_tensor</span>(x_tr_ag[, idx, <span class="at">drop =</span> <span class="cn">FALSE</span>])</span>
-<span id="cb20-23"><a href="#cb20-23" tabindex="-1"></a>    yb  <span class="ot">&lt;-</span> y_tr_ag[, idx, drop <span class="ot">=</span> <span class="cn">FALSE</span>]</span>
-<span id="cb20-24"><a href="#cb20-24" tabindex="-1"></a>    <span class="fu">with_grad_tape</span>({ loss_r <span class="ot">&lt;-</span> <span class="fu">ag_softmax_cross_entropy_loss</span>(net<span class="sc">$</span><span class="fu">forward</span>(xb), yb) })</span>
-<span id="cb20-25"><a href="#cb20-25" tabindex="-1"></a>    gr <span class="ot">&lt;-</span> <span class="fu">backward</span>(loss_r)</span>
-<span id="cb20-26"><a href="#cb20-26" tabindex="-1"></a>    opt_r<span class="sc">$</span><span class="fu">step</span>(gr);  opt_r<span class="sc">$</span><span class="fu">zero_grad</span>()</span>
-<span id="cb20-27"><a href="#cb20-27" tabindex="-1"></a>  }</span>
-<span id="cb20-28"><a href="#cb20-28" tabindex="-1"></a>}</span>
-<span id="cb20-29"><a href="#cb20-29" tabindex="-1"></a></span>
-<span id="cb20-30"><a href="#cb20-30" tabindex="-1"></a>probs_r <span class="ot">&lt;-</span> <span class="fu">ag_predict_cm</span>(net, x_val_ag)</span>
-<span id="cb20-31"><a href="#cb20-31" tabindex="-1"></a>acc_r   <span class="ot">&lt;-</span> <span class="fu">mean</span>(<span class="fu">apply</span>(probs_r, <span class="dv">2</span>, which.max) <span class="sc">==</span> true_ag)</span>
-<span id="cb20-32"><a href="#cb20-32" tabindex="-1"></a><span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">&quot;Raw ag_param val accuracy: %.4f</span><span class="sc">\n</span><span class="st">&quot;</span>, acc_r))</span></code></pre></div>
+<div class="sourceCode" id="cb27"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb27-1"><a href="#cb27-1" tabindex="-1"></a>make_net <span class="ot">&lt;-</span> <span class="cf">function</span>(n_in, n_hidden, n_out) {</span>
+<span id="cb27-2"><a href="#cb27-2" tabindex="-1"></a>  W1 <span class="ot">&lt;-</span> <span class="fu">ag_param</span>(<span class="fu">matrix</span>(<span class="fu">rnorm</span>(n_hidden <span class="sc">*</span> n_in) <span class="sc">*</span> <span class="fu">sqrt</span>(<span class="dv">2</span><span class="sc">/</span>n_in),  n_hidden, n_in))</span>
+<span id="cb27-3"><a href="#cb27-3" tabindex="-1"></a>  b1 <span class="ot">&lt;-</span> <span class="fu">ag_param</span>(<span class="fu">matrix</span>(<span class="fl">0.0</span>, n_hidden, <span class="dv">1</span><span class="dt">L</span>))</span>
+<span id="cb27-4"><a href="#cb27-4" tabindex="-1"></a>  W2 <span class="ot">&lt;-</span> <span class="fu">ag_param</span>(<span class="fu">matrix</span>(<span class="fu">rnorm</span>(n_out <span class="sc">*</span> n_hidden) <span class="sc">*</span> <span class="fu">sqrt</span>(<span class="dv">2</span><span class="sc">/</span>n_hidden), n_out, n_hidden))</span>
+<span id="cb27-5"><a href="#cb27-5" tabindex="-1"></a>  b2 <span class="ot">&lt;-</span> <span class="fu">ag_param</span>(<span class="fu">matrix</span>(<span class="fl">0.0</span>, n_out, <span class="dv">1</span><span class="dt">L</span>))</span>
+<span id="cb27-6"><a href="#cb27-6" tabindex="-1"></a></span>
+<span id="cb27-7"><a href="#cb27-7" tabindex="-1"></a>  <span class="fu">list</span>(</span>
+<span id="cb27-8"><a href="#cb27-8" tabindex="-1"></a>    <span class="at">forward    =</span> <span class="cf">function</span>(x)</span>
+<span id="cb27-9"><a href="#cb27-9" tabindex="-1"></a>      <span class="fu">ag_add</span>(<span class="fu">ag_matmul</span>(W2, <span class="fu">ag_relu</span>(<span class="fu">ag_add</span>(<span class="fu">ag_matmul</span>(W1, x), b1))), b2),</span>
+<span id="cb27-10"><a href="#cb27-10" tabindex="-1"></a>    <span class="at">parameters =</span> <span class="cf">function</span>() <span class="fu">list</span>(<span class="at">W1=</span>W1, <span class="at">b1=</span>b1, <span class="at">W2=</span>W2, <span class="at">b2=</span>b2)</span>
+<span id="cb27-11"><a href="#cb27-11" tabindex="-1"></a>  )</span>
+<span id="cb27-12"><a href="#cb27-12" tabindex="-1"></a>}</span>
+<span id="cb27-13"><a href="#cb27-13" tabindex="-1"></a></span>
+<span id="cb27-14"><a href="#cb27-14" tabindex="-1"></a><span class="fu">set.seed</span>(<span class="dv">1</span>)</span>
+<span id="cb27-15"><a href="#cb27-15" tabindex="-1"></a>net    <span class="ot">&lt;-</span> <span class="fu">make_net</span>(<span class="dv">4</span><span class="dt">L</span>, <span class="dv">32</span><span class="dt">L</span>, <span class="dv">3</span><span class="dt">L</span>)</span>
+<span id="cb27-16"><a href="#cb27-16" tabindex="-1"></a>opt_r  <span class="ot">&lt;-</span> <span class="fu">optimizer_adam</span>(net<span class="sc">$</span><span class="fu">parameters</span>(), <span class="at">lr =</span> <span class="fl">1e-3</span>)</span>
+<span id="cb27-17"><a href="#cb27-17" tabindex="-1"></a></span>
+<span id="cb27-18"><a href="#cb27-18" tabindex="-1"></a><span class="cf">for</span> (ep <span class="cf">in</span> <span class="fu">seq_len</span>(<span class="dv">200</span><span class="dt">L</span>)) {</span>
+<span id="cb27-19"><a href="#cb27-19" tabindex="-1"></a>  perm <span class="ot">&lt;-</span> <span class="fu">sample</span>(n)</span>
+<span id="cb27-20"><a href="#cb27-20" tabindex="-1"></a>  <span class="cf">for</span> (b <span class="cf">in</span> <span class="fu">seq_len</span>(<span class="fu">ceiling</span>(n <span class="sc">/</span> BS))) {</span>
+<span id="cb27-21"><a href="#cb27-21" tabindex="-1"></a>    idx <span class="ot">&lt;-</span> perm[<span class="fu">seq</span>((b<span class="dv">-1</span><span class="dt">L</span>)<span class="sc">*</span>BS<span class="sc">+</span><span class="dv">1</span><span class="dt">L</span>, <span class="fu">min</span>(b<span class="sc">*</span>BS, n))]</span>
+<span id="cb27-22"><a href="#cb27-22" tabindex="-1"></a>    xb  <span class="ot">&lt;-</span> <span class="fu">ag_tensor</span>(x_tr_ag[, idx, <span class="at">drop =</span> <span class="cn">FALSE</span>])</span>
+<span id="cb27-23"><a href="#cb27-23" tabindex="-1"></a>    yb  <span class="ot">&lt;-</span> y_tr_ag[, idx, drop <span class="ot">=</span> <span class="cn">FALSE</span>]</span>
+<span id="cb27-24"><a href="#cb27-24" tabindex="-1"></a>    <span class="fu">with_grad_tape</span>({ loss_r <span class="ot">&lt;-</span> <span class="fu">ag_softmax_cross_entropy_loss</span>(net<span class="sc">$</span><span class="fu">forward</span>(xb), yb) })</span>
+<span id="cb27-25"><a href="#cb27-25" tabindex="-1"></a>    gr <span class="ot">&lt;-</span> <span class="fu">backward</span>(loss_r)</span>
+<span id="cb27-26"><a href="#cb27-26" tabindex="-1"></a>    opt_r<span class="sc">$</span><span class="fu">step</span>(gr);  opt_r<span class="sc">$</span><span class="fu">zero_grad</span>()</span>
+<span id="cb27-27"><a href="#cb27-27" tabindex="-1"></a>  }</span>
+<span id="cb27-28"><a href="#cb27-28" tabindex="-1"></a>}</span>
+<span id="cb27-29"><a href="#cb27-29" tabindex="-1"></a></span>
+<span id="cb27-30"><a href="#cb27-30" tabindex="-1"></a>probs_r <span class="ot">&lt;-</span> <span class="fu">ag_predict_cm</span>(net, x_val_ag)</span>
+<span id="cb27-31"><a href="#cb27-31" tabindex="-1"></a>acc_r   <span class="ot">&lt;-</span> <span class="fu">mean</span>(<span class="fu">apply</span>(probs_r, <span class="dv">2</span>, which.max) <span class="sc">==</span> true_ag)</span>
+<span id="cb27-32"><a href="#cb27-32" tabindex="-1"></a><span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">&quot;Raw ag_param val accuracy: %.4f</span><span class="sc">\n</span><span class="st">&quot;</span>, acc_r))</span></code></pre></div>
 <hr />
 </div>
 </div>
 <div id="gpu-device-selection" class="section level2">
 <h2>5. GPU / device selection</h2>
-<div class="sourceCode" id="cb21"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb21-1"><a href="#cb21-1" tabindex="-1"></a><span class="co"># Use Vulkan GPU if available, fall back to CPU</span></span>
-<span id="cb21-2"><a href="#cb21-2" tabindex="-1"></a>device <span class="ot">&lt;-</span> <span class="fu">tryCatch</span>({</span>
-<span id="cb21-3"><a href="#cb21-3" tabindex="-1"></a>  <span class="fu">ag_device</span>(<span class="st">&quot;gpu&quot;</span>)</span>
-<span id="cb21-4"><a href="#cb21-4" tabindex="-1"></a>  <span class="st">&quot;gpu&quot;</span></span>
-<span id="cb21-5"><a href="#cb21-5" tabindex="-1"></a>}, <span class="at">error =</span> <span class="cf">function</span>(e) <span class="st">&quot;cpu&quot;</span>)</span>
-<span id="cb21-6"><a href="#cb21-6" tabindex="-1"></a></span>
-<span id="cb21-7"><a href="#cb21-7" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">&quot;Running on:&quot;</span>, device, <span class="st">&quot;</span><span class="sc">\n</span><span class="st">&quot;</span>)</span>
-<span id="cb21-8"><a href="#cb21-8" tabindex="-1"></a></span>
-<span id="cb21-9"><a href="#cb21-9" tabindex="-1"></a><span class="co"># Mixed precision (f16 on GPU, f32 on CPU)</span></span>
-<span id="cb21-10"><a href="#cb21-10" tabindex="-1"></a><span class="fu">ag_dtype</span>(<span class="cf">if</span> (device <span class="sc">==</span> <span class="st">&quot;gpu&quot;</span>) <span class="st">&quot;f16&quot;</span> <span class="cf">else</span> <span class="st">&quot;f32&quot;</span>)</span></code></pre></div>
+<div class="sourceCode" id="cb28"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb28-1"><a href="#cb28-1" tabindex="-1"></a><span class="co"># Use Vulkan GPU if available, fall back to CPU</span></span>
+<span id="cb28-2"><a href="#cb28-2" tabindex="-1"></a>device <span class="ot">&lt;-</span> <span class="fu">tryCatch</span>({</span>
+<span id="cb28-3"><a href="#cb28-3" tabindex="-1"></a>  <span class="fu">ag_device</span>(<span class="st">&quot;gpu&quot;</span>)</span>
+<span id="cb28-4"><a href="#cb28-4" tabindex="-1"></a>  <span class="st">&quot;gpu&quot;</span></span>
+<span id="cb28-5"><a href="#cb28-5" tabindex="-1"></a>}, <span class="at">error =</span> <span class="cf">function</span>(e) <span class="st">&quot;cpu&quot;</span>)</span>
+<span id="cb28-6"><a href="#cb28-6" tabindex="-1"></a></span>
+<span id="cb28-7"><a href="#cb28-7" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">&quot;Running on:&quot;</span>, device, <span class="st">&quot;</span><span class="sc">\n</span><span class="st">&quot;</span>)</span>
+<span id="cb28-8"><a href="#cb28-8" tabindex="-1"></a></span>
+<span id="cb28-9"><a href="#cb28-9" tabindex="-1"></a><span class="co"># Mixed precision (f16 on GPU, f32 on CPU)</span></span>
+<span id="cb28-10"><a href="#cb28-10" tabindex="-1"></a><span class="fu">ag_dtype</span>(<span class="cf">if</span> (device <span class="sc">==</span> <span class="st">&quot;gpu&quot;</span>) <span class="st">&quot;f16&quot;</span> <span class="cf">else</span> <span class="st">&quot;f32&quot;</span>)</span></code></pre></div>
 <p>After calling <code>ag_device()</code> and <code>ag_dtype()</code>,
 all subsequent <code>ag_param</code> and <code>ag_tensor</code> calls
 use the selected device and dtype. The sequential API
@@ -917,32 +1096,40 @@ use the selected device and dtype. The sequential API
 </tr>
 <tr class="even">
 <td>Train</td>
-<td><code>ggml_fit()</code></td>
+<td><code>ggml_fit()</code> (data or <code>generator =</code>),
+<code>ggml_trainer()</code> for your own loop</td>
 <td><code>with_grad_tape</code> + <code>backward</code> +
 <code>opt$step</code></td>
 </tr>
 <tr class="odd">
+<td>Fine-tune</td>
+<td><code>ggml_freeze_weights()</code>,
+<code>ggml_freeze_bn_stats()</code></td>
+<td>—</td>
+</tr>
+<tr class="even">
 <td>Evaluate</td>
 <td><code>ggml_evaluate()</code></td>
 <td>manual loop</td>
 </tr>
-<tr class="even">
+<tr class="odd">
 <td>Predict</td>
 <td><code>ggml_predict()</code></td>
 <td>manual forward</td>
 </tr>
-<tr class="odd">
+<tr class="even">
 <td>Save / load</td>
 <td><code>ggml_save_model()</code> / <code>ggml_load_model()</code></td>
-<td>—</td>
+<td><code>ag_save_model()</code> / <code>ag_load_model()</code>,
+<code>ag_state_dict()</code> / <code>ag_load_state_dict()</code></td>
 </tr>
-<tr class="even">
+<tr class="odd">
 <td>Callbacks</td>
 <td><code>ggml_callback_early_stopping()</code>,
 <code>ggml_schedule_*</code></td>
 <td><code>lr_scheduler_*</code>, <code>clip_grad_norm</code></td>
 </tr>
-<tr class="odd">
+<tr class="even">
 <td>Device</td>
 <td>automatic</td>
 <td><code>ag_device()</code> / <code>ag_dtype()</code></td>

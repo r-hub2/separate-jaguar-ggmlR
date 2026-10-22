@@ -68,10 +68,6 @@ test_that("bigger operands weigh more", {
   expect_gt(big$bytes_total, small$bytes_total) # different weight
 })
 
-# Logged so check logs show whether this R build has memory profiling: the
-# dedup tests used to fail only where it is absent (tracemem() errors there).
-cat("\nag-tape-memory: capabilities('profmem') =", capabilities("profmem"), "\n")
-
 test_that("shared storage is counted once, not once per reference", {
   # ag_matmul captures a_snap/b_snap in the closure AND records the same two
   # matrices as fields for the graph path. They are one object each, so a

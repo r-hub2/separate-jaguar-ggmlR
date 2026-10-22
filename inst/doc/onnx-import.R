@@ -8,24 +8,34 @@ library(ggmlR)
 ## ----eval=FALSE---------------------------------------------------------------
 # model <- onnx_load("path/to/model.onnx")
 # 
-# # Model summary (layers, ops, parameters)
+# # Model summary (IR and opset version, node count, operators used)
 # onnx_summary(model)
 # 
-# # Input tensor info (name, shape, dtype)
+# # Input names and shapes (-1 for a dynamic dimension)
 # onnx_inputs(model)
 
 ## ----eval=FALSE---------------------------------------------------------------
-# # Random image batch — replace with real data
-# input <- array(runif(1 * 3 * 224 * 224), dim = c(1L, 3L, 224L, 224L))
+# # Random image batch, [N, C, H, W] as declared — replace with real data
+# x <- array(runif(8 * 3 * 224 * 224), dim = c(8L, 3L, 224L, 224L))
+# 
+# probs <- predict(model, x)   # [8, 1000] for a classifier
+
+## ----eval=FALSE---------------------------------------------------------------
+# # A 224 x 224 x 3 image (H, W, C) for a model declared as [1, 3, 224, 224]
+# img <- array(runif(224 * 224 * 3), dim = c(224L, 224L, 3L))
+# 
+# # Storage order of [1, 3, 224, 224] is (W, H, C, N): W fastest
+# input <- aperm(img, c(2, 1, 3))
 # 
 # result <- onnx_run(model, list(input_name = input))
-# 
-# cat("Output shape:", paste(dim(result[[1]]), collapse = " x "), "\n")
+
+## ----eval=FALSE---------------------------------------------------------------
+# cat("Output dim (storage order):", paste(dim(result[[1]]), collapse = " x "), "\n")
 
 ## ----eval=FALSE---------------------------------------------------------------
 # result <- onnx_run(model, list(
-#   input_ids      = array(as.integer(tokens), dim = c(1L, length(tokens))),
-#   attention_mask = array(1L, dim = c(1L, length(tokens)))
+#   input_ids      = as.numeric(tokens),
+#   attention_mask = rep(1, length(tokens))
 # ))
 
 ## ----eval=FALSE---------------------------------------------------------------

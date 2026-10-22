@@ -91,6 +91,12 @@ knitr::opts_chunk$set(eval = identical(Sys.getenv("NOT_CRAN"), "true"))
 # model <- ggml_fit(model, x_train, y_train, epochs = 50L,
 #                   batch_size = 32L, verbose = 0L)
 
+## -----------------------------------------------------------------------------
+# p_def <- ggml_predict(model, x_train, batch_size = 32L)
+# p_f32 <- ggml_predict(model, x_train, batch_size = 32L,
+#                       matmul_precision = "f32")
+# cat(sprintf("max |default - f32|: %.2e\n", max(abs(p_def - p_f32))))
+
 ## ----eval = FALSE-------------------------------------------------------------
 # # Weights loaded to GPU once at load time
 # model_onnx <- onnx_load("model.onnx", device = "vulkan")

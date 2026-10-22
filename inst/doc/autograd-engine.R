@@ -58,6 +58,21 @@ knitr::opts_chunk$set(eval = identical(Sys.getenv("NOT_CRAN"), "true"))
 # cat("LayerNorm model parameters:", length(model_ln$parameters()), "\n")
 
 ## -----------------------------------------------------------------------------
+# set.seed(2)
+# d_model <- 16L; seq_len <- 8L; n_heads <- 4L
+# 
+# q <- ag_param(matrix(runif(d_model * seq_len, -1, 1), d_model, seq_len))
+# k <- ag_param(matrix(runif(d_model * seq_len, -1, 1), d_model, seq_len))
+# v <- ag_param(matrix(runif(d_model * seq_len, -1, 1), d_model, seq_len))
+# 
+# with_grad_tape({
+#   att  <- ag_flash_attention(q, k, v, n_heads = n_heads, causal = TRUE)
+#   loss <- ag_mse_loss(att, ag_tensor(matrix(0, d_model, seq_len)))
+# })
+# g_att <- backward(loss)
+# cat("gradient tensors:", length(g_att), "\n")
+
+## -----------------------------------------------------------------------------
 # # Adam (default lr = 1e-3)
 # opt <- optimizer_adam(params, lr = 1e-3)
 # 
@@ -250,7 +265,4 @@ knitr::opts_chunk$set(eval = identical(Sys.getenv("NOT_CRAN"), "true"))
 # 
 # ag_buffer_read(buf, col_offset = 0, k = 2)      # download a range
 # ag_buffer_free(buf)                             # release now
-
-## -----------------------------------------------------------------------------
-# # Full example: inst/examples/dp_train_demo.R
 

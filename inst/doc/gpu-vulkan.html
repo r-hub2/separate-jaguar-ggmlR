@@ -406,7 +406,18 @@ branch on the result without re-querying with
 <p>After <code>ag_device(&quot;gpu&quot;)</code>, all subsequent
 <code>ag_param</code> and <code>ag_tensor</code> calls allocate on the
 GPU. Switch back with <code>ag_device(&quot;cpu&quot;)</code>.</p>
+<div id="what-stays-on-the-gpu-during-training" class="section level3">
+<h3>3.1 What stays on the GPU during training</h3>
+<p>Weights, Adam moments, gradients and forward activations stay in
+device buffers across a training step, so a step makes 4 host/device
+crossings instead of 10, and the Adam update does not touch the host at
+all. This is the default and changes nothing numerically. Transformers
+train on the GPU too: <code>ag_flash_attention()</code> computes all
+heads in one fused op and its gradient in one more, on both CPU and
+Vulkan. See <code>vignette(&quot;autograd-engine&quot;)</code>, sections 3.1 and
+11.</p>
 <hr />
+</div>
 </div>
 <div id="mixed-precision-f16-bf16" class="section level2">
 <h2>4. Mixed precision (f16 / bf16)</h2>
@@ -460,33 +471,70 @@ backend automatically — no extra configuration needed:</p>
 <span id="cb9-10"><a href="#cb9-10" tabindex="-1"></a><span class="co"># Training runs on GPU if Vulkan is available</span></span>
 <span id="cb9-11"><a href="#cb9-11" tabindex="-1"></a>model <span class="ot">&lt;-</span> <span class="fu">ggml_fit</span>(model, x_train, y_train, <span class="at">epochs =</span> <span class="dv">50</span><span class="dt">L</span>,</span>
 <span id="cb9-12"><a href="#cb9-12" tabindex="-1"></a>                  <span class="at">batch_size =</span> <span class="dv">32</span><span class="dt">L</span>, <span class="at">verbose =</span> <span class="dv">0</span><span class="dt">L</span>)</span></code></pre></div>
+<div id="precision-of-predictions-on-vulkan" class="section level3">
+<h3>7.1 Precision of predictions on Vulkan</h3>
+<p>On a Vulkan device with fp16 support, matrix multiplies keep their
+tiles in f16 by default. A single row goes through an exact f32 kernel,
+larger batches through the tiled one, so predictions carry a relative
+error around 1e-3 that depends on the batch size. Training is not hurt
+by noise of that size; comparisons against a reference, tests and
+reproducible evaluation are.</p>
+<p><code>predict_precision = &quot;f32&quot;</code> in <code>ggml_compile()</code>
+applies to every prediction of the model;
+<code>matmul_precision = &quot;f32&quot;</code> applies to one
+<code>ggml_predict()</code> (or a trainer’s <code>$predict()</code>)
+call and wins over the model’s setting. The result then matches the CPU
+to about 1e-6. Training graphs are not affected. The f32 tiles cost
+throughput — about a seventh of the f16 speed for large multiplies on an
+RX 9070 under RADV; <code>inst/examples/benchmark_coopmat.R</code>
+measures it on your device. The CPU backend is exact either way.</p>
+<div class="sourceCode" id="cb10"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb10-1"><a href="#cb10-1" tabindex="-1"></a>p_def <span class="ot">&lt;-</span> <span class="fu">ggml_predict</span>(model, x_train, <span class="at">batch_size =</span> <span class="dv">32</span><span class="dt">L</span>)</span>
+<span id="cb10-2"><a href="#cb10-2" tabindex="-1"></a>p_f32 <span class="ot">&lt;-</span> <span class="fu">ggml_predict</span>(model, x_train, <span class="at">batch_size =</span> <span class="dv">32</span><span class="dt">L</span>,</span>
+<span id="cb10-3"><a href="#cb10-3" tabindex="-1"></a>                      <span class="at">matmul_precision =</span> <span class="st">&quot;f32&quot;</span>)</span>
+<span id="cb10-4"><a href="#cb10-4" tabindex="-1"></a><span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">&quot;max |default - f32|: %.2e</span><span class="sc">\n</span><span class="st">&quot;</span>, <span class="fu">max</span>(<span class="fu">abs</span>(p_def <span class="sc">-</span> p_f32))))</span></code></pre></div>
+<hr />
+</div>
+</div>
+<div id="state-space-models-on-the-gpu" class="section level2">
+<h2>8. State-space models on the GPU</h2>
+<p><code>ggml_ssm_conv()</code> and <code>ggml_ssm_scan()</code> have
+Vulkan backward shaders, so a Mamba block trains entirely on the GPU —
+for <code>d_state</code> 128 or 256 and Mamba-2 shapes; other shapes
+compute the backward on the CPU. The backward kernels of the RWKV ops
+and <code>ggml_gated_linear_attn()</code> are CPU-only.
+<code>inst/examples/mamba_train_demo.R</code> trains a block end to end;
+the Vulkan backward shaders brought it from 21.7 s to 7.7 s.</p>
 <hr />
 </div>
 <div id="onnx-inference-on-gpu" class="section level2">
-<h2>8. ONNX inference on GPU</h2>
-<div class="sourceCode" id="cb10"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb10-1"><a href="#cb10-1" tabindex="-1"></a><span class="co"># Weights loaded to GPU once at load time</span></span>
-<span id="cb10-2"><a href="#cb10-2" tabindex="-1"></a>model_onnx <span class="ot">&lt;-</span> <span class="fu">onnx_load</span>(<span class="st">&quot;model.onnx&quot;</span>, <span class="at">device =</span> <span class="st">&quot;vulkan&quot;</span>)</span>
-<span id="cb10-3"><a href="#cb10-3" tabindex="-1"></a></span>
-<span id="cb10-4"><a href="#cb10-4" tabindex="-1"></a><span class="co"># Repeated inference — no weight re-transfer</span></span>
-<span id="cb10-5"><a href="#cb10-5" tabindex="-1"></a><span class="cf">for</span> (i <span class="cf">in</span> <span class="fu">seq_len</span>(<span class="dv">100</span><span class="dt">L</span>)) {</span>
-<span id="cb10-6"><a href="#cb10-6" tabindex="-1"></a>  out <span class="ot">&lt;-</span> <span class="fu">onnx_run</span>(model_onnx, <span class="fu">list</span>(<span class="at">input =</span> batch[[i]]))</span>
-<span id="cb10-7"><a href="#cb10-7" tabindex="-1"></a>}</span></code></pre></div>
+<h2>9. ONNX inference on GPU</h2>
+<div class="sourceCode" id="cb11"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb11-1"><a href="#cb11-1" tabindex="-1"></a><span class="co"># Weights loaded to GPU once at load time</span></span>
+<span id="cb11-2"><a href="#cb11-2" tabindex="-1"></a>model_onnx <span class="ot">&lt;-</span> <span class="fu">onnx_load</span>(<span class="st">&quot;model.onnx&quot;</span>, <span class="at">device =</span> <span class="st">&quot;vulkan&quot;</span>)</span>
+<span id="cb11-3"><a href="#cb11-3" tabindex="-1"></a></span>
+<span id="cb11-4"><a href="#cb11-4" tabindex="-1"></a><span class="co"># Repeated inference — no weight re-transfer</span></span>
+<span id="cb11-5"><a href="#cb11-5" tabindex="-1"></a><span class="cf">for</span> (i <span class="cf">in</span> <span class="fu">seq_len</span>(<span class="dv">100</span><span class="dt">L</span>)) {</span>
+<span id="cb11-6"><a href="#cb11-6" tabindex="-1"></a>  out <span class="ot">&lt;-</span> <span class="fu">onnx_run</span>(model_onnx, <span class="fu">list</span>(<span class="at">input =</span> batch[[i]]))</span>
+<span id="cb11-7"><a href="#cb11-7" tabindex="-1"></a>}</span></code></pre></div>
+<p>All 15 reference ONNX Model Zoo models match ONNX Runtime bit for bit
+(<code>max|d| = 0</code>) on Vulkan as well as on the CPU. See
+<code>vignette(&quot;onnx-import&quot;)</code> for which operators run on the
+GPU.</p>
 <hr />
 </div>
 <div id="build-configuration" class="section level2">
-<h2>9. Build configuration</h2>
+<h2>10. Build configuration</h2>
 <p>Vulkan support is compiled in automatically when
 <code>libvulkan-dev</code> and <code>glslc</code> are detected at
 install time. SIMD (AVX2/AVX512) for the CPU fallback requires an
 explicit flag:</p>
-<div class="sourceCode" id="cb11"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb11-1"><a href="#cb11-1" tabindex="-1"></a><span class="co"># Default install (Vulkan auto-detected, CPU fallback without SIMD)</span></span>
-<span id="cb11-2"><a href="#cb11-2" tabindex="-1"></a><span class="ex">R</span> CMD INSTALL .</span>
-<span id="cb11-3"><a href="#cb11-3" tabindex="-1"></a></span>
-<span id="cb11-4"><a href="#cb11-4" tabindex="-1"></a><span class="co"># With CPU SIMD acceleration</span></span>
-<span id="cb11-5"><a href="#cb11-5" tabindex="-1"></a><span class="ex">R</span> CMD INSTALL . <span class="at">--configure-args</span><span class="op">=</span><span class="st">&quot;--with-simd&quot;</span></span>
-<span id="cb11-6"><a href="#cb11-6" tabindex="-1"></a></span>
-<span id="cb11-7"><a href="#cb11-7" tabindex="-1"></a><span class="co"># Also enable the hard-exit path for multi-GPU scripts (see below)</span></span>
-<span id="cb11-8"><a href="#cb11-8" tabindex="-1"></a><span class="ex">R</span> CMD INSTALL . <span class="at">--configure-args</span><span class="op">=</span><span class="st">&quot;--with-simd --enable-hard-exit&quot;</span></span></code></pre></div>
+<div class="sourceCode" id="cb12"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb12-1"><a href="#cb12-1" tabindex="-1"></a><span class="co"># Default install (Vulkan auto-detected, CPU fallback without SIMD)</span></span>
+<span id="cb12-2"><a href="#cb12-2" tabindex="-1"></a><span class="ex">R</span> CMD INSTALL .</span>
+<span id="cb12-3"><a href="#cb12-3" tabindex="-1"></a></span>
+<span id="cb12-4"><a href="#cb12-4" tabindex="-1"></a><span class="co"># With CPU SIMD acceleration</span></span>
+<span id="cb12-5"><a href="#cb12-5" tabindex="-1"></a><span class="ex">R</span> CMD INSTALL . <span class="at">--configure-args</span><span class="op">=</span><span class="st">&quot;--with-simd&quot;</span></span>
+<span id="cb12-6"><a href="#cb12-6" tabindex="-1"></a></span>
+<span id="cb12-7"><a href="#cb12-7" tabindex="-1"></a><span class="co"># Also enable the hard-exit path for multi-GPU scripts (see below)</span></span>
+<span id="cb12-8"><a href="#cb12-8" tabindex="-1"></a><span class="ex">R</span> CMD INSTALL . <span class="at">--configure-args</span><span class="op">=</span><span class="st">&quot;--with-simd --enable-hard-exit&quot;</span></span></code></pre></div>
 <p>On Windows R ignores <code>configure.args</code>, so set the
 equivalent environment variables before installing from source:
 <code>Sys.setenv(GGML_USE_SIMD = &quot;1&quot;)</code>,
@@ -502,9 +550,9 @@ build <code>hard = TRUE</code> tears Vulkan down normally and emits a
 warning rather than silently doing nothing. See
 <code>vignette(&quot;multi-gpu&quot;)</code> for the full story.</p>
 <p>To check what was compiled in:</p>
-<div class="sourceCode" id="cb12"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb12-1"><a href="#cb12-1" tabindex="-1"></a><span class="fu">cat</span>(<span class="fu">ggml_version</span>(), <span class="st">&quot;</span><span class="sc">\n</span><span class="st">&quot;</span>)</span>
-<span id="cb12-2"><a href="#cb12-2" tabindex="-1"></a><span class="fu">ggml_vulkan_status</span>()   <span class="co"># shows &quot;Vulkan not available&quot; if not compiled in</span></span>
-<span id="cb12-3"><a href="#cb12-3" tabindex="-1"></a><span class="fu">ggml_vulkan_hard_exit_available</span>()   <span class="co"># TRUE only with --enable-hard-exit</span></span></code></pre></div>
+<div class="sourceCode" id="cb13"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb13-1"><a href="#cb13-1" tabindex="-1"></a><span class="fu">cat</span>(<span class="fu">ggml_version</span>(), <span class="st">&quot;</span><span class="sc">\n</span><span class="st">&quot;</span>)</span>
+<span id="cb13-2"><a href="#cb13-2" tabindex="-1"></a><span class="fu">ggml_vulkan_status</span>()   <span class="co"># shows &quot;Vulkan not available&quot; if not compiled in</span></span>
+<span id="cb13-3"><a href="#cb13-3" tabindex="-1"></a><span class="fu">ggml_vulkan_hard_exit_available</span>()   <span class="co"># TRUE only with --enable-hard-exit</span></span></code></pre></div>
 <hr />
 </div>
 <div id="restoring-the-default-device" class="section level2">
@@ -513,9 +561,9 @@ warning rather than silently doing nothing. See
 package-level state that outlives this document: anything running later
 in the same R session keeps the GPU and the f16 default unless it is put
 back. Restore it once the GPU section is done.</p>
-<div class="sourceCode" id="cb13"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb13-1"><a href="#cb13-1" tabindex="-1"></a><span class="fu">ag_device</span>(<span class="st">&quot;cpu&quot;</span>)</span>
-<span id="cb13-2"><a href="#cb13-2" tabindex="-1"></a><span class="fu">ag_dtype</span>(<span class="st">&quot;f32&quot;</span>)</span>
-<span id="cb13-3"><a href="#cb13-3" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">&quot;Restored:&quot;</span>, <span class="fu">ag_default_dtype</span>(), <span class="st">&quot;on cpu</span><span class="sc">\n</span><span class="st">&quot;</span>)</span></code></pre></div>
+<div class="sourceCode" id="cb14"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb14-1"><a href="#cb14-1" tabindex="-1"></a><span class="fu">ag_device</span>(<span class="st">&quot;cpu&quot;</span>)</span>
+<span id="cb14-2"><a href="#cb14-2" tabindex="-1"></a><span class="fu">ag_dtype</span>(<span class="st">&quot;f32&quot;</span>)</span>
+<span id="cb14-3"><a href="#cb14-3" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">&quot;Restored:&quot;</span>, <span class="fu">ag_default_dtype</span>(), <span class="st">&quot;on cpu</span><span class="sc">\n</span><span class="st">&quot;</span>)</span></code></pre></div>
 </div>
 
 
