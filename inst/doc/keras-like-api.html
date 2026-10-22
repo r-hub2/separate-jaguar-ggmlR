@@ -638,7 +638,7 @@ unaffected.</p>
 <span id="cb13-9"><a href="#cb13-9" tabindex="-1"></a>p_wd <span class="ot">&lt;-</span> <span class="fu">ggml_predict</span>(model_wd, x_val, <span class="at">batch_size =</span> <span class="dv">10</span><span class="dt">L</span>)</span>
 <span id="cb13-10"><a href="#cb13-10" tabindex="-1"></a>p_16 <span class="ot">&lt;-</span> <span class="fu">ggml_predict</span>(model_wd, x_val, <span class="at">batch_size =</span> <span class="dv">10</span><span class="dt">L</span>,</span>
 <span id="cb13-11"><a href="#cb13-11" tabindex="-1"></a>                     <span class="at">matmul_precision =</span> <span class="st">&quot;default&quot;</span>)   <span class="co"># this call only</span></span>
-<span id="cb13-12"><a href="#cb13-12" tabindex="-1"></a><span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">&quot;max |f32 - default|: %.2e (0 on the CPU)</span><span class="sc">\n</span><span class="st">&quot;</span>, <span class="fu">max</span>(<span class="fu">abs</span>(p_wd <span class="sc">-</span> p_16))))</span></code></pre></div>
+<span id="cb13-12"><a href="#cb13-12" tabindex="-1"></a><span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">&quot;max |f32 - default|: %.2e (exactly 0 on a CPU backend)</span><span class="sc">\n</span><span class="st">&quot;</span>, <span class="fu">max</span>(<span class="fu">abs</span>(p_wd <span class="sc">-</span> p_16))))</span></code></pre></div>
 <hr />
 </div>
 </div>
@@ -952,7 +952,7 @@ graphs. Tensors are <strong>column-major</strong>: shape is
 <span id="cb25-15"><a href="#cb25-15" tabindex="-1"></a></span>
 <span id="cb25-16"><a href="#cb25-16" tabindex="-1"></a>probs_ag <span class="ot">&lt;-</span> <span class="fu">ag_predict_cm</span>(ag_mod, x_val_ag)          <span class="co"># [3, 30]</span></span>
 <span id="cb25-17"><a href="#cb25-17" tabindex="-1"></a>pred_ag  <span class="ot">&lt;-</span> <span class="fu">apply</span>(probs_ag, <span class="dv">2</span>, which.max)</span>
-<span id="cb25-18"><a href="#cb25-18" tabindex="-1"></a>true_ag  <span class="ot">&lt;-</span> <span class="fu">apply</span>(y_val_ag, <span class="dv">1</span>, which.max)            <span class="co"># col-major: rows = classes</span></span>
+<span id="cb25-18"><a href="#cb25-18" tabindex="-1"></a>true_ag  <span class="ot">&lt;-</span> <span class="fu">apply</span>(y_val_ag, <span class="dv">2</span>, which.max)            <span class="co"># col-major: rows = classes</span></span>
 <span id="cb25-19"><a href="#cb25-19" tabindex="-1"></a>acc_ag   <span class="ot">&lt;-</span> <span class="fu">mean</span>(pred_ag <span class="sc">==</span> true_ag)</span>
 <span id="cb25-20"><a href="#cb25-20" tabindex="-1"></a><span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">&quot;Autograd val accuracy: %.4f</span><span class="sc">\n</span><span class="st">&quot;</span>, acc_ag))</span></code></pre></div>
 </div>
@@ -1049,6 +1049,10 @@ graphs. Tensors are <strong>column-major</strong>: shape is
 all subsequent <code>ag_param</code> and <code>ag_tensor</code> calls
 use the selected device and dtype. The sequential API
 (<code>ggml_fit</code>) picks up the backend automatically.</p>
+<p>Both settings are package-level state that outlives this document, so
+put them back when done:</p>
+<div class="sourceCode" id="cb29"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb29-1"><a href="#cb29-1" tabindex="-1"></a><span class="fu">ag_device</span>(<span class="st">&quot;cpu&quot;</span>)</span>
+<span id="cb29-2"><a href="#cb29-2" tabindex="-1"></a><span class="fu">ag_dtype</span>(<span class="st">&quot;f32&quot;</span>)</span></code></pre></div>
 <hr />
 </div>
 <div id="api-summary" class="section level2">

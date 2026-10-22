@@ -5,6 +5,10 @@ knitr::opts_chunk$set(eval = identical(Sys.getenv("NOT_CRAN"), "true"))
 
 ## -----------------------------------------------------------------------------
 # library(ggmlR)
+# # ag_device()/ag_dtype() are package-level state; start from a known one
+# # rather than whatever ran before in the same session.
+# ag_device("cpu")
+# ag_dtype("f32")
 
 ## -----------------------------------------------------------------------------
 # # ag_tensor — non-trainable input (e.g. data)
@@ -20,10 +24,10 @@ knitr::opts_chunk$set(eval = identical(Sys.getenv("NOT_CRAN"), "true"))
 #   loss <- ag_mean(ag_mul(h, h))                  # scalar MSE-like
 # })
 # 
-# grads <- backward(loss)   # returns named list of gradients
+# grads <- backward(loss)
 # 
-# cat("dL/dW:\n"); print(grads[["W"]])
-# cat("dL/db:\n"); print(grads[["b"]])
+# cat("dL/dW:\n"); print(W$grad)
+# cat("dL/db:\n"); print(b$grad)
 
 ## -----------------------------------------------------------------------------
 # data(iris)
@@ -70,7 +74,7 @@ knitr::opts_chunk$set(eval = identical(Sys.getenv("NOT_CRAN"), "true"))
 #   loss <- ag_mse_loss(att, ag_tensor(matrix(0, d_model, seq_len)))
 # })
 # g_att <- backward(loss)
-# cat("gradient tensors:", length(g_att), "\n")
+# cat("dL/dq:", paste(dim(q$grad), collapse = " x "), "\n")
 
 ## -----------------------------------------------------------------------------
 # # Adam (default lr = 1e-3)
@@ -188,7 +192,7 @@ knitr::opts_chunk$set(eval = identical(Sys.getenv("NOT_CRAN"), "true"))
 # 
 # probs <- predict_cm(model, x_vl)          # [3, 30]
 # preds <- apply(probs, 2, which.max)
-# truth <- apply(y_vl, 1, which.max)
+# truth <- apply(y_vl, 2, which.max)
 # cat(sprintf("Val accuracy: %.4f\n", mean(preds == truth)))
 
 ## -----------------------------------------------------------------------------

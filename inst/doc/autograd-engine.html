@@ -347,7 +347,11 @@ recorded inside <code>with_grad_tape({})</code>.</p>
 <p><strong>Tensor layout:</strong> all autograd tensors are
 <strong>column-major</strong> — shape is <code>[features, batch]</code>,
 matching ggml’s native C layout.</p>
-<div class="sourceCode" id="cb1"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb1-1"><a href="#cb1-1" tabindex="-1"></a><span class="fu">library</span>(ggmlR)</span></code></pre></div>
+<div class="sourceCode" id="cb1"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb1-1"><a href="#cb1-1" tabindex="-1"></a><span class="fu">library</span>(ggmlR)</span>
+<span id="cb1-2"><a href="#cb1-2" tabindex="-1"></a><span class="co"># ag_device()/ag_dtype() are package-level state; start from a known one</span></span>
+<span id="cb1-3"><a href="#cb1-3" tabindex="-1"></a><span class="co"># rather than whatever ran before in the same session.</span></span>
+<span id="cb1-4"><a href="#cb1-4" tabindex="-1"></a><span class="fu">ag_device</span>(<span class="st">&quot;cpu&quot;</span>)</span>
+<span id="cb1-5"><a href="#cb1-5" tabindex="-1"></a><span class="fu">ag_dtype</span>(<span class="st">&quot;f32&quot;</span>)</span></code></pre></div>
 <hr />
 <div id="core-primitives" class="section level2">
 <h2>1. Core primitives</h2>
@@ -367,12 +371,13 @@ matching ggml’s native C layout.</p>
 <span id="cb3-3"><a href="#cb3-3" tabindex="-1"></a>  loss <span class="ot">&lt;-</span> <span class="fu">ag_mean</span>(<span class="fu">ag_mul</span>(h, h))                  <span class="co"># scalar MSE-like</span></span>
 <span id="cb3-4"><a href="#cb3-4" tabindex="-1"></a>})</span>
 <span id="cb3-5"><a href="#cb3-5" tabindex="-1"></a></span>
-<span id="cb3-6"><a href="#cb3-6" tabindex="-1"></a>grads <span class="ot">&lt;-</span> <span class="fu">backward</span>(loss)   <span class="co"># returns named list of gradients</span></span>
+<span id="cb3-6"><a href="#cb3-6" tabindex="-1"></a>grads <span class="ot">&lt;-</span> <span class="fu">backward</span>(loss)</span>
 <span id="cb3-7"><a href="#cb3-7" tabindex="-1"></a></span>
-<span id="cb3-8"><a href="#cb3-8" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">&quot;dL/dW:</span><span class="sc">\n</span><span class="st">&quot;</span>); <span class="fu">print</span>(grads[[<span class="st">&quot;W&quot;</span>]])</span>
-<span id="cb3-9"><a href="#cb3-9" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">&quot;dL/db:</span><span class="sc">\n</span><span class="st">&quot;</span>); <span class="fu">print</span>(grads[[<span class="st">&quot;b&quot;</span>]])</span></code></pre></div>
-<p><code>backward()</code> returns gradients keyed by the parameter’s
-variable name.</p>
+<span id="cb3-8"><a href="#cb3-8" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">&quot;dL/dW:</span><span class="sc">\n</span><span class="st">&quot;</span>); <span class="fu">print</span>(W<span class="sc">$</span>grad)</span>
+<span id="cb3-9"><a href="#cb3-9" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">&quot;dL/db:</span><span class="sc">\n</span><span class="st">&quot;</span>); <span class="fu">print</span>(b<span class="sc">$</span>grad)</span></code></pre></div>
+<p><code>backward()</code> accumulates each gradient into the
+parameter’s <code>$grad</code>. It also returns an environment keyed by
+tensor id, which is what an optimizer’s <code>$step()</code> takes.</p>
 <hr />
 </div>
 </div>
@@ -521,7 +526,7 @@ per-head loop records dozens. <code>q</code>, <code>k</code> and
 <span id="cb6-10"><a href="#cb6-10" tabindex="-1"></a>  loss <span class="ot">&lt;-</span> <span class="fu">ag_mse_loss</span>(att, <span class="fu">ag_tensor</span>(<span class="fu">matrix</span>(<span class="dv">0</span>, d_model, seq_len)))</span>
 <span id="cb6-11"><a href="#cb6-11" tabindex="-1"></a>})</span>
 <span id="cb6-12"><a href="#cb6-12" tabindex="-1"></a>g_att <span class="ot">&lt;-</span> <span class="fu">backward</span>(loss)</span>
-<span id="cb6-13"><a href="#cb6-13" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">&quot;gradient tensors:&quot;</span>, <span class="fu">length</span>(g_att), <span class="st">&quot;</span><span class="sc">\n</span><span class="st">&quot;</span>)</span></code></pre></div>
+<span id="cb6-13"><a href="#cb6-13" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">&quot;dL/dq:&quot;</span>, <span class="fu">paste</span>(<span class="fu">dim</span>(q<span class="sc">$</span>grad), <span class="at">collapse =</span> <span class="st">&quot; x &quot;</span>), <span class="st">&quot;</span><span class="sc">\n</span><span class="st">&quot;</span>)</span></code></pre></div>
 <ul>
 <li>Projections are not included: apply <code>W_q</code>,
 <code>W_k</code>, <code>W_v</code> before the call and <code>W_o</code>
@@ -670,7 +675,7 @@ matrices:</p>
 <span id="cb12-16"><a href="#cb12-16" tabindex="-1"></a></span>
 <span id="cb12-17"><a href="#cb12-17" tabindex="-1"></a>probs <span class="ot">&lt;-</span> <span class="fu">predict_cm</span>(model, x_vl)          <span class="co"># [3, 30]</span></span>
 <span id="cb12-18"><a href="#cb12-18" tabindex="-1"></a>preds <span class="ot">&lt;-</span> <span class="fu">apply</span>(probs, <span class="dv">2</span>, which.max)</span>
-<span id="cb12-19"><a href="#cb12-19" tabindex="-1"></a>truth <span class="ot">&lt;-</span> <span class="fu">apply</span>(y_vl, <span class="dv">1</span>, which.max)</span>
+<span id="cb12-19"><a href="#cb12-19" tabindex="-1"></a>truth <span class="ot">&lt;-</span> <span class="fu">apply</span>(y_vl, <span class="dv">2</span>, which.max)</span>
 <span id="cb12-20"><a href="#cb12-20" tabindex="-1"></a><span class="fu">cat</span>(<span class="fu">sprintf</span>(<span class="st">&quot;Val accuracy: %.4f</span><span class="sc">\n</span><span class="st">&quot;</span>, <span class="fu">mean</span>(preds <span class="sc">==</span> truth)))</span></code></pre></div>
 <hr />
 </div>

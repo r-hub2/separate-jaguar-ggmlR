@@ -171,7 +171,7 @@ knitr::opts_chunk$set(eval = identical(Sys.getenv("NOT_CRAN"), "true"))
 # p_wd <- ggml_predict(model_wd, x_val, batch_size = 10L)
 # p_16 <- ggml_predict(model_wd, x_val, batch_size = 10L,
 #                      matmul_precision = "default")   # this call only
-# cat(sprintf("max |f32 - default|: %.2e (0 on the CPU)\n", max(abs(p_wd - p_16))))
+# cat(sprintf("max |f32 - default|: %.2e (exactly 0 on a CPU backend)\n", max(abs(p_wd - p_16))))
 
 ## -----------------------------------------------------------------------------
 # inp  <- ggml_input(shape = 4L)
@@ -422,7 +422,7 @@ knitr::opts_chunk$set(eval = identical(Sys.getenv("NOT_CRAN"), "true"))
 # 
 # probs_ag <- ag_predict_cm(ag_mod, x_val_ag)          # [3, 30]
 # pred_ag  <- apply(probs_ag, 2, which.max)
-# true_ag  <- apply(y_val_ag, 1, which.max)            # col-major: rows = classes
+# true_ag  <- apply(y_val_ag, 2, which.max)            # col-major: rows = classes
 # acc_ag   <- mean(pred_ag == true_ag)
 # cat(sprintf("Autograd val accuracy: %.4f\n", acc_ag))
 
@@ -509,4 +509,8 @@ knitr::opts_chunk$set(eval = identical(Sys.getenv("NOT_CRAN"), "true"))
 # 
 # # Mixed precision (f16 on GPU, f32 on CPU)
 # ag_dtype(if (device == "gpu") "f16" else "f32")
+
+## -----------------------------------------------------------------------------
+# ag_device("cpu")
+# ag_dtype("f32")
 
