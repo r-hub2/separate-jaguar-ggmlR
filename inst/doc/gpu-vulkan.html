@@ -515,8 +515,11 @@ the Vulkan backward shaders brought it from 21.7 s to 7.7 s.</p>
 <span id="cb11-5"><a href="#cb11-5" tabindex="-1"></a><span class="cf">for</span> (i <span class="cf">in</span> <span class="fu">seq_len</span>(<span class="dv">100</span><span class="dt">L</span>)) {</span>
 <span id="cb11-6"><a href="#cb11-6" tabindex="-1"></a>  out <span class="ot">&lt;-</span> <span class="fu">onnx_run</span>(model_onnx, <span class="fu">list</span>(<span class="at">input =</span> batch[[i]]))</span>
 <span id="cb11-7"><a href="#cb11-7" tabindex="-1"></a>}</span></code></pre></div>
-<p>All 15 reference ONNX Model Zoo models match ONNX Runtime bit for bit
-(<code>max|d| = 0</code>) on Vulkan as well as on the CPU. See
+<p>Against ONNX Runtime on the 15 reference ONNX Model Zoo models, the
+quantised MaskRCNN-12-int8 matches bit for bit (<code>max|d| = 0</code>)
+on Vulkan as on the CPU. The others agree within 1e-3 on Vulkan, except
+five transformer models (XCiT, CaiT, BERT, RoBERTa, GPT-NeoX) at 1e-3 to
+7e-3, from long float reductions summed in a different order. See
 <code>vignette(&quot;onnx-import&quot;)</code> for which operators run on the
 GPU.</p>
 <hr />
